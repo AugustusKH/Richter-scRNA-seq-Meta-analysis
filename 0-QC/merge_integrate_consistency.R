@@ -292,6 +292,11 @@ Nadeu_B_downEG$rank <- rank(Nadeu_B_downEG$padj)
 merged <- merge(Hing_B_downEG, Nadeu_B_downEG, by = "genes")
 cor(merged$rank.x, merged$rank.y, method = "spearman")
 
+Hing_B_upEG$rank <- rank(Hing_B_upEG$padj)
+Nadeu_B_upEG$rank <- rank(Nadeu_B_upEG$padj)
+merged <- merge(Hing_B_upEG, Nadeu_B_upEG, by = "genes")
+cor(merged$rank.x, merged$rank.y, method = "spearman")
+
 # Join expression matrix between Hing and Nadeu 
 B_express.mat <- Hing_B_express.mat %>%
   inner_join(Nadeu_B_express.mat, by=c(genes = 'genes'))
@@ -319,8 +324,8 @@ fviz_pca_ind(res.pca,
 # Batch correction using Combat-Seq
 library(sva)
 batch <- c(0, 0, 0, 0, 1, 1, 1, 1)
-group <- c(0, 0, 1, 1, 0, 0, 1, 1)
-adjusted <- ComBat_seq(as.matrix(B_express_row.mat), batch=batch, group=group)
+#group <- c(0, 0, 1, 1, 0, 0, 1, 1)
+adjusted <- ComBat_seq(as.matrix(B_express_row.mat), batch=batch, group=NULL)
 
 t_adjusted <- t(adjusted)
 zero_var_genes <- apply(t_adjusted, 2, function(x) var(x) == 0)
@@ -335,3 +340,80 @@ fviz_pca_ind(res.pca,
              gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
              repel = TRUE     # Avoid text overlapping
 )
+
+# Functional enrichment analysis using GSEA
+library(clusterProfiler)
+library(enrichplot)
+library(msigdbr)
+library(org.Hs.eg.db)
+
+## Hing et al.
+lfc_vector <- Hing_B_EG$log2FoldChange # Create a named vector ranked based on the log2 fold change
+names(lfc_vector) <- Hing_B_EG$genes
+lfc_vector <- na.omit(lfc_vector) # Omit any NA values
+lfc_vector <- sort(lfc_vector, decreasing = TRUE) # Sort the log2 fold change in descending order
+
+### Set the ontology terms of interest
+
+#### Hallmark set
+hs_hm_sets <- msigdbr(
+  species = "Homo sapiens", # Replace with species name relevant to your data
+  category = "H"
+)
+
+#### Run GSEA in the three terms
+set.seed(2020)
+HM_gse <- GSEA(
+  geneList = lfc_vector, # Ordered ranked gene list
+  minGSSize = 25, # Minimum gene set size
+  maxGSSize = 500, # Maximum gene set set
+  pvalueCutoff = 0.05, # p-value cutoff
+  eps = 0, # Boundary for calculating the p value
+  seed = TRUE, # Set seed to make results reproducible
+  pAdjustMethod = "BH", # Benjamini-Hochberg correction
+  TERM2GENE = dplyr::select(
+    hs_hm_sets,
+    gs_name,
+    gene_symbol
+  )
+)
+
+Hing_GSEA.result <- HM_gse@result
+
+## Nadeu et al.
+lfc_vector <- Nadeu_B_EG$log2FoldChange # Create a named vector ranked based on the log2 fold change
+names(lfc_vector) <- Nadeu_B_EG$genes
+lfc_vector <- na.omit(lfc_vector) # Omit any NA values
+lfc_vector <- sort(lfc_vector, decreasing = TRUE) # Sort the log2 fold change in descending order
+
+### Set the ontology terms of interest
+
+#### Hallmark set
+hs_hm_sets <- msigdbr(
+  species = "Homo sapiens", # Replace with species name relevant to your data
+  category = "H"
+)
+
+#### Run GSEA in the three terms
+set.seed(2020)
+HM_gse <- GSEA(
+  geneList = lfc_vector, # Ordered ranked gene list
+  minGSSize = 25, # Minimum gene set size
+  maxGSSize = 500, # Maximum gene set set
+  pvalueCutoff = 0.05, # p-value cutoff
+  eps = 0, # Boundary for calculating the p value
+  seed = TRUE, # Set seed to make results reproducible
+  pAdjustMethod = "BH", # Benjamini-Hochberg correction
+  TERM2GENE = dplyr::select(
+    hs_hm_sets,
+    gs_name,
+    gene_symbol
+  )
+)
+
+Nadeu_GSEA.result <- HM_gse@result
+
+intersect(Hing_GSEA.result$ID, Nadeu_GSEA.result$ID)
+
+
+
