@@ -288,6 +288,9 @@ deg_list <- list(
   Case19 = case19_upgenes
 )
 
+# Intersection of all sets
+upDEG_common_elements <- Reduce(intersect, deg_list)
+
 ## Compute intersection counts
 inter_matrix <- outer(
   names(deg_list),
@@ -306,6 +309,15 @@ pheatmap(inter_matrix,
          display_numbers = TRUE,
          color = colorRampPalette(c("white", "red"))(100),
          main = "Intersection of upregulated DEGs")
+
+## Plot the Venn diagram
+library(ggvenn)
+ggvenn(
+  deg_list, 
+  fill_color = c("#0073C2FF", "#EFC000FF", "#868686FF", "#CD534CFF"),
+  stroke_size = 0.5, set_name_size = 4
+) + 
+  ggtitle("Venn diagram of upregulated DEGs")
 
 ## Define Jaccard similarity
 jaccard <- function(a, b) {
@@ -339,6 +351,9 @@ deg_list <- list(
   Case19 = case19_downgenes
 )
 
+# Intersection of all sets
+downDEG_common_elements <- Reduce(intersect, deg_list)
+
 ## Compute intersection counts
 inter_matrix <- outer(
   names(deg_list),
@@ -355,6 +370,14 @@ pheatmap(inter_matrix,
          display_numbers = TRUE,
          color = colorRampPalette(c("white", "red"))(100),
          main = "Intersection of downgulated DEGs")
+
+## Plot the Venn diagram
+ggvenn(
+  deg_list, 
+  fill_color = c("#0073C2FF", "#EFC000FF", "#868686FF", "#CD534CFF"),
+  stroke_size = 0.5, set_name_size = 4
+) + 
+  ggtitle("Venn diagram of downregulated DEGs")
 
 ## Jaccard similarity
 inter_matrix <- outer(
@@ -616,6 +639,9 @@ deg_list <- list(
   Case19 = case19_GSEA.result$ID
 )
 
+# Intersection of all sets
+GSEA_common_elements <- Reduce(intersect, deg_list)
+
 inter_matrix <- outer(
   names(deg_list),
   names(deg_list),
@@ -630,6 +656,14 @@ pheatmap(inter_matrix,
          display_numbers = TRUE,
          color = colorRampPalette(c("white", "deepskyblue2"))(100),
          main = "Intersection of significant enrichment terms")
+
+## Plot the Venn diagram
+ggvenn(
+  deg_list, 
+  fill_color = c("#0073C2FF", "#EFC000FF", "#868686FF", "#CD534CFF"),
+  stroke_size = 0.5, set_name_size = 4
+) + 
+  ggtitle("Venn diagram of GSEA")
 
 ## Jaccard similarity
 inter_matrix <- outer(
