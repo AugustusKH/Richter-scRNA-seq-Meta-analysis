@@ -1,0 +1,17 @@
+sample_id,molecule_h5
+CMO305_lane1,/home/pakorns/fastq_files/scRNAseq/GSE201704/fastq/sample_count/data_aggr/CMO305/CMO305_lane1_molecule_info.h5
+CMO305_lane2,/home/pakorns/fastq_files/scRNAseq/GSE201704/fastq/sample_count/data_aggr/CMO305/CMO305_lane2_molecule_info.h5
+CMO305_lane3,/home/pakorns/fastq_files/scRNAseq/GSE201704/fastq/sample_count/data_aggr/CMO305/CMO305_lane3_molecule_info.h5
+CMO305_lane4,/home/pakorns/fastq_files/scRNAseq/GSE201704/fastq/sample_count/data_aggr/CMO305/CMO305_lane4_molecule_info.h5
+CMO305_lane5,/home/pakorns/fastq_files/scRNAseq/GSE201704/fastq/sample_count/data_aggr/CMO305/CMO305_lane5_molecule_info.h5
+CMO305_lane6,/home/pakorns/fastq_files/scRNAseq/GSE201704/fastq/sample_count/data_aggr/CMO305/CMO305_lane6_molecule_info.h5
+CMO305_lane7,/home/pakorns/fastq_files/scRNAseq/GSE201704/fastq/sample_count/data_aggr/CMO305/CMO305_lane7_molecule_info.h5
+CMO305_lane8,/home/pakorns/fastq_files/scRNAseq/GSE201704/fastq/sample_count/data_aggr/CMO305/CMO305_lane8_molecule_info.h5
+CMO306_lane1,/home/pakorns/fastq_files/scRNAseq/GSE201704/fastq/sample_count/data_aggr/CMO306/CMO306_lane1_molecule_info.h5
+CMO306_lane2,/home/pakorns/fastq_files/scRNAseq/GSE201704/fastq/sample_count/data_aggr/CMO306/CMO306_lane2_molecule_info.h5
+CMO306_lane3,/home/pakorns/fastq_files/scRNAseq/GSE201704/fastq/sample_count/data_aggr/CMO306/CMO306_lane3_molecule_info.h5
+CMO306_lane4,/home/pakorns/fastq_files/scRNAseq/GSE201704/fastq/sample_count/data_aggr/CMO306/CMO306_lane4_molecule_info.h5
+CMO306_lane5,/home/pakorns/fastq_files/scRNAseq/GSE201704/fastq/sample_count/data_aggr/CMO306/CMO306_lane5_molecule_info.h5
+CMO306_lane6,/home/pakorns/fastq_files/scRNAseq/GSE201704/fastq/sample_count/data_aggr/CMO306/CMO306_lane6_molecule_info.h5
+CMO306_lane7,/home/pakorns/fastq_files/scRNAseq/GSE201704/fastq/sample_count/data_aggr/CMO306/CMO306_lane7_molecule_info.h5
+CMO306_lane8,/home/pakorns/fastq_files/scRNAseq/GSE201704/fastq/sample_count/data_aggr/CMO306/CMO306_lane8_molecule_info.h5
