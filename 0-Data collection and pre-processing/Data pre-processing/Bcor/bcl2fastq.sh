@@ -14,7 +14,7 @@ ulimit -n 65536
 
 # Define paths
 base_path="/home/pakorns/hp-storage/scRNAseq/Bcor"
-SAMPLE_SHEET_PATH="${base_path}/samplesheet_test.csv"
+SAMPLE_SHEET_PATH="${base_path}/samplesheet.csv"
 OUTPUT_DIR="${base_path}/outputs"
 FLOWCELL_DIR="${base_path}/Bcor_10x_genomics_raw_data"
 INTEROP_DIR="${base_path}/stats"
