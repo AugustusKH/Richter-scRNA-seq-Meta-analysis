@@ -18,7 +18,7 @@ GSM5025861.seu[['case']] <- 1
 GSM5025861.seu[['cond']] <- 'CLL'
 GSM5025861.seu[['sorted']] <- 'whole'
 GSM5025861.seu[['stage']] <- 'FCR_relapse_timepoint1'
-GSM5025863.seu[['time']] <- 'Pretreatment_FCR'
+GSM5025861.seu[['time']] <- 'Watchful_waiting'
 
 # Save the object as .rds file
-SaveSeuratRds(GSM6069857.seurat, file = '/mnt/hp-storage/users/pakorns/scRNAseq/GSE201704/GSM6069857/all/GSM6069857.rds')
+SaveSeuratRds(GSM5025861.seu, file = '/mnt/hp-storage/users/pakorns/scRNAseq/GSE165087/GSM5025861/GSM5025861.rds')
