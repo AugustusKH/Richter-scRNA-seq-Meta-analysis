@@ -91,17 +91,17 @@ cd GSM6217981
 
 fastq-dump --split-files SRR19586149
 gzip SRR19586149_1.fastq SRR19586149_2.fastq SRR19586149_3.fastq SRR19586149_4.fastq
-mv SRR19586149_1.fastq.gz 
-mv SRR19586149_2.fastq.gz
-mv SRR19586149_3.fastq.gz
-mv SRR19586149_4.fastq.gz
+mv SRR19586149_1.fastq.gz L37_EW_GEX_S1_L001_I1_001.fastq.gz
+mv SRR19586149_2.fastq.gz L37_EW_GEX_S1_L001_I2_001.fastq.gz
+mv SRR19586149_3.fastq.gz L37_EW_GEX_S1_L001_R1_001.fastq.gz
+mv SRR19586149_4.fastq.gz L37_EW_GEX_S1_L001_R2_001.fastq.gz
 
 fastq-dump --split-files SRR19586150
 gzip SRR19586150_1.fastq SRR19586150_2.fastq SRR19586150_3.fastq SRR19586150_4.fastq
-mv SRR19586150_1.fastq.gz
-mv SRR19586150_2.fastq.gz
-mv SRR19586150_3.fastq.gz
-mv SRR19586150_4.fastq.gz
+mv SRR19586150_1.fastq.gz L37_EW_GEX_S1_L002_I1_001.fastq.gz
+mv SRR19586150_2.fastq.gz L37_EW_GEX_S1_L002_I2_001.fastq.gz
+mv SRR19586150_3.fastq.gz L37_EW_GEX_S1_L002_R1_001.fastq.gz
+mv SRR19586150_4.fastq.gz L37_EW_GEX_S1_L002_R2_001.fastq.gz
 
 cd ..
 
@@ -110,16 +110,16 @@ cd GSM6217983
 
 fastq-dump --split-files SRR19586147
 gzip SRR19586147_1.fastq SRR19586147_2.fastq SRR19586147_3.fastq SRR19586147_4.fastq
-mv SRR19586147_1.fastq.gz
-mv SRR19586147_2.fastq.gz
-mv SRR19586147_3.fastq.gz
-mv SRR19586147_4.fastq.gz
+mv SRR19586147_1.fastq.gz L38_EW_GEX_S2_L001_I1_001.fastq.gz
+mv SRR19586147_2.fastq.gz L38_EW_GEX_S2_L001_I2_001.fastq.gz
+mv SRR19586147_3.fastq.gz L38_EW_GEX_S2_L001_R1_001.fastq.gz
+mv SRR19586147_4.fastq.gz L38_EW_GEX_S2_L001_R2_001.fastq.gz
 
 fastq-dump --split-files SRR19586148
 gzip SRR19586148_1.fastq SRR19586148_2.fastq SRR19586148_3.fastq SRR19586148_4.fastq
-mv SRR19586148_1.fastq.gz
-mv SRR19586148_2.fastq.gz
-mv SRR19586148_3.fastq.gz
-mv SRR19586148_4.fastq.gz
+mv SRR19586148_1.fastq.gz L38_EW_GEX_S2_L002_I1_001.fastq.gz
+mv SRR19586148_2.fastq.gz L38_EW_GEX_S2_L002_I2_001.fastq.gz
+mv SRR19586148_3.fastq.gz L38_EW_GEX_S2_L002_R1_001.fastq.gz
+mv SRR19586148_4.fastq.gz L38_EW_GEX_S2_L002_R2_001.fastq.gz
 
 cd ..
