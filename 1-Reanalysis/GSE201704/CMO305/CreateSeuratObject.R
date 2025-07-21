@@ -11,6 +11,10 @@ CMO305.data <- Read10X(data.dir = '/home/pakorns/hp-storage/scRNAseq/GSE201704/G
 # Create Seurat object
 CMO305.seu <- CreateSeuratObject(counts = CMO305.data[['Gene Expression']], min.features = 500, min.cells = 1)
 
+# QC
+CMO305.seu[["percent.mt"]] <- PercentageFeatureSet(CMO305.seu, pattern = "^MT-")
+CMO305.seu <- subset(CMO305.seu, subset = percent.mt < 20)
+
 # Define other columns in meta-data
 CMO305.seu[['HTO']] <- 'CMO305'
 CMO305.seu[['ref']] <- 'Rejeski et al. (2022)'
