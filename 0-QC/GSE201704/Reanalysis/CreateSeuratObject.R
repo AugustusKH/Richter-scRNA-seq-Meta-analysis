@@ -41,11 +41,11 @@ GSM6069857.seu <- HTODemux(GSM6069857.seu, assay = "HTO", positive.quantile = 0.
 GSM6069857.seu$HTO_tag <- GSM6069857.seu$HTO_maxID
 
 # Define other columns in meta-data
-GSM6069857.seurat[['tissue']] <- 'PB'
-GSM6069857.seurat[['cond']] <- 'RT'
-GSM6069857.seurat[['case']] <- 1
-GSM6069857.seurat[['sorted']] <- 'whole'
-GSM6069857.seurat[['ref']] <- 'Rejeski et al. (2022)'
+GSM6069857.seu[['tissue']] <- 'PB'
+GSM6069857.seu[['cond']] <- 'RT'
+GSM6069857.seu[['case']] <- 1
+GSM6069857.seu[['sorted']] <- 'whole'
+GSM6069857.seu[['ref']] <- 'Rejeski et al. (2022)'
 
 # Save the object as .rds file
 SaveSeuratRds(GSM6069857.seu, file = '/mnt/hp-storage/users/pakorns/scRNAseq/GSE201704/GSM6069857/all/GSM6069857.rds')
