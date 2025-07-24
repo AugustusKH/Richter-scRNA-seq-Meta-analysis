@@ -19,7 +19,7 @@ adt_counts <- CMO305.data[["Antibody Capture"]]
 class(adt_counts) # Check the class
 dim(adt_counts) # Dimensions (genes x barcodes)
 ## Show row names (feature names) and column names (barcodes)
-rownames(adt_counts)  # all features (HTO tags) return: "CMO305" "CMO306" "CD3" "CD4.1" "CD8" "CD19.1" "CD11c" "CD56"
+rownames(adt_counts)  # all features (ADT tags) return: "CMO305" "CMO306" "CD3" "CD4.1" "CD8" "CD19.1" "CD11c" "CD56"
 colnames(adt_counts)[1:5]  # First 5 barcodes
 
 # Select ADT matrix containing only surface proteins
