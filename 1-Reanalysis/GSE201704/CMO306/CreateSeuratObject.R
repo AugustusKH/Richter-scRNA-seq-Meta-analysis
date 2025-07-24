@@ -35,6 +35,10 @@ CMO306.seu <- NormalizeData(CMO306.seu, assay = "ADT", normalization.method = "C
 CMO306.seu[["percent.mt"]] <- PercentageFeatureSet(CMO306.seu, pattern = "^MT-")
 CMO306.seu <- subset(CMO306.seu, subset = percent.mt < 20)
 
+# Normalisation and finding highly variable features
+CMO306.seu <- NormalizeData(CMO306.seu)
+CMO306.seu <- FindVariableFeatures(object = CMO306.seu, nfeatures = 1000)
+
 # Define other columns in meta-data
 CMO306.seu[["HTO"]] <- "CMO306"
 CMO306.seu[["ref"]] <- "Rejeski et al. (2022)"
