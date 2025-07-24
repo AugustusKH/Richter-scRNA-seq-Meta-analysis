@@ -22,16 +22,12 @@ dim(adt_counts) # Dimensions (genes x barcodes)
 rownames(adt_counts)  # all features (ADT tags) return: "CMO305" "CMO306" "CD3" "CD4.1" "CD8" "CD19.1" "CD11c" "CD56"
 colnames(adt_counts)[1:5]  # First 5 barcodes
 
-# Select ADT matrix containing only surface proteins
-surface_rows <- grep("^CD", rownames(adt_count), value = TRUE)
-adt_surface <- adt_count[surface_rows, ]
-
 # Subset ADT matrix to only matching barcodes
 common_barcodes <- colnames(CMO305.seu)  # RNA barcodes
-adt_surface_filtered <- adt_surface[, common_barcodes]
+adt_counts_filtered <- adt_counts[, common_barcodes]
 
 # Create and add ADT assay to the object
-adt_assay <- CreateAssayObject(counts = adt_surface_filtered)
+adt_assay <- CreateAssayObject(counts = adt_counts_filtered)
 CMO305.seu[["ADT"]] <- adt_assay
 
 # QC
