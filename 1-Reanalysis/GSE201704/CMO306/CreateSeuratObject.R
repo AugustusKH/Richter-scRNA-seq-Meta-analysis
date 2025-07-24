@@ -26,9 +26,10 @@ colnames(adt_counts)[1:5]  # First 5 barcodes
 common_barcodes <- colnames(CMO306.seu)  # RNA barcodes
 adt_counts_filtered <- adt_counts[, common_barcodes]
 
-# Create and add ADT assay to the object
+# Create and add ADT assay to the object with normalisation
 adt_assay <- CreateAssayObject(counts = adt_counts_filtered)
 CMO306.seu[["ADT"]] <- adt_assay
+CMO306.seu <- NormalizeData(CMO306.seu, assay = "ADT", normalization.method = "CLR")
 
 # QC
 CMO306.seu[["percent.mt"]] <- PercentageFeatureSet(CMO306.seu, pattern = "^MT-")
