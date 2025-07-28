@@ -14,7 +14,7 @@
 export PATH=$HOME/local/cellranger-9.0.1:$PATH
 
 # Change to working directory
-cd /home/pakorns/fastq_files/scRNAseq/GSE201704/fastq/sample_count
+cd /home/pakorns/fastq_files/scRNAseq/GSE201704/fastq/sample_count/test
 
 # Loop through lanes 1 to 8
 for lane in {1..8}; do
