@@ -1,0 +1,17 @@
+[gene-expression]
+reference,/home/pakorns/scRNAseq_practise/run_cellranger_count/refdata-gex-GRCh38-2020-A
+create-bam,true
+no-secondary,true
+
+[feature]
+reference,/home/pakorns/fastq_files/scRNAseq/GSE201704/fastq/sample_count/test/adapted_HTO.csv
+
+[libraries]
+fastq_id,fastqs,feature_types
+GEX-Lane-3,/home/pakorns/fastq_files/scRNAseq/GSE201704/fastq/sample_count/GEX,Gene Expression
+CSF-Lane_3,/home/pakorns/fastq_files/scRNAseq/GSE201704/fastq/sample_count/ADT,Antibody Capture
+
+[samples]
+sample_id,hashtag_ids
+CMO305,CMO305
+CMO306,CMO306
