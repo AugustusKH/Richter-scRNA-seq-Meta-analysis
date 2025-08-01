@@ -9,7 +9,7 @@ editor: visual
 
 ## Import the relevant packages and set working path directory
 
-```{r setup, results = "hide"}
+```{r, setup, message=FALSE, warning=FALSE}
 # Attach the packages you will need for the analysis.
 library(blaseRtools)
 library(blaseRdata)
@@ -22,6 +22,7 @@ library(cowplot)
 library(fastSave)
 library(conflicted)
 conflict_prefer("filter", "dplyr")
+conflicts_prefer(base::setdiff)
 theme_set(theme_cowplot(font_size = 12))
 ```
 
@@ -34,13 +35,23 @@ system("which pigz")
 ```{r}
 # Set working path
 setwd("/mnt/hp-storage/users/pakorns/scRNAseq/GSE205704/")
+getwd()
 ```
 
-## Load a config file
+## Load a config file and objects provided from this codes
 
 ```{r}
+# Load the config file
 analysis_configs <- read_csv(file = "config.csv", show_col_types = FALSE)
 analysis_configs
+```
+
+```{r}
+# Load the objected generated from this codes (load them as the prolong running for generating)
+load.pigz("cds_list.rda")
+load.pigz("doubletfinder_list.rda")
+load.pigz("cds_main.rda")
+load.pigz("cds_main_filtered.rda")
 ```
 
 ## Create a single-cell object
@@ -62,6 +73,11 @@ cds_list <- map(
   set_names(nm = analysis_configs$sample)
 ```
 
+```{r, eval = FALSE}
+# Save file
+save.pigz(cds_list, file = "cds_list.rda")
+```
+
 ## QC
 
 ```{r, eval = FALSE}
@@ -72,8 +88,7 @@ qc_res <- pmap(.l = list(cds = cds_list,
                    .f = bb_qc
                    ) %>%
   set_names(nm = names(cds_list))
-
-```  
+```
 
 ```{r, eval = FALSE}
 # Gets the number of cells in each cds and divides it by 100000
@@ -97,7 +112,7 @@ doubletfinder_list <-
 
 ```{r, eval = FALSE}
 names(doubletfinder_list) <- names(cds_list)
-save.pigz(doubletfinder_list, file = "data/doubletfinder_list.rda")
+save.pigz(doubletfinder_list, file = "doubletfinder_list.rda")
 ```
 
 ## Merge the objects
@@ -133,7 +148,12 @@ cds_main <- preprocess_cds(cds = cds_main, num_dim = 100)
 cds_main <- reduce_dimension(cds_main, cores = 39)
 ```
 
-```{r fig.align='center', fig.height=4, fig.width=5.2}
+```{r, eval = FALSE}
+# Save the cds_main
+save.pigz(cds_main, file = "cds_main.rda")
+```
+
+```{r, fig.align='center', fig.height=4, fig.width=5.2}
 # Previz to look at doublets
 #bb_var_umap(cds_main, var = "doubletfinder_low_conf", foreground_alpha = 0.2 ,cell_size = 1)
 bb_var_umap(cds_main, var = "doubletfinder_high_conf", foreground_alpha = 0.2 ,cell_size = 1) +
@@ -188,7 +208,7 @@ cds_main_filtered <- bb_triplecluster(cds_main_filtered,
                                       n_cores = 16)
 ```
 
-```{r fig.height=4.5, fig.width=16}
+```{r, fig.height=4.5, fig.width=16}
 # UMAP plots for clustering results
 
 partition.plt <- bb_var_umap(cds_main_filtered, var = "partition") +
@@ -205,7 +225,7 @@ partition.plt + leiden.plt + louvain.plt
 
 ## Cell type annotation
 
-```{r}
+```{r, eval = FALSE}
 #' A function to generate automated cell labelings with Seurat
 #
 #' @param cds A cell data set object
@@ -301,6 +321,12 @@ cds_main_filtered <- bb_seurat_anno_adapted(cds = cds_main_filtered,
                                     reference=reference)
 ```
 
+```{r, fig.height=4, fig.width=5.2}
+bb_var_umap(cds_main_filtered, 
+            var = "seurat_celltype_l1") + 
+  labs(y= "UMAP 2", x = "UMAP 1", title = "Cell annotation")
+```
+
 ### Gene module
 
 ```{r, eval = FALSE}
@@ -313,3 +339,7 @@ cds_main_filtered <- bb_gene_modules(cds_main_filtered, n_cores = 16)
 ```{r, eval = FALSE}
 save.pigz(cds_main_filtered, file = "cds_main_filtered.rda", n.cores = 8)
 ```
+
+
+
+
