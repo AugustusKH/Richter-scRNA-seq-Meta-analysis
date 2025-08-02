@@ -1,0 +1,7 @@
+sample,targz_path,patient,disease,tissue,myc
+GSM6217975,/mnt/hp-storage/users/pakorns/scRNAseq/GSE205704/GSM6217975/count_matrices/outs/filtered_feature_bc_matrix.tar.gz,pt_2712,RT,LN,normal
+GSM6217976,/mnt/hp-storage/users/pakorns/scRNAseq/GSE205704/GSM6217976/count_matrices/outs/filtered_feature_bc_matrix.tar.gz,pt_2712,RT,PBMC,normal
+GSM6217978,/mnt/hp-storage/users/pakorns/scRNAseq/GSE205704/GSM6217978/count_matrices/outs/filtered_feature_bc_matrix.tar.gz,pt_2712,CLL,PBMC,normal
+GSM6217979,/mnt/hp-storage/users/pakorns/scRNAseq/GSE205704/GSM6217979/count_matrices/outs/filtered_feature_bc_matrix.tar.gz,pt_1245,RT,LN,rearranged
+GSM6217981,/mnt/hp-storage/users/pakorns/scRNAseq/GSE205704/GSM6217981/count_matrices/outs/filtered_feature_bc_matrix.tar.gz,pt_1245,RT,PBMC,normal
+GSM6217983,/mnt/hp-storage/users/pakorns/scRNAseq/GSE205704/GSM6217983/count_matrices/outs/filtered_feature_bc_matrix.tar.gz,pt_1245,CLL,PBMC,normal
