@@ -548,7 +548,14 @@ F1FG
 
 ```{r, message=FALSE, fig.height=4, fig.width=5}
 # Cell type annotation (all)
-bb_var_umap(cds_main_adapted, "partition_assignment_1", overwrite_labels = T)
+bb_var_umap(cds_main_adapted, "partition_assignment_1", overwrite_labels = T) +
+  labs(title = "All cell type annotation")
+```
+
+```{r, message=FALSE, fig.height=4, fig.width=5}
+# Leiden clustering
+bb_var_umap(cds_main_adapted, "leiden", overwrite_labels = T) +
+  labs(title = "Leiden clustering")
 ```
 
 ```{r, message=FALSE, warning=FALSE}
