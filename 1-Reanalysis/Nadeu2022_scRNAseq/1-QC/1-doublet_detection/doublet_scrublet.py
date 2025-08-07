@@ -30,8 +30,8 @@ gem_id = sys.argv[2]
 
 
 # Load data
-counts_path = "/home/pakorns/hp-storage/scRNAseq/Nadeu2022_NatMed_scRNAseq_data/expression_matrices/{}/{}/outs/filtered_feature_bc_matrix/matrix.mtx.gz".format(subproject, gem_id)
-barcodes_path = "/home/pakorns/hp-storage/scRNAseq/Nadeu2022_NatMed_scRNAseq_data/expression_matrices/{}/{}/outs/filtered_feature_bc_matrix/barcodes.tsv.gz".format(subproject, gem_id) 
+counts_path = "/home/pakorns/hp-storage/scRNAseq/Nadeu2022_NatMed_scRNAseq_data/expression_matrices/{}/{}/filtered_feature_bc_matrix/matrix.mtx.gz".format(subproject, gem_id)
+barcodes_path = "/home/pakorns/hp-storage/scRNAseq/Nadeu2022_NatMed_scRNAseq_data/expression_matrices/{}/{}/filtered_feature_bc_matrix/barcodes.tsv.gz".format(subproject, gem_id) 
 counts_matrix = scipy.io.mmread(counts_path).T.tocsc()
 barcodes_df = pd.read_csv(barcodes_path, header = None)
 metadata = pd.read_csv("/home/pakorns/hp-storage/scRNAseq/Nadeu2022_NatMed_scRNAseq_data/metadata/richter_metadata.csv")
