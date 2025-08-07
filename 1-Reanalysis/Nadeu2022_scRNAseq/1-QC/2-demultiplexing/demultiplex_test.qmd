@@ -1,0 +1,120 @@
+---
+title: "Nadeu_2022_reanalysis_demultiplexing"
+author: "Pakorn Sagulkoo"
+format:
+  html:
+    embed-resources: true
+editor: visual
+---
+
+## Import the relevant packages and set working path directory
+
+```{r, setup, message=FALSE, warning=FALSE}
+# Attach the packages you will need for the analysis.
+library(Seurat)
+library(scales)
+library(tidyverse)
+```
+
+```{r}
+# Set working path
+setwd("/mnt/hp-storage/users/pakorns/scRNAseq/Nadeu2022_NatMed_scRNAseq_data/")
+getwd()
+```
+
+## Set the paths for all inputs
+
+```{r}
+gem_id <- "bco1we6n_qaz6s7wd"
+path_to_data <- str_c(
+  "expression_matrices/BCLLATLAS_10/",
+  gem_id,
+  "/filtered_feature_bc_matrix/"
+)
+path_to_data <- here::here(path_to_data)
+print(path_to_data)
+path_to_scrublet <- here::here(str_c(
+  "reanalysis/results/1_qc/doublet_detect/results/tables/scrublet/scrublet_doublet_prediction-BCLLATLAS_10-",
+  gem_id,
+  ".csv"
+))
+print(path_to_scrublet)
+
+# Functions
+source(here::here("bin/utils.R"))
+```
+
+## Load data
+
+```{r}
+matrices <- Read10X(data.dir = path_to_data)
+```
+
+## Demultiplex
+
+```{r}
+# Setup Seurat object
+seurat <- CreateSeuratObject(counts = matrices$`Gene Expression`)
+
+
+# Add HTO as an independent assay
+seurat[["HTO"]] <- CreateAssayObject(counts = matrices$`Antibody Capture`)
+seurat <- NormalizeData(seurat, assay = "HTO", normalization.method = "CLR")
+
+
+# Demultiplex
+seurat <- HTODemux(seurat, assay = "HTO", positive.quantile = 0.99)
+new_barcodes <- str_c(gem_id, colnames(seurat), sep = "_")
+seurat <- RenameCells(seurat, new.names = new_barcodes)
+```
+
+## Scrublet accuracy
+
+```{r}
+# Load scrublet data
+scrublet_df <- read_csv(path_to_scrublet)
+
+
+# Add scrublet doublet score to metadata
+scrublet_df$barcodes <- str_c(gem_id, scrublet_df$barcodes, sep = "_")
+if (all(scrublet_df$barcodes == colnames(seurat))) {
+  warning("barcodes are equal")
+  seurat$scrublet_doublet_scores <- scrublet_df$scrublet_doublet_scores
+  seurat$scrublet_doublet_scores_scaled <- scale(
+    scrublet_df$scrublet_doublet_scores,
+    center = TRUE,
+    scale = TRUE
+  )
+  seurat$scrublet_predicted_doublet <- scrublet_df$scrublet_predicted_doublet
+  
+} else{
+  warning("barcodes are not equal")
+}
+```
+
+## Quantify the signal-to-noise ratio (SNR)
+
+```{r}
+seurat$hashing_snr <- purrr::map_dbl(colnames(seurat), function(x) {
+  signal <- seurat[["HTO"]]@data[seurat$HTO_maxID[x], x]
+  noise <- seurat[["HTO"]]@data[seurat$HTO_secondID[x], x]
+  snr <- (signal + 0.1) / (noise + 0.1)
+  snr
+})
+```
+
+## Save demultiplexed Seurat objects
+
+```{r}
+save_object_path <- str_c(
+  "reanalysis/results/1_qc/demultiplexing/BCLLATLAS_10/",
+  gem_id,
+  "_demultiplexed.rds"
+)
+save_object_path <- here::here(save_object_path)
+print(save_object_path)
+```
+
+```{r}
+saveRDS(seurat, save_object_path)
+```
