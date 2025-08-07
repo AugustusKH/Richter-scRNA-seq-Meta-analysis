@@ -64,17 +64,17 @@ umaps = scrub.plot_embedding('UMAP', order_points=True)
 
 
 # Save
-if not os.path.exists("./tmp"):    
-    os.mkdir("./tmp")
-if not os.path.exists("./tmp/histograms/"):
-    os.mkdir("./tmp/histograms/")
-if not os.path.exists("./tmp/umaps/"):
-    os.mkdir("./tmp/umaps/")
-if not os.path.exists("../../results/tables/scrublet"):
-    os.mkdir("../../results/tables/scrublet/")
-scrublet_doubl_df.to_csv("../../results/tables/scrublet/scrublet_doublet_prediction-{}-{}.csv".format(subproject, gem_id), index = False)
-hists[0].savefig("./tmp/histograms/scrublet_doublet_prediction_histograms-{}-{}.png".format(subproject, gem_id), dpi = 100)
-umaps[0].savefig("./tmp/umaps/scrublet_doublet_prediction_umaps-{}-{}.png".format(subproject, gem_id), dpi = 100)
+if not os.path.exists("/home/pakorns/hp-storage/scRNAseq/Nadeu2022_NatMed_scRNAseq_data/reanalysis/results/1_qc/doublet_detect/tmp"):    
+    os.mkdir("/home/pakorns/hp-storage/scRNAseq/Nadeu2022_NatMed_scRNAseq_data/reanalysis/results/1_qc/doublet_detect/tmp")
+if not os.path.exists("/home/pakorns/hp-storage/scRNAseq/Nadeu2022_NatMed_scRNAseq_data/reanalysis/results/1_qc/doublet_detect/tmp/histograms/"):
+    os.mkdir("/home/pakorns/hp-storage/scRNAseq/Nadeu2022_NatMed_scRNAseq_data/reanalysis/results/1_qc/doublet_detect/tmp/histograms/")
+if not os.path.exists("/home/pakorns/hp-storage/scRNAseq/Nadeu2022_NatMed_scRNAseq_data/reanalysis/results/1_qc/doublet_detect/tmp/umaps/"):
+    os.mkdir("/home/pakorns/hp-storage/scRNAseq/Nadeu2022_NatMed_scRNAseq_data/reanalysis/results/1_qc/doublet_detect/tmp/umaps/")
+if not os.path.exists("/home/pakorns/hp-storage/scRNAseq/Nadeu2022_NatMed_scRNAseq_data/reanalysis/results/1_qc/doublet_detect/results/tables/scrublet"):
+    os.mkdir("/home/pakorns/hp-storage/scRNAseq/Nadeu2022_NatMed_scRNAseq_data/reanalysis/results/1_qc/doublet_detect/results/tables/scrublet/")
+scrublet_doubl_df.to_csv("/home/pakorns/hp-storage/scRNAseq/Nadeu2022_NatMed_scRNAseq_data/reanalysis/results/1_qc/doublet_detect/results/tables/scrublet/scrublet_doublet_prediction-{}-{}.csv".format(subproject, gem_id), index = False)
+hists[0].savefig("/home/pakorns/hp-storage/scRNAseq/Nadeu2022_NatMed_scRNAseq_data/reanalysis/results/1_qc/doublet_detect/tmp/histograms/scrublet_doublet_prediction_histograms-{}-{}.png".format(subproject, gem_id), dpi = 100)
+umaps[0].savefig("/home/pakorns/hp-storage/scRNAseq/Nadeu2022_NatMed_scRNAseq_data/reanalysis/results/1_qc/doublet_detect/tmp/umaps/scrublet_doublet_prediction_umaps-{}-{}.png".format(subproject, gem_id), dpi = 100)
 
 
 ending_time = datetime.datetime.now()
