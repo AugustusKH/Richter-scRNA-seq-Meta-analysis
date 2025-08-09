@@ -1,0 +1,366 @@
+---
+title: "Nadeu_2022_reanalysis_qc_object"
+author: "Pakorn Sagulkoo"
+format:
+  html:
+    embed-resources: true
+editor: visual
+---
+
+## Import the relevant packages and set working path directory
+
+```{r, setup, message=FALSE, warning=FALSE}
+# Attach the packages you will need for the analysis.
+library(Seurat)
+library(ggpubr)
+library(tidyverse)
+library(DT)
+```
+
+```{r}
+# Set working path
+setwd("/mnt/hp-storage/users/pakorns/scRNAseq/Nadeu2022_NatMed_scRNAseq_data/")
+getwd()
+```
+
+```{r}
+# Define paths
+path_to_obj <- here::here("reanalysis/results/R_objects/2.seurat_unfiltered.rds")
+path_to_project_metadata <- here::here("metadata/richter_metadata.csv")
+path_to_sample_metadata <- here::here("metadata/sample_metadata.csv")
+path_to_save <- here::here("reanalysis/results/R_objects/3.seurat_filtered.rds")
+```
+
+```{r}
+# Functions
+source(here::here("bin/utils.R"))
+```
+
+## Set parameters
+
+```{r}
+# Thresholds
+min_lib_size <- 900
+min_n_genes <- 250
+max_pct_mt <- 22.5
+min_cells <- 3
+```
+
+## Import the data
+
+```{r}
+# Read merged Seurat object
+seurat <- readRDS(path_to_obj)
+seurat
+
+# Read project and donor metadata
+project_metadata_df <- read_csv(path_to_project_metadata)
+DT::datatable(project_metadata_df)
+sample_metadata_df <- read_csv(path_to_sample_metadata)
+DT::datatable(sample_metadata_df)
+```
+
+## Add smaple metadata
+
+```{r}
+sample_metadata_df$donor_id <- as.character(sample_metadata_df$donor_id)
+seurat$donor_id <- seurat$donor_id %>%
+  str_remove("ICGC_") %>%
+  str_remove("^0")
+seurat$subproject <- ifelse(seurat$is_hashed, "BCLLATLAS_10", "BCLLATLAS_29")
+seurat$sample_id <- seurat$hash.ID
+singlets <- colnames(seurat)[!(seurat$hash.ID %in% c("Negative", "Doublet"))]
+seurat <- subset(seurat, cells = singlets)
+seurat$sample_id <- seurat$sample_id %>%
+  str_remove("(ICGC-012-|ICGC-019|ICGC-365-|ICGC-3299-)") %>%
+  str_remove("^-")
+seurat$sample_id[seurat$sample_id == "NA"] <- seurat$library_name[seurat$sample_id == "NA"] 
+seurat$sample_id <- str_replace(seurat$sample_id, "(-|_)", "/")
+seurat$sample_id[seurat$sample_id == "365/07"] <- "365-07"
+seurat$sample_id[seurat$sample_id == "19/06"] <- "19-06"
+seurat$sample_id[seurat$sample_id == "19/12"] <- "19-12"
+sample_metadata_df[sample_metadata_df$sample_id == "19/2768B", ]
+
+
+test_identifiers <- all(unique(seurat$sample_id) %in% unique(sample_metadata_df$sample_id))
+if (test_identifiers) {
+  sample_metadata_df <- dplyr::select(sample_metadata_df, - "donor_id")
+  new_metadata <- seurat@meta.data %>%
+    left_join(sample_metadata_df, by = "sample_id") %>%
+    as.data.frame()
+  rownames(new_metadata) <- colnames(seurat)
+  seurat@meta.data <- new_metadata
+
+} else {
+  stop("Identifiers are different!")
+}
+
+
+# Remove hashing-specific columns
+removed_vars <- c("HTO_margin", "HTO_classification", "HTO_classification.global")
+seurat@meta.data <- seurat@meta.data[, !(colnames(seurat@meta.data) %in% removed_vars)]
+```
+
+```{r}
+# Find samples with low quality in the other techniques
+exclude_fn <- which(
+  seurat$Exclude_FN == "Sample excluded due to low quality in the other techniques"
+)
+unique(seurat$sample_id[exclude_fn])
+```
+
+```{r}
+# Exclude that smaple from the object
+seurat
+keep_cells <- colnames(seurat)[seurat$sample_id != "14/2944"]
+seurat <- subset(seurat, cells = keep_cells)
+seurat
+```
+
+## Distribution of QC variables
+
+### Signal-to-noise ratio (cell hashing)
+
+```{r, warning=FALSE}
+# Calculate mean SNR
+snr_means_df <- seurat@meta.data %>%
+  dplyr::filter(is_hashed) %>%
+  dplyr::group_by(library_name) %>%
+  dplyr::summarise(
+    mean_snr = round(mean(hashing_snr), 2),
+    sd_snr = round(sd(hashing_snr), 2)
+  ) %>%
+  dplyr::arrange(desc(mean_snr))
+DT::datatable(snr_means_df)
+
+
+# Plot SNR distribution
+breaks <- c(0, 2.5, 5, 7.5)
+snr_gg <- seurat@meta.data %>%
+  dplyr::filter(is_hashed) %>%
+  horizontal_boxplot(
+    categorical_var = "library_name",
+    continuous_var = "hashing_snr",
+    fill = "donor_id",
+    ylab = "Signal-to-Noise (hashing)"
+  ) +
+  scale_y_continuous(limits = c(0, 7.5), breaks = breaks)
+snr_gg
+```
+
+### Library complexity
+
+```{r}
+# Calculate mean library size
+seurat_list <- SplitObject(seurat, split.by = "donor_id")
+n_features_means_dfs <- purrr::map(seurat_list, function(seurat_obj) {
+  df <- seurat_obj@meta.data %>%
+    dplyr::group_by(time_point, sample_id) %>%
+    dplyr::summarise(
+      mean_n_features = round(mean(nFeature_RNA), 2),
+      sd_n_features = round(sd(nFeature_RNA), 2)) %>%
+    dplyr::arrange(time_point)
+  df
+})
+n_features_means_dfs
+
+
+# Plot library size distribution
+n_features_ggs <- purrr::map(names(seurat_list), function(x) {
+  p <- seurat_list[[x]]@meta.data %>%
+    ggplot(aes(time_point, nFeature_RNA, fill = subproject)) +
+      geom_violin() +
+      scale_y_log10() +
+      labs(title = x, x = "", y = "Number of Detected Genes") +
+      theme_bw() +
+      theme(
+        plot.title = element_text(hjust = 0.5, size = 13),
+        axis.text = element_text(size = 11),
+        axis.title = element_text(size = 13),
+        legend.title = element_blank()
+      ) 
+  p
+})
+names(n_features_ggs) <- names(seurat_list)
+n_features_ggs
+```
+
+## Filter out cells
+
+### Library Size
+
+```{r, fig.wide=TRUE, warning=FALSE}
+lib_size_hist <- seurat@meta.data %>%
+  plot_histogram_qc(x = "nCount_RNA", x_lab = "Library Size (log10(total UMI))") +
+  geom_vline(xintercept = min_lib_size, linetype = "dashed", color = "red")
+lib_size_hist1 <- lib_size_hist +
+    scale_x_log10()
+lib_size_hist2 <- lib_size_hist +
+    scale_x_continuous(limits = c(0, 4000)) +
+    xlab("Library Size (total UMI)") +
+    theme_pubr()
+lib_size_hist1 + lib_size_hist2
+```
+
+### Number of detected genes
+
+```{r, fig.wide=TRUE, warning=FALSE}
+n_genes_hist1 <- seurat@meta.data %>%
+  plot_histogram_qc(x = "nFeature_RNA", x_lab = "Number of Detected Genes") +
+  geom_vline(xintercept = min_n_genes, linetype = "dashed", color = "red")
+n_genes_hist2 <- n_genes_hist1 +
+  scale_x_continuous(limits = c(0, 2000)) 
+n_genes_hist1 + n_genes_hist2
+```
+
+### Fraction of mitochondrial expression
+
+```{r, warning=FALSE}
+# Calculate percentage of mitochondrial and ribosomal expression
+seurat$pct_mt <- PercentageFeatureSet(seurat, pattern = "^MT-")
+
+# Plot
+pct_mt_hist <- seurat@meta.data %>%
+  plot_histogram_qc(x = "pct_mt", x_lab = "% Mitochondrial Expression") +
+  geom_vline(xintercept = max_pct_mt, linetype = "dashed", color = "red") +
+  scale_x_continuous(limits = c(0, 100))
+pct_mt_hist
+```
+
+### Fraction of ribosomal expression
+
+```{r}
+seurat$pct_ribosomal <- PercentageFeatureSet(
+  seurat,
+  pattern = "^RPS"
+)
+pct_ribosomal_hist <- seurat@meta.data %>%
+  plot_histogram_qc(x = "pct_ribosomal", x_lab = "% Ribosomal Expression")
+pct_ribosomal_hist
+```
+
+### Joint QC metrics
+
+```{r, warning=FALSE}
+# Number of detected genes VS library size
+n_genes_vs_lib_size <- FeatureScatter(
+  seurat,
+  feature1 = "nCount_RNA",
+  feature2 = "nFeature_RNA",
+  pt.size = 0.15,
+  cols = rep("black", length(levels(Idents(seurat))))
+)
+n_genes_vs_lib_size <- n_genes_vs_lib_size +
+  labs(x = "Library Size (total UMI)", y = "Number of Detected Genes") +
+  theme(legend.position = "none", plot.title = element_blank())
+n_genes_vs_lib_size +
+  geom_vline(xintercept = min_lib_size, linetype = "dashed", color = "red") +
+  geom_hline(yintercept = min_n_genes, linetype = "dashed", color = "red")
+
+  
+# % mitochondrial expression VS library size
+pct_mt_vs_lib_size <- FeatureScatter(
+  seurat,
+  feature1 = "nCount_RNA",
+  feature2 = "pct_mt",
+  pt.size = 0.15,
+  cols = rep("black", length(levels(Idents(seurat))))
+)
+pct_mt_vs_lib_size <- pct_mt_vs_lib_size +
+  scale_x_log10()+
+  labs(x = "Library Size (total UMI)", y = "% Mitochondrial Expression") +
+  theme(legend.position = "none", plot.title = element_blank())
+pct_mt_vs_lib_size +
+  geom_vline(xintercept = min_lib_size, linetype = "dashed", color = "red") +
+  geom_hline(yintercept = max_pct_mt, linetype = "dashed", color = "red")
+```
+
+### Subset empty droplets and lysed cells
+
+```{r}
+metadata_before_qc <- seurat@meta.data
+is_low_quality <- 
+  seurat$nCount_RNA < min_lib_size |
+  seurat$nFeature_RNA < min_n_genes |
+  seurat$pct_mt > max_pct_mt
+table(is_low_quality)
+seurat
+seurat <- subset(seurat, cells = colnames(seurat)[!is_low_quality])
+seurat
+metadata_after_qc <- seurat@meta.data
+```
+
+### QC summary table
+
+```{r, warning=FALSE, message=FALSE}
+qc_before <- metadata_before_qc %>%
+  group_by(donor_id, sample_id, time_point) %>% 
+  summarise(num_cells_before_qc = n())
+qc_after <- metadata_after_qc %>%
+  group_by(donor_id, sample_id, time_point) %>%
+  summarise(
+    num_cells_after_qc = n(),
+    average_library_size = mean(nCount_RNA),
+    average_num_detected_genes = mean(nFeature_RNA),
+    average_mitochondrial_fraction = mean(pct_mt)
+  )
+qc_table <- left_join(qc_before, qc_after, by = "sample_id")
+DT::datatable(qc_table)
+```
+
+## Filter out genes
+
+### Set threshold
+
+```{r fig.wide=TRUE, warning=FALSE}
+n_cells <- Matrix::rowSums(LayerData(seurat[["RNA"]], layer = "counts") > 0)
+gene_qc <- n_cells %>% 
+  as.data.frame() %>% 
+  ggplot(aes(n_cells)) + 
+    geom_histogram(bins = 100, alpha = 0.75) +
+    scale_x_log10("Number of cells") +
+    theme_bw() 
+gene_qc +
+  geom_vline(xintercept = min_cells, linetype = "dashed", color = "red")
+```
+
+### Plot genes with highest expression
+
+```{r fig.height=10}
+top_50_genes <- sort(n_cells, decreasing = TRUE)[1:50]
+top_50_genes_df <- data.frame(
+  gene = names(top_50_genes),
+  n_cells = top_50_genes
+)
+top_50_genes_gg <- top_50_genes_df %>%
+  ggplot(aes(fct_reorder(gene, n_cells), n_cells)) +
+    geom_point() +
+    labs(x = "", y = "Number of expressing cells") +
+    coord_flip()
+top_50_genes_gg
+```
+
+
+### Filter
+
+```{r}
+kept_genes <- rownames(seurat)[n_cells > min_cells]
+table(n_cells > min_cells)
+seurat
+seurat <- subset(seurat, features = kept_genes)
+seurat
+```
+
+
+## Save filtered Seurat object
+
+```{r}
+saveRDS(seurat, path_to_save)
+```
+
+
+
+
+
+
+
