@@ -63,9 +63,7 @@ my_demutiplexing <- function(subproject, gem_id, library_name){
     ".csv"
   ))
   save_object_path <- str_c(
-    "reanalysis/results/1_qc/demultiplexing/",
-    subproject,
-    "/",
+    "reanalysis/results/R_objects/demultiplexed/seurat_",
     gem_id,
     "_demultiplexed.rds"
   )
