@@ -1,0 +1,143 @@
+---
+title: "Nadeu_2022_reanalysis_demultiplexing"
+author: "Pakorn Sagulkoo"
+format:
+  html:
+    embed-resources: true
+editor: visual
+---
+
+## Import the relevant packages and set working path directory
+
+```{r, setup, message=FALSE, warning=FALSE}
+# Attach the packages you will need for the analysis.
+library(Seurat)
+library(scales)
+library(tidyverse)
+```
+
+```{r}
+# Set working path
+setwd("/mnt/hp-storage/users/pakorns/scRNAseq/Nadeu2022_NatMed_scRNAseq_data/")
+getwd()
+```
+
+```{r}
+# Functions
+source(here::here("bin/utils.R"))
+```
+
+## Import the metadata
+
+```{r}
+richter_metadata <- read_csv(here::here("metadata/richter_metadata.csv"), show_col_types = FALSE)
+richter_metadata
+```
+
+```{r}
+# Select the metadata only has hashed_cdna
+hashed_cdna_richter_metadata <- richter_metadata %>%
+  filter(type == "hashed_cdna" & gem_id != "r65huxjg_g0itbe2k")
+hashed_cdna_richter_metadata
+```
+
+## Demultiplexing
+
+```{r}
+# Define a function for demultiplexing
+my_demutiplexing <- function(subproject, gem_id, library_name){
+  # Define paths
+  path_to_data <- str_c(
+    "expression_matrices/",
+    subproject,
+    "/",
+    gem_id,
+    "/filtered_feature_bc_matrix/"
+  )
+  path_to_data <- here::here(path_to_data)
+  path_to_scrublet <- here::here(str_c(
+    "reanalysis/results/1_qc/doublet_detect/results/tables/scrublet/scrublet_doublet_prediction-",
+    subproject,
+    "-",
+    gem_id,
+    ".csv"
+  ))
+  save_object_path <- str_c(
+    "reanalysis/results/1_qc/demultiplexing/",
+    subproject,
+    "/",
+    gem_id,
+    "_demultiplexed.rds"
+  )
+  save_object_path <- here::here(save_object_path)
+  
+  # Load data
+  matrices <- Read10X(data.dir = path_to_data)
+  
+  # Demultiplexing
+  ## Setup Seurat object
+  seurat <- CreateSeuratObject(counts = matrices$`Gene Expression`)
+
+  ## Add HTO as an independent assay
+  if (library_name %in% c('ICGC_3299_01', 'ICGC_3299_02')){
+    selected_rows <- rownames(matrices$`Antibody Capture`) != "ICGC_3299_19_2768B"
+    matrices$`Antibody Capture` <- matrices$`Antibody Capture`[selected_rows, ]
+  }
+  seurat[["HTO"]] <- CreateAssayObject(counts = matrices$`Antibody Capture`)
+  seurat <- NormalizeData(seurat, assay = "HTO", normalization.method = "CLR")
+
+  ## Demultiplex
+  seurat <- HTODemux(seurat, assay = "HTO", positive.quantile = 0.99)
+  new_barcodes <- str_c(gem_id, colnames(seurat), sep = "_")
+  seurat <- RenameCells(seurat, new.names = new_barcodes)
+  
+  # Scrublet accuracy
+  ## Load scrublet data
+  scrublet_df <- read_csv(path_to_scrublet)
+
+
+  ## Add scrublet doublet score to metadata
+  scrublet_df$barcodes <- str_c(gem_id, scrublet_df$barcodes, sep = "_")
+  if (all(scrublet_df$barcodes == colnames(seurat))) {
+    warning("barcodes are equal")
+    seurat$scrublet_doublet_scores <- scrublet_df$scrublet_doublet_scores
+    seurat$scrublet_doublet_scores_scaled <- scale(
+      scrublet_df$scrublet_doublet_scores,
+      center = TRUE,
+      scale = TRUE
+    )
+    seurat$scrublet_predicted_doublet <- scrublet_df$scrublet_predicted_doublet
+  
+  } else{
+    warning("barcodes are not equal")
+  }
+  
+  # Quantify the signal-to-noise ratio (SNR)
+  seurat$hashing_snr <- purrr::map_dbl(colnames(seurat), function(x) {
+    signal <- seurat[["HTO"]]@data[seurat$HTO_maxID[x], x]
+    noise <- seurat[["HTO"]]@data[seurat$HTO_secondID[x], x]
+    snr <- (signal + 0.1) / (noise + 0.1)
+    snr
+  })
+  
+  # Save demultiplexed Seurat objects
+  saveRDS(seurat, save_object_path)
+}
+```
+
+```{r, warning=FALSE}
+# Run the my_demutiplexing
+for (i in 1:nrow(hashed_cdna_richter_metadata)){
+  subproject = hashed_cdna_richter_metadata$subproject[i]
+  gem_id = hashed_cdna_richter_metadata$gem_id[i]
+  library_name = hashed_cdna_richter_metadata$library_name[i]
+  cat(sprintf("\n Running gem_id %s \n", gem_id))
+  my_demutiplexing(subproject, gem_id, library_name)
+}
+```
+
+
+
+
+
+
