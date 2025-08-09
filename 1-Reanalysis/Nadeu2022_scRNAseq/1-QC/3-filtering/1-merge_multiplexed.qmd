@@ -1,0 +1,63 @@
+---
+title: "Nadeu_2022_reanalysis_merge_multiplexed"
+author: "Pakorn Sagulkoo"
+format: html
+editor: visual
+---
+
+## Import the relevant packages and set working path directory
+
+```{r, setup, message=FALSE, warning=FALSE}
+# Attach the packages you will need for the analysis.
+library(Seurat)
+library(tidyverse)
+```
+
+```{r}
+# Set working path
+setwd("/mnt/hp-storage/users/pakorns/scRNAseq/Nadeu2022_NatMed_scRNAseq_data/")
+getwd()
+```
+
+```{r}
+# Define paths
+path_to_demultiplexed <- here::here("reanalysis/results/R_objects/demultiplexed/")
+path_to_save <- here::here("reanalysis/results/R_objects/1.seurat_hashed_demultiplexed.rds")
+```
+
+## Merging the demultiplexed objects
+
+```{r}
+# Read data
+files_to_load <- list.files(path_to_demultiplexed)
+gem_ids <- files_to_load %>%
+  str_remove("seurat_") %>%
+  str_remove("_demultiplexed.rds")
+files_to_load2 <- str_c(path_to_demultiplexed, files_to_load, sep = "")
+seurat_list <- purrr::map2(files_to_load2, gem_ids, function(path, x) {
+  seurat_obj <- readRDS(path)
+  seurat_obj$gem_id <- x
+  seurat_obj
+})
+names(seurat_list) <- gem_ids
+```
+
+```{r}
+# Merge Seurat objects
+print("Merging Seurat objects...")
+seurat_hashed <- seurat_list[[1]]
+for (i in 2:length(seurat_list)) {
+  print(gem_ids[i])
+  seurat_hashed <- merge(x = seurat_hashed, y = seurat_list[[i]])
+  seurat_list[[i]] <- NA
+}
+rm(seurat_list)
+```
+
+```{r}
+# Save
+print("Saving...")
+saveRDS(seurat_hashed, path_to_save)
+```
+
+
