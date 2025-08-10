@@ -1,5 +1,5 @@
 ---
-title: "Nadeu_2022_tumour_case12"
+title: "Nadeu_2022_tumour_cluster_case12"
 author: "Pakorn Sagulkoo"
 format:
   html:
@@ -100,7 +100,7 @@ FeaturePlot(seurat, "CCND2") + scale_color_viridis_c(option = "magma")
 # Find subclusters based on the CCND2 expression
 seurat <- FindSubCluster(
   seurat,
-  cluster = c("2", "4"),
+  cluster = c("2"),
   graph.name = "RNA_snn",
   subcluster.name = "CCND2_subclusters",
   resolution = 0.2
@@ -124,40 +124,43 @@ feat_plots_microenv
 FeaturePlot(seurat, "scrublet_doublet_scores") + scale_color_viridis_c(option = "magma")
 ```
 
-These codes below are not run as no high doublet scores found in the reanalysis results.
-________________________________________________________________________________
-doublets <- CellSelector(DimPlot(seurat))
-doublets <- c(
-  "bco1we6n_qaz6s7wd_ACCTACCCAAGCACCC-1",
-  "bco1we6n_qaz6s7wd_ATGAAAGTCTACGGTA-1",
-  "bco1we6n_qaz6s7wd_CTGTAGAAGACCTTTG-1",
-  "bco1we6n_qaz6s7wd_GTGATGTAGCTTCTAG-1",
-  "bco1we6n_qaz6s7wd_TCCTCCCAGTAGGTTA-1",
-  "r65huxjg_g0itbe2k_AAATGGAAGAAGGTAG-1",
-  "r65huxjg_g0itbe2k_ATTGGGTTCGTCGGGT-1",
-  "r65huxjg_g0itbe2k_GAAGCGACAGGCTTGC-1",
-  "r65huxjg_g0itbe2k_GCCATTCGTTCTTGCC-1",
-  "r65huxjg_g0itbe2k_GGTTGTAAGAGTCAGC-1",
-  "r65huxjg_g0itbe2k_TGCGATATCCCATAGA-1"
-)
-seurat$is_doublet <- ifelse(colnames(seurat) %in% doublets, TRUE, FALSE)
-Idents(seurat) <- "is_doublet"
-DimPlot(seurat)
-________________________________________________________________________________
+## Doublet removal
 
-________________________________________________________________________________
-markers_doublets <- FindMarkers(
-  seurat,
-  ident.1 = TRUE,
-  only.pos = TRUE,
-  logfc.threshold = 0.5
-)
-DT::datatable(markers_doublets)
-________________________________________________________________________________
+These codes below are run for doublet removal but our reanalysis results rarely found the doublets then we did not use these.
 
-________________________________________________________________________________
-seurat <- subset(seurat, is_doublet == FALSE)
-________________________________________________________________________________
+```{r}
+# doublets <- CellSelector(DimPlot(seurat))
+#doublets <- c(
+  #"bco1we6n_qaz6s7wd_ACCTACCCAAGCACCC-1",
+  #"bco1we6n_qaz6s7wd_ATGAAAGTCTACGGTA-1",
+  #"bco1we6n_qaz6s7wd_CTGTAGAAGACCTTTG-1",
+  #"bco1we6n_qaz6s7wd_GTGATGTAGCTTCTAG-1",
+  #"bco1we6n_qaz6s7wd_TCCTCCCAGTAGGTTA-1",
+  #"r65huxjg_g0itbe2k_AAATGGAAGAAGGTAG-1",
+  #"r65huxjg_g0itbe2k_ATTGGGTTCGTCGGGT-1",
+  #"r65huxjg_g0itbe2k_GAAGCGACAGGCTTGC-1",
+  #"r65huxjg_g0itbe2k_GCCATTCGTTCTTGCC-1",
+  #"r65huxjg_g0itbe2k_GGTTGTAAGAGTCAGC-1",
+  #"r65huxjg_g0itbe2k_TGCGATATCCCATAGA-1"
+#)
+#seurat$is_doublet <- ifelse(colnames(seurat) %in% doublets, TRUE, FALSE)
+#Idents(seurat) <- "is_doublet"
+#DimPlot(seurat)
+```
+
+```{r}
+#markers_doublets <- FindMarkers(
+  #seurat,
+  #ident.1 = TRUE,
+  #only.pos = TRUE,
+  #logfc.threshold = 0.5
+#)
+#DT::datatable(markers_doublets)
+```
+
+```{r}
+#seurat <- subset(seurat, is_doublet == FALSE)
+```
 
 ## Final clustering:
 
@@ -169,13 +172,6 @@ DimPlot(seurat)
 
 ## Save
 
-```{r}
+```{r, eval=FALSE}
 saveRDS(seurat, path_to_save)
 ```
-
-
-
-
-
-
-
