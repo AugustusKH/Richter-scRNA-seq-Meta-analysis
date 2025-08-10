@@ -1,0 +1,238 @@
+---
+title: "Nadeu_2022_tumour_annotate_case12"
+author: "Pakorn Sagulkoo"
+format:
+  html:
+    embed-resources: true
+editor: visual
+---
+
+## Import the relevant packages and set working path directory
+
+```{r, setup, message=FALSE, warning=FALSE}
+# Attach the packages you will need for the analysis.
+library(Seurat)
+library(SeuratWrappers)
+library(harmony)
+library(tidyverse)
+library(DT)
+```
+
+```{r}
+# Check working path
+getwd()
+```
+
+## Define parameters
+
+```{r}
+# Paths
+path_to_obj <- here::here("reanalysis/results/R_objects/5.seurat_clustered_12.rds")
+path_to_save <- here::here("reanalysis/results/R_objects/6.seurat_annotated_12.rds")
+path_to_save_markers <- here::here("reanalysis/results/2_clustering_annotation/tmp/markers_clusters_12.rds")
+
+
+# Colors
+color_palette <- c("black", "gray", "red", "yellow", "violet", "green4",
+                   "blue", "mediumorchid2", "coral2", "blueviolet",
+                   "indianred4", "deepskyblue1", "dimgray", "deeppink1",
+                   "green", "lightgray", "hotpink1")
+
+
+# Source functions
+source(here::here("bin/utils.R"))
+
+
+# Thresholds
+min_log2FC <- 0.3
+alpha <- 0.001
+```
+
+  
+## Load data
+
+```{r}
+seurat <- readRDS(path_to_obj)
+seurat
+DimPlot(seurat, cols = color_palette)
+```
+
+## Cell Cycle Score
+
+```{r, warning=FALSE, message=FALSE}
+# Consider cell cycle genes based on cell cycle upregulation is a hallmark of Richter transformation
+seurat <- CellCycleScoring(
+  seurat,
+  s.features = cc.genes$s.genes,
+  g2m.features = cc.genes$g2m.genes,
+  set.ident = FALSE
+)
+DimPlot(seurat, group.by = "Phase")
+umap_s_score <- FeaturePlot(seurat, features = "S.Score") +
+  scale_color_viridis_c(option = "magma") +
+  labs(title = "S Score") +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 12, face = "plain"),
+    axis.title = element_blank(),
+    axis.text = element_blank(),
+    axis.ticks = element_blank(),
+    axis.line = element_blank()
+  )
+umap_g2m_score <- FeaturePlot(seurat, features = "G2M.Score") +
+  scale_color_viridis_c(option = "magma") +
+  labs(title = "G2M Score") +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 12, face = "plain"),
+    axis.title = element_blank(),
+    axis.text = element_blank(),
+    axis.ticks = element_blank(),
+    axis.line = element_blank()
+  )
+umap_cc_combined <- ggpubr::ggarrange(
+  plotlist = list(umap_s_score, umap_g2m_score),
+  nrow = 2,
+  ncol = 1,
+  common.legend = FALSE
+)
+umap_cc_combined
+```
+
+## Find Markers
+
+```{r, warning=FALSE, message=FALSE}
+markers <- FindAllMarkers(seurat, only.pos = TRUE, logfc.threshold = min_log2FC)
+markers <- markers %>%
+  mutate(cluster = as.character(cluster)) %>%
+  filter(p_val_adj < alpha) %>%
+  arrange(cluster) %>%
+  group_by(cluster) %>%
+  arrange(desc(avg_log2FC), .by_group = TRUE)
+DT::datatable(markers, options = list(scrollX = TRUE))
+```
+
+```{r}
+markers %>%
+  filter(gene == "PAGE2B")
+```
+
+```{r}
+# UMAPs
+genes_interest <- c("CXCR4", "CD27", "CCND2", "PAGE2", "PAGE2B", "TOP2A", "MKI67", "MIR155HG", 
+                    "IGHM", "MZB1", "XBP1")
+(feature_plots <- purrr::map(genes_interest, function(x) {
+  p <- FeaturePlot(seurat, x, pt.size = 0.5) +
+    scale_color_viridis_c(option = "magma")
+  p
+}))
+```
+
+## Annotation
+
+Important literature to annotate the cells (From Nadeu et al. (2022)):
+
+* [Intraclonal Complexity in Chronic Lymphocytic Leukemia:Fractions Enriched in Recently Born/Divided andOlder/Quiescent Cells](https://molmed.biomedcentral.com/articles/10.2119/molmed.2011.00360).
+* [MicroRNA-155influences B-cell receptor signaling and associateswith aggressive disease in chronic lymphocytic leukemia](https://ashpublications.org/blood/article/124/4/546/33343/MicroRNA-155-influences-B-cell-receptor-signaling).
+
+
+| Cluster | Markers                   | Annotation                 |
+|---------|---------------------------|----------------------------|
+| 0       | CXCR4                     | CXCR4hiCD27lo              |
+| 1       | CD27                      | CXCR4loCD27hi              |
+| 2_0     | CCND2                     | CCND2hi RT                 |
+| 2_1     | PAGE2, PAGE2B             | CCND2lo RT                 |
+| 3       | MIR155HG                  | MIR155HGhi                 |
+| 4       | TOP2A, MKI67              | RT proliferative           |
+| 5       | IGHM, MZB1, XBP1          | MZB1hiIGHMhiXBP1hi         |
+
+```{r}
+seurat$annotation_final <- factor(
+  seurat$final_clusters,
+  levels = c("0", "1", "2_0", "2_1", "3", "4", "5"),
+)
+new_levels_12 <- c("CXCR4hiCD27lo", "CXCR4loCD27hi", "CCND2hi RT",
+                   "CCND2lo RT", "MIR155HGhi", "RT proliferative", 
+                   "MZB1hiIGHMhiXBP1hi")
+levels(seurat$annotation_final) <- new_levels_12
+seurat$annotation_final <- factor(
+  seurat$annotation_final,
+  color_annotations$`12`$annotation_final
+)
+Idents(seurat) <- "annotation_final"
+
+# Plot UMAP
+(umap_annotation <- plot_annotation(
+  seurat_obj = seurat,
+  pt_size = 0.5,
+  colors_reference = color_annotations,
+  patient_id = "12",
+  nothing = TRUE
+))
+```
+
+## Visualize markers
+
+```{r}
+# UMAPs
+genes_interest <- c("CXCR4", "CD24", "CD27", "MIR155HG", "CCND2", "TOP2A",
+                    "PCNA", "MZB1", "IGHM", "XBP1")
+(feature_plots <- purrr::map(genes_interest, function(x) {
+  p <- FeaturePlot(seurat, x, pt.size = 0.5) +
+    scale_color_viridis_c(option = "magma")
+  p
+}))
+
+# Dot plots
+(dot_plot <- plot_dot_plot(
+  seurat,
+  goi = rev(genes_interest),
+  colors_reference = color_annotations,
+  patient_id = "12"
+))
+
+# Violin plots
+(vln_plot_s <- plot_violin_plot(
+  seurat,
+  continuous_var = "S.Score",
+  ylab = "S Phase Score",
+  colors_reference = color_annotations,
+  patient_id = "12"
+))
+(vln_plot_g2m <- plot_violin_plot(
+  seurat,
+  continuous_var = "G2M.Score",
+  ylab = "G2M Phase Score",
+  colors_reference = color_annotations,
+  patient_id = "12"
+))
+```
+
+## Save
+
+```{r, eval=FALSE}
+# Save Seurat object
+saveRDS(seurat, path_to_save)
+```
+
+```{r, eval=FALSE}
+# Save markers
+markers$annotation <- factor(markers$cluster)
+levels(markers$annotation) <- new_levels_12
+markers_list <- purrr::map(levels(markers$annotation), function(x) {
+  df <- markers[markers$annotation == x, ]
+  df <- df[, c(7, 1, 5, 2:4, 6, 8)]
+  df
+})
+names(markers_list) <- levels(markers$annotation)
+markers_list <- markers_list[color_annotations$`12`$annotation_final]
+markers_final <- bind_rows(markers_list)
+saveRDS(markers_list, path_to_save_markers)
+saveRDS(
+  markers_final,
+  here::here("reanalysis/results/tables/markers/markers_annotated_clusters_patient_12.rds")
+)
+openxlsx::write.xlsx(
+  x = markers_list,
+  file = here::here("reanalysis/results/tables/markers/markers_annotated_clusters_patient_12.xlsx")
+)
+```
+
