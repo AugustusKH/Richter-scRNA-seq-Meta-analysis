@@ -1,0 +1,181 @@
+---
+title: "Nadeu_2022_tumour_case12"
+author: "Pakorn Sagulkoo"
+format:
+  html:
+    embed-resources: true
+editor: visual
+---
+
+## Import the relevant packages and set working path directory
+
+```{r, setup, message=FALSE, warning=FALSE}
+# Attach the packages you will need for the analysis.
+library(Seurat)
+library(SeuratWrappers)
+library(harmony)
+library(tidyverse)
+library(DT)
+```
+
+```{r}
+# Check working path
+getwd()
+```
+
+## Define parameters
+
+```{r}
+# Paths
+path_to_obj <- here::here("reanalysis/results/R_objects/4.seurat_leukemic.rds")
+path_to_save <- here::here("reanalysis/results/R_objects/5.seurat_clustered_12.rds")
+
+
+# Colors
+color_palette <- c("black", "gray", "red", "yellow", "violet", "green4",
+                   "blue", "mediumorchid2", "coral2", "blueviolet",
+                   "indianred4", "deepskyblue1", "dimgray", "deeppink1",
+                   "green", "lightgray", "hotpink1")
+
+
+# Source functions
+source(here::here("bin/utils.R"))
+```
+
+## Load data
+
+```{r}
+seurat <- readRDS(path_to_obj)
+```
+
+## Subset and reprocess
+
+```{r, warning=FALSE, message=FALSE}
+# Re-downstream analysis after subsetting
+seurat <- subset(seurat, donor_id == "12")
+seurat <- process_seurat(seurat, dims = 1:20)
+DimPlot(seurat, group.by = "subproject")
+```
+
+```{r}
+# Analyse in BCLLATLAS_10 
+seurat <- subset(seurat, subproject == "BCLLATLAS_10")
+seurat <- process_seurat(seurat, dims = 1:20)
+DimPlot(seurat, group.by = "subproject")
+FeaturePlot(seurat, "pct_mt") +
+  scale_color_viridis_c(option = "magma")
+FeaturePlot(seurat, "nFeature_RNA") +
+  scale_color_viridis_c(option = "magma")
+```
+
+```{r}
+# Re-clustering after selecting BCLLATLAS_10
+seurat <- FindNeighbors(seurat, reduction = "pca", dims = 1:20)
+seurat <- FindClusters(seurat, resolution = 0.4)
+DimPlot(seurat)
+```
+
+```{r, warning=FALSE, message=FALSE}
+# Filter out low quality cells
+seurat <- subset(seurat, seurat_clusters != "4")
+seurat <- process_seurat(seurat, dims = 1:20)
+DimPlot(seurat)
+DimPlot(seurat, group.by = "time_point")
+```
+
+## Cluster
+
+```{r}
+seurat <- FindNeighbors(seurat, reduction = "pca", dims = 1:20)
+seurat <- FindClusters(seurat, resolution = 0.3)
+DimPlot(seurat)
+```
+
+```{r}
+# CCND2 expression 
+FeaturePlot(seurat, "CCND2") + scale_color_viridis_c(option = "magma")
+```
+
+```{r}
+# Find subclusters based on the CCND2 expression
+seurat <- FindSubCluster(
+  seurat,
+  cluster = c("2", "4"),
+  graph.name = "RNA_snn",
+  subcluster.name = "CCND2_subclusters",
+  resolution = 0.2
+)
+DimPlot(seurat, group.by = "CCND2_subclusters")
+```
+
+```{r}
+# Explore remaining microenvironment cells in the tumour cells
+microenv_markers <- c("CD3D", "NKG7", "LYZ")
+feat_plots_microenv <- purrr::map(microenv_markers, function(x) {
+  p <- FeaturePlot(seurat, x) +
+    scale_color_viridis_c(option = "magma")
+  p
+})
+feat_plots_microenv
+```
+
+```{r}
+# Explore remaining doublets
+FeaturePlot(seurat, "scrublet_doublet_scores") + scale_color_viridis_c(option = "magma")
+```
+
+These codes below are not run as no high doublet scores found in the reanalysis results.
+________________________________________________________________________________
+doublets <- CellSelector(DimPlot(seurat))
+doublets <- c(
+  "bco1we6n_qaz6s7wd_ACCTACCCAAGCACCC-1",
+  "bco1we6n_qaz6s7wd_ATGAAAGTCTACGGTA-1",
+  "bco1we6n_qaz6s7wd_CTGTAGAAGACCTTTG-1",
+  "bco1we6n_qaz6s7wd_GTGATGTAGCTTCTAG-1",
+  "bco1we6n_qaz6s7wd_TCCTCCCAGTAGGTTA-1",
+  "r65huxjg_g0itbe2k_AAATGGAAGAAGGTAG-1",
+  "r65huxjg_g0itbe2k_ATTGGGTTCGTCGGGT-1",
+  "r65huxjg_g0itbe2k_GAAGCGACAGGCTTGC-1",
+  "r65huxjg_g0itbe2k_GCCATTCGTTCTTGCC-1",
+  "r65huxjg_g0itbe2k_GGTTGTAAGAGTCAGC-1",
+  "r65huxjg_g0itbe2k_TGCGATATCCCATAGA-1"
+)
+seurat$is_doublet <- ifelse(colnames(seurat) %in% doublets, TRUE, FALSE)
+Idents(seurat) <- "is_doublet"
+DimPlot(seurat)
+________________________________________________________________________________
+
+________________________________________________________________________________
+markers_doublets <- FindMarkers(
+  seurat,
+  ident.1 = TRUE,
+  only.pos = TRUE,
+  logfc.threshold = 0.5
+)
+DT::datatable(markers_doublets)
+________________________________________________________________________________
+
+________________________________________________________________________________
+seurat <- subset(seurat, is_doublet == FALSE)
+________________________________________________________________________________
+
+## Final clustering:
+
+```{r}
+seurat$final_clusters <- seurat$CCND2_subclusters
+Idents(seurat) <- "final_clusters"
+DimPlot(seurat)
+```
+
+## Save
+
+```{r}
+saveRDS(seurat, path_to_save)
+```
+
+
+
+
+
+
+
