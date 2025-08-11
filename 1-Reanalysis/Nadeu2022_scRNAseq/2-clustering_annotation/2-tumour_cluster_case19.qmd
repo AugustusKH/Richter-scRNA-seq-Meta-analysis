@@ -80,6 +80,17 @@ DimPlot(seurat)
 ```
 
 ```{r, warning=FALSE, message=FALSE}
+# Filter out low quality cells
+seurat <- subset(seurat, seurat_clusters != "3")
+seurat <- subset(seurat, pct_mt < max_pct_mt)
+seurat <- process_seurat(seurat, dims = 1:20)
+
+# Visualisation
+DimPlot(seurat)
+DimPlot(seurat, group.by = "time_point")
+```
+
+```{r}
 # Filter out outliers
 #outliers <- CellSelector(DimPlot(seurat))
 outliers <- c(
@@ -93,15 +104,6 @@ outliers <- c(
 )
 seurat$is_outlier <- ifelse(colnames(seurat) %in% outliers, TRUE, FALSE)
 seurat <- subset(seurat, is_outlier == FALSE)
-
-# Filter out low quality cells
-seurat <- subset(seurat, seurat_clusters != "3")
-seurat <- subset(seurat, pct_mt < max_pct_mt)
-seurat <- process_seurat(seurat, dims = 1:20)
-
-# Visualisation
-DimPlot(seurat)
-DimPlot(seurat, group.by = "time_point")
 ```
 
 ## Cluster
