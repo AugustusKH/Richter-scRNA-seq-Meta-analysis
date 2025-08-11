@@ -1,0 +1,163 @@
+---
+title: "Nadeu_2022_tumour_cluster_case19"
+author: "Pakorn Sagulkoo"
+format:
+  html:
+    embed-resources: true
+editor: visual
+---
+
+## Import the relevant packages and set working path directory
+
+```{r, setup, message=FALSE, warning=FALSE}
+# Attach the packages you will need for the analysis.
+library(Seurat)
+library(SeuratWrappers)
+library(harmony)
+library(tidyverse)
+library(DT)
+```
+
+```{r}
+# Check working path
+getwd()
+```
+
+## Define parameters
+
+```{r}
+# Paths
+path_to_obj <- here::here("reanalysis/results/R_objects/4.seurat_leukemic.rds")
+path_to_save <- here::here("reanalysis/results/R_objects/5.seurat_clustered_19.rds")
+
+
+# Colors
+color_palette <- c("black", "gray", "red", "yellow", "violet", "green4",
+                   "blue", "mediumorchid2", "coral2", "blueviolet",
+                   "indianred4", "deepskyblue1", "dimgray", "deeppink1",
+                   "green", "lightgray", "hotpink1")
+
+
+# Source functions
+source(here::here("bin/utils.R"))
+
+
+# Thresholds
+max_pct_mt <- 18
+```
+
+## Load data
+
+```{r}
+seurat <- readRDS(path_to_obj)
+```
+
+## Subset and reprocess
+
+```{r, warning=FALSE, message=FALSE}
+# Re-downstream analysis after subsetting
+seurat <- subset(seurat, donor_id == "19")
+seurat <- process_seurat(seurat, dims = 1:20)
+DimPlot(seurat, group.by = "subproject")
+```
+
+```{r, warning=FALSE, message=FALSE}
+# Analyse in BCLLATLAS_10
+seurat <- subset(seurat, subproject == "BCLLATLAS_10")
+seurat <- process_seurat(seurat, dims = 1:20)
+DimPlot(seurat, group.by = "subproject")
+FeaturePlot(seurat, "pct_mt") +
+  scale_color_viridis_c(option = "magma")
+FeaturePlot(seurat, "nFeature_RNA") +
+  scale_color_viridis_c(option = "magma")
+```
+
+```{r, warning=FALSE, message=FALSE}
+# Re-clustering after selecting BCLLATLAS_10
+seurat <- FindNeighbors(seurat, reduction = "pca", dims = 1:20)
+seurat <- FindClusters(seurat, resolution = 0.3)
+DimPlot(seurat)
+```
+
+```{r, warning=FALSE, message=FALSE}
+# Filter out low quality cells
+seurat <- subset(seurat, seurat_clusters != "3")
+seurat <- subset(seurat, pct_mt < max_pct_mt)
+seurat <- process_seurat(seurat, dims = 1:20)
+DimPlot(seurat)
+DimPlot(seurat, group.by = "time_point")
+```
+
+## Cluster
+
+```{r, warning=FALSE, message=FALSE}
+seurat <- FindNeighbors(seurat, reduction = "pca", dims = 1:20)
+seurat <- FindClusters(seurat, resolution = 0.6)
+DimPlot(seurat)
+```
+
+```{r, warning=FALSE, message=FALSE}
+# Is cluster 7 composed of poor-quality cells?
+markers_7 <- FindMarkers(
+  seurat, ident.1 = "7",
+  only.pos = TRUE,
+  logfc.threshold = 0.3
+)
+DT::datatable(markers_7)
+```
+
+From the original results they found that one cluster (cluster 7) was low quality as it had low log2FC of biomarkers and the cells of the cluster were scattered. Then they removed it. However, in our reanalysed results we did not find any clusters having such behaviours. Therefore, we did not remove any clusters.
+
+```{r}
+#seurat <- subset(seurat, seurat_clusters != "7")
+#seurat <- FindNeighbors(seurat, reduction = "pca", dims = 1:20)
+#seurat <- FindClusters(seurat, resolution = 0.6)
+#DimPlot(seurat)
+#DimPlot(seurat, group.by = "time_point")
+
+# Show CXCR4 expression
+FeaturePlot(seurat, "CXCR4") +
+  scale_color_viridis_c(option = "magma")
+```
+
+As cluster 0 and 4 have the same CXCR4 expression pattern (upregulation) while cluster 1 and 2 have the same trend (downregulation), we will group them into two main clusters.
+
+Moreover, clusters 3 and 6 have no distinctive markers as fold changes are very small:
+
+```{r}
+markers_rt <- FindMarkers(
+  seurat,
+  ident.1 = "3",
+  ident.2 = "5",
+  only.pos = FALSE
+)
+DT::datatable(arrange(markers_rt, desc(avg_log2FC)))
+```
+
+Rename clusters:
+
+```{r}
+seurat$final_clusters <- as.character(seurat$seurat_clusters)
+seurat$final_clusters <- factor(case_when(
+  seurat$final_clusters == "0" ~ "0",
+  seurat$final_clusters == "1" ~ "1",
+  seurat$final_clusters == "2" ~ "1",
+  seurat$final_clusters == "3" ~ "2",
+  seurat$final_clusters == "4" ~ "0",
+  seurat$final_clusters == "5" ~ "2",
+  seurat$final_clusters == "6" ~ "3",
+  seurat$final_clusters == "7" ~ "4",
+  seurat$final_clusters == "8" ~ "5"
+))
+Idents(seurat) <- "final_clusters"
+DimPlot(seurat, cols = color_palette)
+```
+
+## Save
+
+```{r}
+saveRDS(seurat, path_to_save)
+```
+
+
+
