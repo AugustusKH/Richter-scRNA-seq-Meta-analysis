@@ -135,13 +135,13 @@ DimPlot(seurat, group.by = "subcluster_1")
 ```{r}
 # Group some clusters or subclusters together
 seurat$final_clusters <- factor(case_when(
-  seurat$subcluster_2 == "0" ~ "0",
-  seurat$subcluster_2 == "1_0" ~ "2",
-  seurat$subcluster_2 == "1_1" ~ "3",
-  seurat$subcluster_2 == "1_2" ~ "4",
-  seurat$subcluster_2 == "2" ~ "1",
-  seurat$subcluster_2 == "3" ~ "1", 
-  seurat$subcluster_2 == "4" ~ "1"
+  seurat$subcluster_1 == "0" ~ "0",
+  seurat$subcluster_1 == "1_0" ~ "2",
+  seurat$subcluster_1 == "1_1" ~ "3",
+  seurat$subcluster_1 == "1_2" ~ "4",
+  seurat$subcluster_1 == "2" ~ "1",
+  seurat$subcluster_1 == "3" ~ "1", 
+  seurat$subcluster_1 == "4" ~ "1"
 ))
 Idents(seurat) <- "final_clusters"
 DimPlot(seurat)
