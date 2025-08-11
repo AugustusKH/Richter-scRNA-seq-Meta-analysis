@@ -80,10 +80,26 @@ DimPlot(seurat)
 ```
 
 ```{r, warning=FALSE, message=FALSE}
+# Filter out outliers
+#outliers <- CellSelector(DimPlot(seurat))
+outliers <- c(
+  "j7z61du3_vyxon6q4_CATCCGTAGGATCATA-1",
+  "j7z61du3_vyxon6q4_GTCCTCATCAGACCTA-1",
+  "j7z61du3_vyxon6q4_GTCTCACTCAAGGTGG-1",
+  "j7z61du3_vyxon6q4_TGCACGGTCGGTCTAA-1",
+  "te04uhdq_2uatjn5y_AAACCCATCGTTCAGA-1",
+  "te04uhdq_2uatjn5y_GTCCTCAAGTTTGGCT-1",
+  "te04uhdq_2uatjn5y_TCCCAGTAGGTACAAT-1"
+)
+seurat$is_outlier <- ifelse(colnames(seurat) %in% outliers, TRUE, FALSE)
+seurat <- subset(seurat, is_outlier == FALSE)
+
 # Filter out low quality cells
 seurat <- subset(seurat, seurat_clusters != "3")
 seurat <- subset(seurat, pct_mt < max_pct_mt)
 seurat <- process_seurat(seurat, dims = 1:20)
+
+# Visualisation
 DimPlot(seurat)
 DimPlot(seurat, group.by = "time_point")
 ```
@@ -96,19 +112,19 @@ seurat <- FindClusters(seurat, resolution = 0.6)
 DimPlot(seurat)
 ```
 
-```{r, warning=FALSE, message=FALSE}
-# Is cluster 7 composed of poor-quality cells?
-markers_7 <- FindMarkers(
-  seurat, ident.1 = "7",
-  only.pos = TRUE,
-  logfc.threshold = 0.3
-)
-DT::datatable(markers_7)
-```
-
 From the original results they found that one cluster (cluster 7) was low quality as it had low log2FC of biomarkers and the cells of the cluster were scattered. Then they removed it. However, in our reanalysed results we did not find any clusters having such behaviours. Therefore, we did not remove any clusters.
 
-```{r}
+```{r, warning=FALSE, message=FALSE}
+# Is cluster 7 composed of poor-quality cells?
+#markers_7 <- FindMarkers(
+  #seurat, ident.1 = "7",
+  #only.pos = TRUE,
+  #logfc.threshold = 0.3
+#)
+#DT::datatable(markers_7)
+```
+
+```{r, warning=FALSE, message=FALSE}
 #seurat <- subset(seurat, seurat_clusters != "7")
 #seurat <- FindNeighbors(seurat, reduction = "pca", dims = 1:20)
 #seurat <- FindClusters(seurat, resolution = 0.6)
@@ -120,14 +136,14 @@ FeaturePlot(seurat, "CXCR4") +
   scale_color_viridis_c(option = "magma")
 ```
 
-As cluster 0 and 4 have the same CXCR4 expression pattern (upregulation) while cluster 1 and 2 have the same trend (downregulation), we will group them into two main clusters.
+As cluster 0 and 3 have the same CXCR4 expression pattern (upregulation) while cluster 1 and 4 have the same trend (downregulation), we will group them into two main clusters.
 
-Moreover, clusters 3 and 6 have no distinctive markers as fold changes are very small:
+Moreover, clusters 2 and 5 have no distinctive markers as fold changes are very small:
 
 ```{r}
 markers_rt <- FindMarkers(
   seurat,
-  ident.1 = "3",
+  ident.1 = "2",
   ident.2 = "5",
   only.pos = FALSE
 )
@@ -141,9 +157,9 @@ seurat$final_clusters <- as.character(seurat$seurat_clusters)
 seurat$final_clusters <- factor(case_when(
   seurat$final_clusters == "0" ~ "0",
   seurat$final_clusters == "1" ~ "1",
-  seurat$final_clusters == "2" ~ "1",
-  seurat$final_clusters == "3" ~ "2",
-  seurat$final_clusters == "4" ~ "0",
+  seurat$final_clusters == "2" ~ "2",
+  seurat$final_clusters == "3" ~ "0",
+  seurat$final_clusters == "4" ~ "1",
   seurat$final_clusters == "5" ~ "2",
   seurat$final_clusters == "6" ~ "3",
   seurat$final_clusters == "7" ~ "4",
