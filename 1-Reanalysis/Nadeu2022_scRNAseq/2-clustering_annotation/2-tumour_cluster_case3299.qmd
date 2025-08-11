@@ -1,0 +1,160 @@
+---
+title: "Nadeu_2022_tumour_cluster_case3299"
+author: "Pakorn Sagulkoo"
+format:
+  html:
+    embed-resources: true
+editor: visual
+---
+
+## Import the relevant packages and set working path directory
+
+```{r, setup, message=FALSE, warning=FALSE}
+# Attach the packages you will need for the analysis.
+library(Seurat)
+library(SeuratWrappers)
+library(harmony)
+library(tidyverse)
+library(DT)
+```
+
+```{r}
+# Check working path
+getwd()
+```
+
+## Define parameters
+
+```{r}
+# Paths
+path_to_obj <- here::here("reanalysis/results/R_objects/4.seurat_leukemic.rds")
+path_to_save <- here::here("reanalysis/results/R_objects/5.seurat_clustered_3299.rds")
+
+# Colors
+color_palette <- c("black", "gray", "red", "yellow", "violet", "green4",
+                   "blue", "mediumorchid2", "coral2", "blueviolet",
+                   "indianred4", "deepskyblue1", "dimgray", "deeppink1",
+                   "green", "lightgray", "hotpink1")
+
+# Source functions
+source(here::here("bin/utils.R"))
+```
+
+## Load data
+
+```{r}
+seurat <- readRDS(path_to_obj)
+```
+
+## Subset and reprocess
+
+```{r, warning=FALSE, message=FALSE}
+# Re-downstream analysis after subsetting
+seurat <- subset(seurat, donor_id == "3299")
+seurat <- process_seurat(seurat, dims = 1:20)
+DimPlot(seurat, group.by = "subproject")
+```
+
+```{r}
+# UMAP based on tissue of origin
+table(seurat$sample_description_FN, seurat$tissue)
+DimPlot(seurat, group.by = "tissue")
+```
+
+```{r, warning=FALSE, message=FALSE}
+# Exclude PB sample (original authors described that 80 to 90% of the cells in post-treatment_3 is Richter cells)
+seurat <- subset(seurat, tissue == "BM")
+seurat <- process_seurat(seurat, dims = 1:20)
+DimPlot(seurat, group.by = "tissue")
+DimPlot(seurat, group.by = "time_point")
+```
+
+```{r, warning=FALSE, message=FALSE}
+# Feature plots to identify low quality cells and eruthroblasts
+FeaturePlot(seurat, "pct_mt") + scale_color_viridis_c(option = "magma")
+FeaturePlot(seurat, "nFeature_RNA") + scale_color_viridis_c(option = "magma")
+FeaturePlot(seurat, "HBA1") + scale_color_viridis_c(option = "magma")
+```
+
+```{r}
+seurat <- FindNeighbors(seurat, reduction = "pca", dims = 1:20)
+seurat <- FindClusters(seurat, resolution = 0.75)
+DimPlot(seurat)
+```
+
+```{r}
+# Filter out low quality cells and erythroblasts
+selected_cells <- colnames(seurat)[!(seurat$seurat_clusters %in% c("7", "8"))]
+seurat <- subset(seurat, cells = selected_cells)
+seurat <- process_seurat(seurat, dims = 1:20)
+DimPlot(seurat)
+DimPlot(seurat, group.by = "time_point")
+```
+
+## Cluster
+
+```{r}
+seurat <- FindNeighbors(seurat, reduction = "pca", dims = 1:20)
+seurat <- FindClusters(seurat, resolution = 0.3)
+DimPlot(seurat)
+```
+
+```{r}
+FeaturePlot(seurat, c("CD27", "S100A4", "HBB"))
+```
+
+```{r}
+FeaturePlot(seurat, c("CD3D", "NKG7", "LYZ"))
+```
+
+```{r}
+# Cluster 1 was subclustered
+seurat <- FindSubCluster(
+  seurat,
+  cluster = "1",
+  graph.name = "RNA_snn",
+  subcluster.name = "subcluster_1",
+  resolution = 0.4
+)
+DimPlot(seurat, group.by = "subcluster_1")
+```
+
+```{r}
+seurat2 <- seurat
+seurat2 <- FindNeighbors(seurat2, k.param = 5, reduction = "pca", dims = 1:20)
+seurat2 <- FindClusters(seurat2, resolution = 0.2)
+DimPlot(seurat2)
+```
+
+```{r}
+selected_cells <- colnames(seurat2)[seurat2$seurat_clusters != "2"]
+seurat <- subset(seurat, cells = selected_cells)
+DimPlot(seurat, group.by = "subcluster_1")
+```
+
+```{r}
+# Group some clusters or subclusters together
+seurat$final_clusters <- factor(case_when(
+  seurat$subcluster_2 == "0" ~ "0",
+  seurat$subcluster_2 == "1_0" ~ "2",
+  seurat$subcluster_2 == "1_1" ~ "3",
+  seurat$subcluster_2 == "1_2" ~ "4",
+  seurat$subcluster_2 == "2" ~ "1",
+  seurat$subcluster_2 == "3" ~ "1", 
+  seurat$subcluster_2 == "4" ~ "1"
+))
+Idents(seurat) <- "final_clusters"
+DimPlot(seurat)
+```
+
+## Save
+
+```{r, eval=FALSE}
+saveRDS(seurat, path_to_save)
+```
+
+
+
+
+
+
