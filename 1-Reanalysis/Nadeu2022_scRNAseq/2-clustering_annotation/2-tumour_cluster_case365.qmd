@@ -1,0 +1,191 @@
+---
+title: "Nadeu_2022_tumour_cluster_case365"
+author: "Pakorn Sagulkoo"
+format:
+  html:
+    embed-resources: true
+editor: visual
+---
+
+## Import the relevant packages and set working path directory
+
+```{r, setup, message=FALSE, warning=FALSE}
+# Attach the packages you will need for the analysis.
+library(Seurat)
+library(SeuratWrappers)
+library(harmony)
+library(tidyverse)
+library(DT)
+```
+
+```{r}
+# Check working path
+getwd()
+```
+
+## Define parameters
+
+```{r}
+# Paths
+path_to_obj <- here::here("reanalysis/results/R_objects/4.seurat_leukemic.rds")
+path_to_save <- here::here("reanalysis/results/R_objects/5.seurat_clustered_365.rds")
+
+# Colors
+color_palette <- c("black", "gray", "red", "yellow", "violet", "green4",
+                   "blue", "mediumorchid2", "coral2", "blueviolet",
+                   "indianred4", "deepskyblue1", "dimgray", "deeppink1",
+                   "green", "lightgray", "hotpink1")
+
+# Source functions
+source(here::here("bin/utils.R"))
+```
+
+## Load data
+
+```{r}
+seurat <- readRDS(path_to_obj)
+```
+
+## Subset and reprocess
+
+```{r, warning=FALSE, message=FALSE}
+# Re-downstream analysis after subsetting
+seurat <- subset(seurat, donor_id == "365")
+seurat <- process_seurat(seurat, dims = 1:20)
+DimPlot(seurat, group.by = "subproject")
+```
+
+```{r, warning=FALSE, message=FALSE}
+# Analyse in BCLLATLAS_29
+seurat <- subset(seurat, subproject == "BCLLATLAS_29")
+seurat <- process_seurat(seurat, dims = 1:20)
+DimPlot(seurat, group.by = "subproject")
+FeaturePlot(seurat, "pct_mt") +
+  scale_color_viridis_c(option = "magma")
+FeaturePlot(seurat, "nFeature_RNA") +
+  scale_color_viridis_c(option = "magma")
+```
+
+```{r, warning=FALSE, message=FALSE}
+# Re-clustering after selecting BCLLATLAS_29
+seurat <- FindNeighbors(seurat, reduction = "pca", dims = 1:20)
+seurat <- FindClusters(seurat, resolution = 0.3)
+DimPlot(seurat)
+```
+
+```{r, warning=FALSE, message=FALSE}
+# Filter out low quality cells
+seurat <- subset(seurat, seurat_clusters != "3")
+seurat <- process_seurat(seurat, dims = 1:20)
+DimPlot(seurat)
+DimPlot(seurat, group.by = "time_point")
+```
+
+```{r}
+# Identify some contaminate environment cells
+FeaturePlot(seurat, features = "NKG7")
+```
+
+```{r, warning=FALSE, message=FALSE}
+# microenv_barcodes <- CellSelector(FeaturePlot(seurat, features = "NKG7"))
+microenv_barcodes <- c(
+  "s6dm1ahu_e8w2ucdi_AAGTGAACAGGTCCGT-1",
+  "s6dm1ahu_e8w2ucdi_CGGGACTCACCTTCGT-1",
+  "s6dm1ahu_e8w2ucdi_GAAGGGTGTAGTGATA-1",
+  "s6dm1ahu_e8w2ucdi_GATCCCTAGGTCCCGT-1",
+  "s6dm1ahu_e8w2ucdi_TACAACGGTCCTGAAT-1"
+)
+seurat$is_microenv <- ifelse(
+  colnames(seurat) %in% microenv_barcodes,
+  TRUE,
+  FALSE
+)
+Idents(seurat) <- "is_microenv"
+markers_microenv <- FindMarkers(
+  seurat,
+  ident.1 = TRUE,
+  ident.2 = FALSE,
+  only.pos = TRUE,
+  logfc.threshold = 0.75
+)
+DT::datatable(markers_microenv)
+```
+
+```{r}
+# Filter out contaminate cells
+seurat <- subset(seurat, is_microenv == FALSE)
+```
+
+## Cluster
+
+```{r}
+seurat <- FindNeighbors(seurat, reduction = "pca", dims = 1:20)
+seurat <- FindClusters(seurat, resolution = 0.1)
+DimPlot(seurat)
+```
+
+```{r}
+# Find subclusters Richter
+seurat <- FindSubCluster(
+  seurat,
+  cluster = "1",
+  subcluster.name = "richter_subclusters",
+  graph.name = "RNA_snn",
+  resolution = 0.3
+)
+DimPlot(seurat, group.by = "richter_subclusters")
+```
+
+```{r}
+# Find subclusters CLL
+Idents(seurat) <- "richter_subclusters"
+seurat <- FindSubCluster(
+  seurat,
+  cluster = "0",
+  subcluster.name = "cll_subclusters",
+  graph.name = "RNA_snn",
+  resolution = 0.2
+)
+DimPlot(seurat, group.by = "cll_subclusters")
+```
+
+```{r, warning=FALSE, message=FALSE}
+# Gene expression analysis between CLL subclusters
+Idents(seurat) <- "cll_subclusters"
+markers_0 <- FindMarkers(
+  seurat,
+  ident.1 = "0_1",
+  ident.2 = "0_0",
+  only.pos = FALSE
+)
+markers_0 <- markers_0 %>%
+  rownames_to_column("gene") %>%
+  arrange(desc(avg_log2FC))
+DT::datatable(markers_0)
+```
+
+Since log2FC of gene expressions between CLL subclusters are small, we will group them together.
+
+```{r}
+seurat$final_clusters <- seurat$richter_subclusters
+Idents(seurat) <- "final_clusters"
+DimPlot(seurat)
+```
+
+## Save
+
+```{r, eval=FALSE}
+saveRDS(seurat, path_to_save)
+```
+
+
+
+
+
+
+
+
+
+
+
+
