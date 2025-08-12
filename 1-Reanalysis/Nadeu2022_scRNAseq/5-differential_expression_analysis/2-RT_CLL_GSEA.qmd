@@ -1,0 +1,267 @@
+---
+title: "Nadeu_2022_GSEA"
+author: "Pakorn Sagulkoo"
+format:
+  html:
+    embed-resources: true
+editor: visual
+---
+
+## Import the relevant packages and set working path directory
+
+```{r, setup, message=FALSE, warning=FALSE}
+# Attach the packages you will need for the analysis.
+library(Seurat)
+library(UpSetR)
+library(clusterProfiler)
+library(org.Hs.eg.db)
+library(ggrepel)
+library(ggforce)
+library(tidyverse)
+```
+
+```{r}
+# Check working path
+getwd()
+```
+
+## Define parameters
+
+```{r}
+# Paths
+path_to_12 <- here::here("reanalysis/results/R_objects/6.seurat_annotated_12.rds")
+path_to_19 <- here::here("reanalysis/results/R_objects/6.seurat_annotated_19.rds")
+path_to_63 <- here::here("reanalysis/results/R_objects/patient_63/3.seurat_annotated.rds")
+path_to_365 <- here::here("reanalysis/results/R_objects/6.seurat_annotated_365.rds")
+path_to_3299 <- here::here("reanalysis/results/R_objects/6.seurat_annotated_3299.rds")
+path_to_deg <- here::here("reanalysis/results/4_differential_expression/tmp/patient_specific_differential_expression_analysis_rt_vs_cll.rds")
+path_to_save_rds <- here::here("reanalysis/results/4_differential_expression/tmp/patient_specific_gsea_rt_vs_cll.rds")
+path_to_save_rds2 <- here::here("reanalysis/results/4_differential_expression/tmp/patient_specific_gsea_raw_rt_vs_cll.rds")
+path_to_save_xlsx <- here::here("reanalysis/results/tables/DEA/patient_specific_gsea_rt_vs_cll.xlsx")
+
+# Colors
+color_palette <- c("black", "gray", "red", "yellow", "violet", "green4",
+                   "blue", "mediumorchid2", "coral2", "blueviolet",
+                   "indianred4", "deepskyblue1", "dimgray", "deeppink1",
+                   "green", "lightgray", "hotpink1")
+
+# Source functions
+source(here::here("bin/utils.R"))
+
+# Thresholds
+alpha <- 0.05
+GO_max_total_genes <- 250
+GO_min_enriched_genes <- 3
+GO_p_adj_threshold <- 0.01
+GO_min_odds_ratio <- 2.5
+max_gs_size <- 250
+min_gs_size <- 10
+simplify_cutoff <- 0.75
+```
+
+## Load data
+
+```{r}
+# Load Seurat objects
+paths_to_load <- c(
+  "12" = path_to_12,
+  "19" = path_to_19,
+  "3299" = path_to_3299,
+  "365" = path_to_365,
+  "63" = path_to_63
+)
+seurat_list <- purrr::map(paths_to_load, readRDS)
+seurat_list
+```
+
+```{r}
+# Plot
+(umaps_annotations <- purrr::map(names(seurat_list), function(x) {
+  p <- plot_annotation(
+    seurat_list[[x]],
+    pt_size = 0.5,
+    colors_reference = color_annotations,
+    patient_id = x
+  )
+  p +
+    ggtitle(x) +
+    theme(plot.title = element_text(size = 12, face = "bold", hjust = 0.5))
+}))
+```
+
+```{r}
+# Load DEG
+dea <- readRDS(path_to_deg)
+```
+
+## GSEA
+
+```{r, warning=FALSE, message=FALSE}
+# GSEA
+set.seed(1234)
+dea <- dea[names(seurat_list)]
+gsea_patient_specific <- purrr::map(dea, function(df) {
+  gene_list <- df$avg_log2FC
+  names(gene_list) <- df$gene
+  gene_list <- sort(gene_list, decreasing = TRUE)
+  gsea_results <- gseGO(
+    gene_list,
+    ont = "BP",
+    OrgDb = org.Hs.eg.db,
+    keyType = "SYMBOL",
+    minGSSize = min_gs_size,
+    maxGSSize = max_gs_size,
+    seed = TRUE
+  )
+  gsea_results <- clusterProfiler::simplify(
+    gsea_results,
+    cutoff = simplify_cutoff
+  )
+  gsea_results
+})
+```
+
+```{r}
+# Show the results on the table
+gsea_sorted <- purrr::map(gsea_patient_specific, function(x) {
+  df <- x@result %>%
+    dplyr::filter(p.adjust < alpha) %>%
+    dplyr::arrange(desc(NES))
+  df
+})
+DT::datatable(gsea_sorted$`12`, options = list(scrollX = TRUE))
+DT::datatable(gsea_sorted$`19`, options = list(scrollX = TRUE))
+DT::datatable(gsea_sorted$`63`, options = list(scrollX = TRUE))
+DT::datatable(gsea_sorted$`365`, options = list(scrollX = TRUE))
+DT::datatable(gsea_sorted$`3299`, options = list(scrollX = TRUE))
+```
+
+```{r, fig.width=7, fig.height=17}
+# Dot plot
+dot_plots_gsea <- purrr::map(gsea_patient_specific, function(obj) {
+  p <- clusterProfiler::dotplot(
+    obj,
+    x = "NES",
+    showCategory = 40,
+    color = "p.adjust"
+  )
+  p +
+    theme(axis.text.y = element_text(size = 9))
+})
+dot_plots_gsea
+```
+
+## Visualise intersections
+
+```{r}
+# UpSet plot
+upregulated_terms <- purrr::map(gsea_sorted, function(df) {
+  x <- df$ID[df$NES > 0]
+  x
+})
+downregulated_terms <- purrr::map(gsea_sorted, function(df) {
+  x <- df$ID[df$NES < 0]
+  x
+})
+upset_upregulated <- upset(fromList(upregulated_terms), order.by = "freq")
+upset_downregulated <- upset(fromList(downregulated_terms), order.by = "freq")
+upset_upregulated
+upset_downregulated
+```
+
+## Calculate signatures relevant terms
+
+```{r}
+# Case 12, 63, and 365 provide main enriched GO terms
+go_terms <- list(
+  "12" = gsea_sorted$`12`$Description[gsea_sorted$`12`$NES > 0],
+  "63" = gsea_sorted$`63`$Description[gsea_sorted$`63`$NES > 0],
+  "365" = gsea_sorted$`365`$Description[gsea_sorted$`365`$NES > 0]
+)
+common_terms <- Reduce(intersect, go_terms)
+common_terms
+```
+
+```{r}
+# GSEA plots
+selected_terms <- c("GO:0006119", "GO:0032543", "GO:0050853")
+selected_titles <- c("oxidative phosphorylation", "mitochondrial translation",
+                     "B cell receptor signaling pathway")
+gsea_plots <- purrr::map(gsea_patient_specific, function(obj) {
+  plots <- purrr::map2(selected_terms, selected_titles, function(x, title) {
+    p <- gseaplot(obj, geneSetID = x, by = "runningScore", title = title)
+    p
+  })
+  plots
+})
+gsea_plots
+```
+
+```{r, warning=FALSE, message=FALSE}
+# Define and calculate
+gene_sets <- gsea_patient_specific$`12`@geneSets
+saveRDS(
+  gene_sets,
+  here::here("reanalysis/results/4_differential_expression/tmp/gene_sets_gsea_analysis.rds")
+)
+signatures <- list(
+  oxphos = gene_sets$`GO:0006119`,
+  mitochondrial_translation = gene_sets$`GO:0032543`,
+  bcr_signaling = gene_sets$`GO:0050853`
+)
+seurat_list <- purrr::map(seurat_list, function(seurat_obj) {
+  seurat_obj <- AddModuleScore(
+    seurat_obj,
+    features = signatures,
+    name = names(signatures)
+  )
+  seurat_obj
+})
+```
+
+```{r, warning=FALSE, message=FALSE}
+# UMAP feature plots
+umaps_oxphos <- purrr::map(seurat_list, function(seurat_obj) {
+  p <- FeaturePlot(seurat_obj, "oxphos1") +
+    scale_color_viridis_c(option = "magma") +
+    ggtitle("OXPHOS Score")
+  p
+})
+umaps_oxphos
+umaps_mt_translation <- purrr::map(seurat_list, function(seurat_obj) {
+  p <- FeaturePlot(seurat_obj, "mitochondrial_translation2") +
+    scale_color_viridis_c(option = "magma") +
+    ggtitle("MT Translation Score")
+  p
+})
+umaps_mt_translation
+umaps_bcr <- purrr::map(seurat_list, function(seurat_obj) {
+  p <- FeaturePlot(seurat_obj, "bcr_signaling3") +
+    scale_color_viridis_c(option = "magma") +
+    ggtitle("BCR Signaling Score")
+  p
+})
+umaps_bcr
+```
+
+```{r, fig.height=5, fig.width=17}
+FeaturePlot(
+  seurat_list$`63`,
+  c("oxphos1", "bcr_signaling3"),
+  blend = TRUE
+)
+FeaturePlot(
+  seurat_list$`63`,
+  c("oxphos1", "mitochondrial_translation2"),
+  blend = TRUE
+)
+```
+
+## Save
+
+```{r, eval=FALSE}
+saveRDS(gsea_sorted, path_to_save_rds)
+saveRDS(gsea_patient_specific, path_to_save_rds2)
+openxlsx::write.xlsx(gsea_sorted, path_to_save_xlsx)
+```
+
