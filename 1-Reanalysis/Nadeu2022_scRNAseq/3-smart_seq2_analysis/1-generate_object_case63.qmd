@@ -1,0 +1,81 @@
+---
+title: "Nadeu_2022_case63_generate_object"
+author: "Pakorn Sagulkoo"
+format:
+  html:
+    embed-resources: true
+editor: visual
+---
+
+## Import the relevant packages and set working path directory
+
+```{r, setup, message=FALSE, warning=FALSE}
+# Attach the packages you will need for the analysis.
+library(tidyverse)
+library(Seurat)
+```
+
+```{r}
+# Check working path
+getwd()
+```
+
+## Define parameters
+
+```{r}
+# Define paths
+path_to_counts <- here::here("expression_matrices/CLL_52/feature_bc_matrix.csv")
+path_to_metadata <- here::here("metadata/CLL_52_cell_metadata.csv")
+path_to_patient_metadata <- here::here("metadata/sample_metadata.csv")
+path_to_63 <- here::here("reanalysis/results/R_objects/patient_63")
+path_to_save <- str_c(path_to_63, "1.seurat_object_unfiltered.rds", sep = "/")
+```
+
+## Load data
+
+```{r}
+# Load a count matrix
+counts <- read_delim(path_to_counts, delim = ";", show_col_types = FALSE)
+
+# Move first column to row names
+counts <- as.data.frame(counts)          # ensure it's a data frame
+rownames(counts) <- counts[[1]]          # set first column as row names
+counts <- counts[ , -1, drop = FALSE]    # remove first column
+```
+
+```{r}
+# Load a metadata
+metadata <- read_delim(path_to_metadata, delim = ";", show_col_types = FALSE)
+metadata <- as.data.frame(metadata)
+rownames(metadata) <- metadata$cell_barcode
+```
+
+```{r}
+# Load a sample metadata
+patient_metadata <- read_csv(path_to_patient_metadata, show_col_types = FALSE)
+patient_metadata <- patient_metadata[patient_metadata$donor_id == "63", ]
+patient_metadata <- as.data.frame(patient_metadata)
+```
+
+## Create a Seurat object
+
+```{r, warning=FALSE, message=FALSE}
+# Create a true metadata
+metadata_all <- left_join(metadata, patient_metadata, by = "sample_id")
+metadata_all <- as.data.frame(metadata_all)
+rownames(metadata_all) <- metadata_all$cell_barcode
+
+# Create an object
+if (all(rownames(metadata_all) == colnames(counts))) {
+  seurat <- CreateSeuratObject(counts = counts, meta.data = metadata_all)
+}
+```
+
+## Save the object
+
+```{r}
+saveRDS(seurat, path_to_save)
+```
+
+
+
