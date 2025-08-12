@@ -1,0 +1,143 @@
+---
+title: "Nadeu_2022_clustering_timepoint"
+author: "Pakorn Sagulkoo"
+format:
+  html:
+    embed-resources: true
+editor: visual
+---
+
+## Import the relevant packages and set working path directory
+
+```{r, setup, message=FALSE, warning=FALSE}
+# Attach the packages you will need for the analysis.
+library(Seurat)
+library(tidyverse)
+```
+
+```{r}
+# Check working path
+getwd()
+```
+
+## Define parameters
+
+```{r}
+# Paths
+path_to_12 <- here::here("reanalysis/results/R_objects/6.seurat_annotated_12.rds")
+path_to_19 <- here::here("reanalysis/results/R_objects/6.seurat_annotated_19.rds")
+path_to_63 <- here::here("reanalysis/results/R_objects/patient_63/3.seurat_annotated.rds")
+path_to_365 <- here::here("reanalysis/results/R_objects/6.seurat_annotated_365.rds")
+path_to_3299 <- here::here("reanalysis/results/R_objects/6.seurat_annotated_3299.rds")
+path_to_save <- here::here("reanalysis/results/R_objects/7.seurat_time_point_specific_list.rds")
+
+# Source functions
+source(here::here("bin/utils.R"))
+```
+
+## Load data
+
+```{r}
+paths_to_load <- c(
+  "12" = path_to_12,
+  "19" = path_to_19,
+  "63" = path_to_63,
+  "365" = path_to_365,
+  "3299" = path_to_3299
+)
+
+seurat_list <- purrr::map(paths_to_load, readRDS)
+seurat_list
+
+umaps_annotations <- purrr::map(names(seurat_list), function(x) {
+  p <- plot_annotation(
+    seurat_list[[x]],
+    pt_size = 0.5,
+    colors_reference = color_annotations,
+    patient_id = x
+  )
+  p +
+    ggtitle(x) +
+    theme(plot.title = element_text(size = 12, face = "bold", hjust = 0.5))
+})
+
+umaps_annotations
+```
+
+## Time point-specific dimensionality reduction
+
+```{r}
+# Adapt process_seurat() from util.R as some objects have raw dimensions (cells and features) < 20
+process_seurat_adapted <- function(seurat_obj, dims = 1:30) {
+  # Calculate max PCs possible given the data size
+  max_pcs <- min(length(dims), ncol(seurat_obj), nrow(seurat_obj))
+  
+  # Use only dims that fit within max_pcs
+  dims_use <- dims[dims <= max_pcs]
+  
+  seurat_obj <- seurat_obj %>%
+    FindVariableFeatures() %>%
+    ScaleData() %>%
+    RunPCA(npcs = max_pcs) %>%
+    RunUMAP(reduction = "pca", dims = dims_use)
+  
+  seurat_obj
+}
+```
+
+```{r, results='hide', warning=FALSE, message=FALSE}
+# Split objects based on timepoints and reprocess after spliting
+seurat_list_list <- purrr::map(seurat_list, function(seurat_obj) {
+  seurat_obj$time_point2 <- str_c(
+    seurat_obj$time_point,
+    seurat_obj$tissue,
+    sep = "_"
+  )
+  seurat_obj_list <- SplitObject(seurat_obj, split.by = "time_point2")
+  seurat_obj_list <- seurat_obj_list[sort(unique(seurat_obj$time_point2))]
+  seurat_obj_list <- purrr::map(seurat_obj_list, process_seurat_adapted, dims = 1:20)
+  seurat_obj_list
+})
+```
+
+```{r}
+# Plot
+umaps_time_points <- purrr::map2(seurat_list_list, names(seurat_list_list), function(seurat_obj_list, patient_id) {
+  purrr::map2(seurat_obj_list, names(seurat_obj_list), function(seurat_obj, x) {
+    p <- plot_annotation(
+      seurat_obj = seurat_obj,
+      pt_size = 0.65,
+      colors_reference = color_annotations,
+      patient_id = patient_id,
+      nothing = TRUE
+    )
+    p +
+      ggtitle(x) +
+      theme(plot.title = element_text(size = 12, face = "bold", hjust = 0.5))
+  })
+})
+
+print("Case 12")
+umaps_time_points$`12`
+
+print("Case 19")
+umaps_time_points$`19`
+
+print("Case 63")
+umaps_time_points$`63`
+
+print("Case 365")
+umaps_time_points$`365`
+
+print("Case 3299")
+umaps_time_points$`3299`
+```
+
+## Save
+
+```{r, eval=FALSE}
+saveRDS(seurat_list_list, path_to_save)
+```
+
+
+
