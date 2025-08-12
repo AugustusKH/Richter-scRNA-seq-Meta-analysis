@@ -1,0 +1,270 @@
+---
+title: "Nadeu_2022_cluster_annotate_case63"
+author: "Pakorn Sagulkoo"
+format:
+  html:
+    embed-resources: true
+editor: visual
+---
+
+## Import the relevant packages and set working path directory
+
+```{r, setup, message=FALSE, warning=FALSE}
+# Attach the packages you will need for the analysis.
+library(Seurat)
+library(ggpubr)
+library(tidyverse)
+```
+
+```{r}
+# Check working path
+getwd()
+```
+
+## Parameters
+
+```{r}
+# Paths
+path_to_obj <- here::here("reanalysis/results/R_objects/patient_63/2.seurat_object_filtered.rds")
+path_to_save <- here::here("reanalysis/results/R_objects/patient_63/3.seurat_annotated.rds")
+path_to_save_markers <- here::here("reanalysis/results/2_clustering_annotation/tmp/markers_clusters_63.rds")
+
+# Functions
+source(here::here("bin/utils.R"))
+
+# Params
+k_param <- 10
+min_log2FC <- 0.3
+alpha <- 0.001
+```
+
+## Load data
+
+```{r}
+seurat <- readRDS(path_to_obj)
+seurat
+```
+
+## Downstream analysis in all cells
+
+```{r}
+# Normalization
+seurat <- NormalizeData(
+  seurat,
+  normalization.method = "LogNormalize",
+  scale.factor = 10000
+)
+```
+
+```{r}
+# Highly variable features
+seurat <- FindVariableFeatures(seurat)
+LabelPoints(
+  plot = VariableFeaturePlot(seurat),
+  points = head(VariableFeatures(seurat), 10),
+  repel = TRUE
+)
+```
+
+```{r}
+# Scaling and PCA
+seurat <- ScaleData(seurat)
+seurat <- RunPCA(seurat)
+VizDimLoadings(seurat, dims = 1:2, reduction = "pca")
+```
+
+```{r, fig.height=4, fig.width=10, warning=FALSE}
+# UMAP
+seurat <- RunUMAP(seurat, reduction = "pca", dims = 1:20)
+umap_time_point <- DimPlot(seurat, group.by = "time_point")
+umap_tissue <- DimPlot(seurat, group.by = "tissue")
+umap_time_point + umap_tissue
+```
+
+## Cell cycle score
+
+```{r, warning=FALSE, message=FALSE}
+seurat <- CellCycleScoring(
+  seurat,
+  s.features = cc.genes.updated.2019$s.genes,
+  g2m.features = cc.genes.updated.2019$g2m.genes,
+  set.ident = FALSE
+)
+
+DimPlot(seurat, group.by = "Phase")
+
+umap_s_score <- FeaturePlot(seurat, features = "S.Score") +
+  scale_color_viridis_c(option = "magma") +
+  labs(title = "S Score") +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 12, face = "plain"),
+    axis.title = element_blank(),
+    axis.text = element_blank(),
+    axis.ticks = element_blank(),
+    axis.line = element_blank()
+  )
+
+umap_g2m_score <- FeaturePlot(seurat, features = "G2M.Score") +
+  scale_color_viridis_c(option = "magma") +
+  labs(title = "G2M Score") +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 12, face = "plain"),
+    axis.title = element_blank(),
+    axis.text = element_blank(),
+    axis.ticks = element_blank(),
+    axis.line = element_blank()
+  )
+
+umap_cc_combined <- ggpubr::ggarrange(
+  plotlist = list(umap_s_score, umap_g2m_score),
+  nrow = 2,
+  ncol = 1,
+  common.legend = FALSE
+)
+
+umap_cc_combined
+```
+
+## Cluster
+
+```{r}
+seurat <- FindNeighbors(
+  seurat,
+  k.param = k_param,
+  dims = 1:20,
+  reduction = "pca"
+)
+seurat <- FindClusters(seurat, resolution = 0.2)
+DimPlot(seurat)
+```
+
+```{r}
+# Subclustering cluster 1
+seurat <- FindSubCluster(
+  seurat,
+  cluster = "1",
+  graph.name = "RNA_snn",
+  subcluster.name = "subcluster_proliferative",
+  resolution = 0.3
+)
+DimPlot(seurat, group.by = "subcluster_proliferative")
+```
+
+## Markers
+
+```{r, warning=FALSE, message=FALSE}
+seurat$final_clusters <- seurat$subcluster_proliferative
+Idents(seurat) <- "final_clusters"
+markers <- FindAllMarkers(seurat, only.pos = TRUE, logfc.threshold = min_log2FC)
+markers <- markers %>%
+  mutate(cluster = as.character(cluster)) %>%
+  dplyr::filter(p_val_adj < alpha) %>%
+  arrange(cluster) %>%
+  group_by(cluster) %>%
+  arrange(desc(avg_log2FC), .by_group = TRUE)
+DT::datatable(markers, options = list(scrollX = TRUE))
+```
+
+## Annotation
+
+| Cluster | Markers                   | Annotation                 |
+|---------|---------------------------|----------------------------|
+| 0       | CXCR4                     | CLL                        |
+| 1_0     | TCL1A, BTK, WNT3          | RT quiescent               |
+| 1_1     | TOP2A, PCNA               | RT proliferative           |
+
+
+```{r}
+seurat$annotation_final <- factor(
+  seurat$final_clusters,
+  levels = c("0", "1_0", "1_1"),
+)
+new_levels_63 <- c("CLL", "RT quiescent", "RT proliferative")
+levels(seurat$annotation_final) <- new_levels_63
+seurat$annotation_final <- factor(
+  seurat$annotation_final,
+  color_annotations$`63`$annotation_final
+)
+Idents(seurat) <- "annotation_final"
+
+
+# Plot UMAP
+(umap_annotation <- plot_annotation(
+  seurat_obj = seurat,
+  pt_size = 0.5,
+  colors_reference = color_annotations,
+  patient_id = "63",
+  nothing = TRUE
+))
+```
+
+## Visualise markers
+
+```{r}
+# UMAPs
+genes_interest <- c("CXCR4", "TCL1A", "BTK", "WNT3", "TOP2A", "PCNA")
+(feature_plots <- purrr::map(genes_interest, function(x) {
+  p <- FeaturePlot(seurat, x, pt.size = 1) +
+    scale_color_viridis_c(option = "magma")
+  p
+}))
+```
+
+```{r, warning=FALSE, message=FALSE}
+# Dot plots
+(dot_plot <- plot_dot_plot(
+  seurat,
+  goi = rev(genes_interest),
+  colors_reference = color_annotations,
+  patient_id = "63"
+))
+
+# Violin plots
+(vln_plot_s <- plot_violin_plot(
+  seurat,
+  continuous_var = "S.Score",
+  ylab = "S Phase Score",
+  colors_reference = color_annotations,
+  patient_id = "63"
+))
+(vln_plot_g2m <- plot_violin_plot(
+  seurat,
+  continuous_var = "G2M.Score",
+  ylab = "G2M Phase Score",
+  colors_reference = color_annotations,
+  patient_id = "63"
+))
+```
+
+## Save
+
+```{r, eval=FALSE}
+# Save Seurat object
+saveRDS(seurat, path_to_save)
+```
+
+```{r, eval=FALSE}
+# Save markers
+markers$annotation <- factor(markers$cluster)
+levels(markers$annotation) <- new_levels_63
+markers_list <- purrr::map(levels(markers$annotation), function(x) {
+  df <- markers[markers$annotation == x, ]
+  df <- df[, c(7, 1, 5, 2:4, 6, 8)]
+  df
+})
+names(markers_list) <- levels(markers$annotation)
+markers_list <- markers_list[color_annotations$`63`$annotation_final]
+markers_final <- bind_rows(markers_list)
+saveRDS(markers_list, path_to_save_markers)
+saveRDS(
+  markers_final,
+  here::here("reanalysis/results/tables/markers/markers_annotated_clusters_patient_63.rds")
+)
+openxlsx::write.xlsx(
+  x = markers_list,
+  file = here::here("reanalysis/results/tables/markers/markers_annotated_clusters_patient_63.xlsx")
+)
+```
+
+
+
