@@ -1,0 +1,135 @@
+---
+title: "Nadeu_2022_clonal_transcriptomic_evolution"
+author: "Pakorn Sagulkoo"
+format:
+  html:
+    embed-resources: true
+editor: visual
+---
+
+## Import the relevant packages and set working path directory
+
+```{r, setup, message=FALSE, warning=FALSE}
+# Attach the packages you will need for the analysis.
+library(Seurat)
+library(SeuratWrappers)
+library(harmony)
+library(tidyverse)
+```
+
+```{r}
+# Check working path
+getwd()
+```
+
+## Define parameters
+
+```{r}
+# Paths
+path_to_12 <- here::here("reanalysis/results/R_objects/6.seurat_annotated_12.rds")
+path_to_19 <- here::here("reanalysis/results/R_objects/6.seurat_annotated_19.rds")
+path_to_63 <- here::here("reanalysis/results/R_objects/patient_63/3.seurat_annotated.rds")
+path_to_365 <- here::here("reanalysis/results/R_objects/6.seurat_annotated_365.rds")
+path_to_3299 <- here::here("reanalysis/results/R_objects/6.seurat_annotated_3299.rds")
+
+# Colors
+color_palette <- c("black", "gray", "red", "yellow", "violet", "green4",
+                   "blue", "mediumorchid2", "coral2", "blueviolet",
+                   "indianred4", "deepskyblue1", "dimgray", "deeppink1",
+                   "green", "lightgray", "hotpink1")
+
+# Source functions
+source(here::here("bin/utils.R"))
+```
+
+## Load data
+
+```{r}
+paths_to_load <- c(
+  "12" = path_to_12,
+  "19" = path_to_19,
+  "63" = path_to_63,
+  "365" = path_to_365,
+  "3299" = path_to_3299
+)
+
+seurat_list <- purrr::map(paths_to_load, readRDS)
+seurat_list
+
+umaps_annotations <- purrr::map(names(seurat_list), function(x) {
+  p <- plot_annotation(
+    seurat_list[[x]],
+    pt_size = 0.5,
+    colors_reference = color_annotations,
+    patient_id = x
+  )
+  p +
+    ggtitle(x) +
+    theme(plot.title = element_text(size = 12, face = "bold", hjust = 0.5))
+})
+
+umaps_annotations
+```
+
+## Clonal evolution
+
+```{r, fig.wide=TRUE}
+# UMAPs splitted by time point
+umaps_time_points <- purrr::map(names(seurat_list), function(x) {
+  p <- plot_split_annotation(
+    seurat_list[[x]],
+    split_by = "time_point",
+    colors_reference = color_annotations,
+    patient_id = x
+  )
+  p
+})
+names(umaps_time_points) <- names(seurat_list)
+umaps_time_points
+```
+
+```{r, warning=FALSE, message=FALSE}
+# Proportions of clons across time points
+proportions_dfs <- purrr::map(seurat_list, function(seurat_obj) {
+  df <- seurat_obj@meta.data %>%
+    select("time_point", "annotation_final") %>%
+    group_by(time_point, annotation_final) %>%
+    summarise(n_cells = n()) %>%
+    ungroup() %>%
+    group_by(time_point) %>%
+    mutate(n_cells_total = sum(n_cells)) %>%
+    ungroup() %>%
+    mutate(percentage_cells = round(n_cells / n_cells_total * 100, 3))
+  df
+})
+DT::datatable(proportions_dfs$`12`)
+DT::datatable(proportions_dfs$`19`)
+DT::datatable(proportions_dfs$`63`)
+DT::datatable(proportions_dfs$`365`)
+DT::datatable(proportions_dfs$`3299`)
+```
+
+```{r}
+# Stacked bars for the proportion
+stacked_bars_ggs <- purrr::map(names(proportions_dfs), function(x) {
+  p <- proportions_dfs[[x]] %>%
+    ggplot(aes(time_point, percentage_cells, fill = annotation_final)) +
+      geom_col() +
+      ggtitle(x) +
+      labs(x = "", y = "Percentage of Cells (%)", fill = "") + 
+      scale_fill_manual(values = color_palette) +
+      theme_bw() +
+      theme(
+        plot.title = element_text(size = 13, hjust = 0.5, face = "bold"),
+        axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1)
+      )
+  p
+})
+names(stacked_bars_ggs) <- names(seurat_list)
+stacked_bars_ggs
+```
+
+
+
+
+
