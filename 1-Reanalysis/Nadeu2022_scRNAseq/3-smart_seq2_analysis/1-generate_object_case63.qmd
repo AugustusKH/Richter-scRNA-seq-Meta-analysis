@@ -50,24 +50,12 @@ metadata <- as.data.frame(metadata)
 rownames(metadata) <- metadata$cell_barcode
 ```
 
-```{r}
-# Load a sample metadata
-patient_metadata <- read_csv(path_to_patient_metadata, show_col_types = FALSE)
-patient_metadata <- patient_metadata[patient_metadata$donor_id == "63", ]
-patient_metadata <- as.data.frame(patient_metadata)
-```
-
 ## Create a Seurat object
 
 ```{r, warning=FALSE, message=FALSE}
-# Create a true metadata
-metadata_all <- left_join(metadata, patient_metadata, by = "sample_id")
-metadata_all <- as.data.frame(metadata_all)
-rownames(metadata_all) <- metadata_all$cell_barcode
-
 # Create an object
-if (all(rownames(metadata_all) == colnames(counts))) {
-  seurat <- CreateSeuratObject(counts = counts, meta.data = metadata_all)
+if (all(rownames(metadata) == colnames(counts))) {
+  seurat <- CreateSeuratObject(counts = counts, meta.data = metadata)
 }
 ```
 
