@@ -29,7 +29,7 @@ umap_annotation <- plot_annotation(
 ) 
 umap_annotation <- umap_annotation +
   theme(
-    legend.position = c(0, 0.75),
+    legend.position = c(0, 0.9),
     legend.text = element_text(size = 7)
   )
 genes_interest <- c("CXCR4", "CD24", "CD27", "MIR155HG", "CCND2", "PCNA",
@@ -99,32 +99,16 @@ umaps_seed_cells <- umaps_seed_cells &
   labs(x = "UMAP1", y = "UMAP2") &
   scale_x_continuous(breaks = c(-15, -10, -5, 0, 5))
 
-fig_right <- ((violin_plot_s_phase / violin_plot_g2m_phase) | umaps_seed_cells)
-fig_right <- fig_right + plot_layout(widths = c(0.5, 1))
-fig_mid_and_right <- (dot_plot | fig_right) + plot_layout(widths = c(0.5, 1))
-fig <- (umap_annotation | fig_mid_and_right) + plot_layout(widths = c(0.25, 0.75))
+#fig_right <- ((violin_plot_s_phase / violin_plot_g2m_phase) | umaps_seed_cells)
+#fig_right <- fig_right + plot_layout(widths = c(0.5, 1))
+#fig_mid_and_right <- (dot_plot | fig_right) + plot_layout(widths = c(0.8, 1))
+#fig <- (umap_annotation | fig_mid_and_right) + plot_layout(widths = c(0.4, 0.75))
+
+fig_mid <- (dot_plot / (violin_plot_s_phase | violin_plot_g2m_phase))
+fig_mid_and_right <- (fig_mid | umaps_seed_cells) + plot_layout(widths = c(1, 0.8))
+fig <- (umap_annotation | fig_mid_and_right) + plot_layout(widths = c(0.4, 0.75))
 fig
 
-
-
-# fig_left <- (umap_annotation | dot_plot)
-# fig_right <- ((violin_plot_s_phase / violin_plot_g2m_phase) | umaps_seed_cells)
-# fig_right <- fig_right + plot_layout(widths = c(1, 1.5))
-# fig <- fig_left | fig_right
-
-# fig_top <- (umap_annotation | dot_plot)
-# fig_top[[1]] <- fig_top[[1]] +
-#   theme(axis.title.x = element_text(margin = margin(t = -25, unit = "pt")))
-# fig_top <- fig_top + plot_layout(widths = c(1.75, 1))
-# fig_bottom <- (violin_plot_s_phase / violin_plot_g2m_phase) | umaps_seed_cells
-# fig_bottom[[2]] <- fig_bottom[[2]] +
-#   theme(axis.title.x = element_text(margin = margin(t = -50, unit = "pt")))
-# fig_bottom <- fig_bottom + plot_layout(widths = c(1, 2))
-# fig <- fig_top / fig_bottom
-
-
-# To complete it, we need the total number of cells and percentage of RT cells
-# per time-point
 n_cells_rt <- seurat@meta.data %>%
   group_by(time_point, annotation_final) %>%
   dplyr::count(.drop = FALSE, ) %>%
