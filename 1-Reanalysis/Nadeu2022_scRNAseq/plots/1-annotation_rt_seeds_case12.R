@@ -29,9 +29,11 @@ umap_annotation <- plot_annotation(
 ) 
 umap_annotation <- umap_annotation +
   theme(
-    legend.position = c(0, 0.9),
+    legend.position = c(0.4, 0.1),
     legend.text = element_text(size = 7)
   )
+umap_annotation
+
 genes_interest <- c("CXCR4", "CD24", "CD27", "MIR155HG", "CCND2", "PCNA",
                     "MKI67", "MZB1", "IGHM", "XBP1")
 dot_plot <- plot_dot_plot(
@@ -99,14 +101,14 @@ umaps_seed_cells <- umaps_seed_cells &
   labs(x = "UMAP1", y = "UMAP2") &
   scale_x_continuous(breaks = c(-15, -10, -5, 0, 5))
 
-#fig_right <- ((violin_plot_s_phase / violin_plot_g2m_phase) | umaps_seed_cells)
-#fig_right <- fig_right + plot_layout(widths = c(0.5, 1))
-#fig_mid_and_right <- (dot_plot | fig_right) + plot_layout(widths = c(0.8, 1))
-#fig <- (umap_annotation | fig_mid_and_right) + plot_layout(widths = c(0.4, 0.75))
+fig_right <- ((violin_plot_s_phase / violin_plot_g2m_phase) | umaps_seed_cells)
+fig_right <- fig_right + plot_layout(widths = c(0.5, 1))
+fig_mid_and_right <- (dot_plot | fig_right) + plot_layout(widths = c(1, 1))
+fig <- (umap_annotation | fig_mid_and_right) + plot_layout(widths = c(0.3, 0.7))
 
-fig_mid <- (dot_plot / (violin_plot_s_phase | violin_plot_g2m_phase))
-fig_mid_and_right <- (fig_mid | umaps_seed_cells) + plot_layout(widths = c(1, 0.8))
-fig <- (umap_annotation | fig_mid_and_right) + plot_layout(widths = c(0.4, 0.75))
+#fig_mid <- (dot_plot / (violin_plot_s_phase | violin_plot_g2m_phase)) 
+#fig_mid_and_right <- (fig_mid | umaps_seed_cells) + plot_layout(widths = c(1, 0.8))
+#fig <- (umap_annotation | fig_mid_and_right) + plot_layout(widths = c(0.4, 0.75))
 fig
 
 n_cells_rt <- seurat@meta.data %>%
