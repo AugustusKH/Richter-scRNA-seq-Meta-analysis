@@ -1,0 +1,217 @@
+---
+title: "Parry_2023_generate_pagoda2_objects"
+author: "Pakorn Sagulkoo"
+format:
+  html:
+    embed-resources: true
+editor: visual
+---
+
+## Import the relevant packages and set working path directory
+
+```{r, setup, message=FALSE, warning=FALSE}
+# Attach the packages you will need for the analysis.
+library(Matrix)
+library(igraph)
+library(pagoda2)
+library(dplyr)
+library(ggplot2)
+library(conos)
+library(stringr)
+```
+
+```{r}
+# Set working path
+here::i_am("../phs002458.v2.p1/metadata/metadata.csv")
+here::here()
+```
+
+```{r}
+# Check working path
+getwd()
+```
+
+## Define path
+
+```{r}
+path_to_metadata <- here::here("metadata/metadata.csv") 
+```
+
+## Import metadata
+
+```{r}
+metadata <- read.csv(path_to_metadata)
+metadata
+```
+
+## Pagoda2 (example for SRR22882959)
+
+```{r, results='hide'}
+# Example for SRR22882959
+count_mat <- read10xMatrix(here::here("expression_data/SRR22882959/count_matrices/outs/filtered_feature_bc_matrix/"))
+```
+
+```{r}
+# QC
+total_counts <- Matrix::colSums(count_mat) # total UMIs
+cell_counts <- Matrix::rowSums(count_mat) # total cells per gene
+
+# Calculate percentage
+genes <- rownames(count_mat) # get gene names
+mito_genes <- grep("^MT-", genes, value = TRUE) # identify mitochondrial genes
+mito_counts <- Matrix::colSums(count_mat[mito_genes, ]) # mitochondrial UMIs per cell
+percent_mito <- mito_counts / total_counts * 100
+
+# Keep only cells with <10% mitochondrial expression and 500 < UMI_count < 8000
+keep_cells <- which(percent_mito < 10 & (total_counts > 500 & total_counts < 8000)) 
+
+# Keep only genes with cells > 10
+keep_genes <- which(cell_counts > 10) 
+
+# Filter counts matrix
+counts_filtered <- count_mat[keep_genes, keep_cells]
+```
+
+```{r, results='hide'}
+p2.processed <- basicP2proc(counts_filtered)
+```
+
+```{r}
+# Plot shows the clusters
+p2.processed$plotEmbedding(type='PCA', 
+                           embeddingType='tSNE', 
+                           show.legend=FALSE, 
+                           mark.groups=TRUE, 
+                           min.cluster.size=1, 
+                           shuffle.colors=FALSE, 
+                           font.size=3, 
+                           alpha=0.3, 
+                           title='clusters (tSNE)', 
+                           plot.theme=theme_bw() + theme(plot.title = element_text(hjust = 0.5))
+                           )
+```
+
+```{r}
+# Plot shows gene expression
+gene <-"HBM"
+p2.processed$plotEmbedding(type='PCA', 
+                           embeddingType='tSNE', 
+                           colors=p2.processed$counts[,gene], 
+                           shuffle.colors=FALSE, 
+                           font.size=3, 
+                           alpha=0.3, 
+                           title=gene, 
+                           plot.theme=theme_bw() + theme(plot.title = element_text(hjust = 0.5))
+                           )
+```
+
+```{r}
+# Add metadata
+sra_id <- rep("SRR22882959", nrow(p2.processed$counts))
+subject_id <- rep("MDAC-ACC-29", nrow(p2.processed$counts))
+histologic_type <- rep("microenvironment", nrow(p2.processed$counts))
+example <- c(
+  rep("A", nrow(p2.processed$counts)/2),
+  rep("B", nrow(p2.processed$counts)/2)
+)
+cell_metadata <- data.frame(sra_id, subject_id, histologic_type, example, row.names=rownames(p2.processed$counts))
+cell_metadata
+```
+
+```{r}
+# Plot based on metadata
+example_met <- setNames(cell_metadata$example, row.names(cell_metadata))
+p2.processed$plotEmbedding(type="PCA", groups=example_met)
+```
+
+## Load the matrix data
+
+```{r}
+# Define the function to create an object with processing
+my_pagoda2_preprocess <- function(sra_id, subject_id, histologic_type){
+  # Define path
+  path_to_data <- str_c(
+    "expression_data/",
+    sra_id,
+    "/count_matrices/outs/filtered_feature_bc_matrix/"
+  )
+  path_to_data <- here::here(path_to_data)
+  save_obj_path <- str_c(
+    "reanalysis/R_objects/pagoda2_",
+    sra_id,
+    ".rds"
+  )
+  save_obj_path <- here::here(save_obj_path)
+  save_cell_metadata_path <- str_c(
+    "reanalysis/metadata/cellmetadata_",
+    sra_id,
+    ".rds"
+  )
+  save_cell_metadata_path <- here::here(save_cell_metadata_path)
+  
+  # Load data
+  matrices <- read10xMatrix(path_to_data)
+  colnames(matrices) <- paste0("sample_", sra_id, "-", colnames(matrices)) # Change barcode names based on the samples
+  
+  # QC
+  total_counts <- Matrix::colSums(matrices) # total UMIs
+  cell_counts <- Matrix::rowSums(matrices) # total cells per gene
+  ## Calculate mitochondrial percentage
+  genes <- rownames(matrices) # get gene names
+  mito_genes <- grep("^MT-", genes, value = TRUE) # identify mitochondrial genes
+  mito_counts <- Matrix::colSums(matrices[mito_genes, ]) # mitochondrial UMIs per cell
+  percent_mito <- mito_counts / total_counts * 100
+  ## Keep only cells with <10% mitochondrial expression and 500 < UMI_count < max_total_counts (dependent on conditions)
+  if (histologic_type == "RS"){
+    max_total_counts <- 12000
+  }
+  else{
+    max_total_counts <- 8000
+  }
+  keep_cells <- which(percent_mito < 10 & (total_counts > 500 & total_counts < max_total_counts)) 
+  ## Keep only genes with cells > 10
+  keep_genes <- which(cell_counts > 10) 
+  ## Filter counts matrix
+  filtered_matrices <- matrices[keep_genes, keep_cells]
+
+  # Preprocess data
+  p2.processed <- basicP2proc(filtered_matrices)
+  
+  # Create cell metadata
+  sra_id_col <- rep(sra_id, nrow(p2.processed$counts))
+  subject_id_col <- rep(subject_id, nrow(p2.processed$counts))
+  histologic_type_col <- rep(histologic_type, nrow(p2.processed$counts))
+  cell_metadata <- data.frame(sra_id_col, 
+                              subject_id_col, 
+                              histologic_type_col, 
+                              row.names=rownames(p2.processed$counts)
+                              )
+  
+  # Save the object
+  saveRDS(p2.processed, save_obj_path)
+  saveRDS(cell_metadata, save_cell_metadata_path)
+}
+```
+
+```{r}
+# Run the my_pagoda2_proprocess
+for (i in 1:nrow(metadata)){
+  print(metadata$SRA_RUN[i])
+  if (metadata$histological_type[i] == "Erythroid"){
+    NULL
+  }
+  else {
+    sra_id <- metadata$SRA_RUN[i]
+    subject_id <- metadata$subject_id[i]
+    histologic_type <- metadata$histological_type[i]
+    my_pagoda2_preprocess(sra_id, subject_id, histologic_type)
+  }
+}
+```
+
+
+
+
+
+
+
