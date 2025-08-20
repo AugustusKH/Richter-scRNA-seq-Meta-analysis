@@ -137,13 +137,13 @@ my_pagoda2_preprocess <- function(sra_id, subject_id, histologic_type){
   )
   path_to_data <- here::here(path_to_data)
   save_obj_path <- str_c(
-    "reanalysis/R_objects/pagoda2_",
+    "reanalysis/R_objects/pagoda2_objects/pagoda2_",
     sra_id,
     ".rds"
   )
   save_obj_path <- here::here(save_obj_path)
   save_cell_metadata_path <- str_c(
-    "reanalysis/metadata/cellmetadata_",
+    "reanalysis/metadata/pagoda2_cell_metadata/cellmetadata_",
     sra_id,
     ".rds"
   )
