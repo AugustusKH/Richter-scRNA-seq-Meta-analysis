@@ -1,0 +1,160 @@
+---
+title: "Parray_2023_all_cell_annotation"
+author: "Pakorn Sagulkoo"
+format:
+  html:
+    embed-resources: true
+editor: visual
+---
+
+## Import the relevant packages and set working path directory
+
+```{r, setup, message=FALSE, warning=FALSE}
+# Attach the packages you will need for the analysis.
+library(Matrix)
+library(igraph)
+library(pagoda2)
+library(dplyr)
+library(ggplot2)
+library(ggrepel)
+library(patchwork)
+library(conos)
+library(stringr)
+```
+
+```{r}
+# Check root path
+here::here()
+```
+
+## Define paths
+
+```{r}
+path_to_obj <- here::here("reanalysis/R_objects/1-all_joint_clusters_conos.rds")
+path_to_cell_metadata <- here::here("reanalysis/metadata/1-all_joint_clusters_cell_metadata.rds")
+path_to_save_obj <- here::here("reanalysis/R_objects/2-all_annotate_conos.rds")
+path_to_save_cell_metadata <- here::here("reanalysis/metadata/2-all_annotate_cell_metadata.rds")
+```
+
+## Load data
+
+```{r}
+con <- readRDS(path_to_obj)
+cell_metadata <- readRDS(path_to_cell_metadata)
+```
+
+## Cluster visualisation
+
+```{r}
+con$plotGraph(alpha=0.1, title="Leiden clusters")
+```
+
+## Gene expression
+
+### B cell biomerkers
+
+```{r, fig.height=4, fig.width=15}
+# B cell biomerkers
+CD19.plt <- con$plotGraph(gene="CD19", title="CD19")
+CD5.plt <- con$plotGraph(gene="CD5", title="CD5")
+CD79A.plt <- con$plotGraph(gene="CD79A", title="CD79A")
+
+CD19.plt + CD5.plt + CD79A.plt
+```
+
+### Erythroid biomarkers
+
+```{r, fig.height=4, fig.width=15}
+# Erythroid biomarkers
+HBM.plt <- con$plotGraph(gene="HBM", title="HBM")
+HBB.plt <- con$plotGraph(gene="HBB", title="HBB")
+HBA1.plt <- con$plotGraph(gene="HBA1", title="HBA1")
+
+HBM.plt + HBB.plt + HBA1.plt
+```
+
+### T cell biomarkers
+
+```{r, fig.height=4, fig.width=5}
+# All T cells
+con$plotGraph(gene="CD3D", title="CD3D")
+```
+
+```{r, fig.height=4, fig.width=5}
+# CD8 T cells
+con$plotGraph(gene="CD8A", title="CD8A")
+```
+
+```{r, fig.height=5, fig.width=12}
+# CD4 T cells
+CD4.plt <- con$plotGraph(gene="CD4", title="CD4")
+IL7R.plt <- con$plotGraph(gene="IL7R", title="IL7R")
+
+CD4.plt + IL7R.plt
+```
+
+### NK cell biomarkers
+
+```{r, fig.height=4, fig.width=15}
+# NK cell biomarkers
+NKG7.plt <- con$plotGraph(gene="NKG7", title="NKG7")
+NCAM1.plt <- con$plotGraph(gene="NCAM1", title="NCAM1 (CD56)")
+FCGR3A.plt <- con$plotGraph(gene="FCGR3A", title="FCGR3A (CD16)")
+
+NKG7.plt + NCAM1.plt + FCGR3A.plt
+```
+
+### Myeloid and monocyte biomarkers
+
+Biomarkers for myeloid cells, such as CD11c (ITGAX), CD13 (ANPEP), CD14, CD15 (FUT4), CD64(FCGR1A), can be used to identify myeloid cells in the plot.
+
+```{r, fig.height=4, fig.width=15}
+# Myeloid and monocyte biomarkers
+CD14.plt <- con$plotGraph(gene="CD14", title="CD14")
+ITGAX.plt <- con$plotGraph(gene="ITGAX", title="ITGAX (CD11c)")
+FCGR1A.plt <- con$plotGraph(gene="FCGR1A", title="FCGR1A (CD64)")
+
+CD14.plt + ITGAX.plt + FCGR1A.plt
+```
+
+```{r}
+# Use for find gene name of interest
+grep("CD15", colnames(con$samples[[1]]$counts), value = TRUE)
+```
+
+## Cell type annotation
+
+```{r}
+# Add cell types to the cell metadata
+cell_metadata <- cell_metadata %>%
+  mutate(cell_type = case_when(
+    leiden_cluster == "1" ~ "B cell",
+    leiden_cluster == "2" ~ "CD8 T cell",
+    leiden_cluster == "3" ~ "CD4 T cell",
+    leiden_cluster == "4" ~ "Mixed B and T cell",
+    leiden_cluster == "5" ~ "Erythoid cell",
+    leiden_cluster == "6" ~ "Myeloid cell",
+    leiden_cluster == "7" ~ "NK cell"
+  ))
+```
+
+```{r}
+# Visualise the annotation
+cell_anno.vec <- setNames(cell_metadata$cell_type, row.names(cell_metadata))
+con$plotGraph(alpha=0.1, 
+              groups=cell_anno.vec, 
+              title="Cell annotation",
+              show.legend = TRUE) 
+```
+
+## Save the results
+
+```{r, eval=FALSE}
+saveRDS(con, path_to_save_obj)
+saveRDS(cell_metadata, path_to_save_cell_metadata)
+```
+
+
+
+
+
