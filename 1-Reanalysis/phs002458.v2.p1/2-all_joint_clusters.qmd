@@ -104,6 +104,7 @@ con$buildGraph(k=30, k.self=5, space='PCA', ncomps=30, n.odgenes=2000, matching.
 
 ```{r}
 # Clustering
+set.seed(1234)
 con$findCommunities(method=leiden.community, resolution=0.5)
 ```
 
@@ -236,12 +237,11 @@ grep("CD15", colnames(con$samples[[1]]$counts), value = TRUE)
 cell_metadata_combined <- cell_metadata_combined %>%
   mutate(cell_type = case_when(
     leiden_cluster == "1" ~ "B cell",
-    leiden_cluster == "2" ~ "CD8 T cell",
-    leiden_cluster == "3" ~ "CD4 T cell",
-    leiden_cluster == "4" ~ "B cell",
-    leiden_cluster == "5" ~ "Myeloid cell",
-    leiden_cluster == "6" ~ "Erythroid cell",
-    leiden_cluster == "7" ~ "NK cell"
+    leiden_cluster == "2" ~ "CD4 T cell",
+    leiden_cluster == "3" ~ "CD8 T cell",
+    leiden_cluster == "4" ~ "Myeloid cell",
+    leiden_cluster == "5" ~ "Erythoid cell",
+    leiden_cluster == "6" ~ "NK cell"
   ))
 ```
 
