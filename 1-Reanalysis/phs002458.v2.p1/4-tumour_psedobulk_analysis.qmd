@@ -323,7 +323,7 @@ lfc_vector <- na.omit(lfc_vector) # Omit any NA values
 lfc_vector <- sort(lfc_vector, decreasing = TRUE) # Sort the log2 fold change in descending order
 ```
 
-### Hallmark
+#### Hallmark
 
 ```{r, message=FALSE, warning=FALSE}
 # Run GSEA (Hallmarks)
@@ -377,7 +377,7 @@ OXPHOS_gsea.plt <- gseaplot(HM_gse,
 E2F_gsea.plt + Myc_gsea.plt + OXPHOS_gsea.plt
 ```
 
-### GO:BP
+#### GO:BP
 
 ```{r, message=FALSE, warning=FALSE}
 # GSEA in GO-BP term
