@@ -47,8 +47,8 @@ head(sample_metadata)
 
 ```{r}
 # Collect sra with CLL
-sra_cll <- sample_metadata[sample_metadata$histological_type == "CLL", "SRA_RUN"]
-sra_cll
+sra_tumour <- sample_metadata[sample_metadata$is_tumor == "Yes", "SRA_RUN"]
+sra_tumour
 ```
 
 ```{r}
@@ -58,27 +58,27 @@ RT_subject_ids <- unique(RT_subject_ids)
 RT_subject_ids
 ```
 
-```{r}
+```{r, eval=FALSE}
 # Load the objects and collect in a list
-obj_files_to_load <- str_c(path_to_obj , "pagoda2_", sra_cll, ".rds", sep = "")
+obj_files_to_load <- str_c(path_to_obj , "pagoda2_", sra_tumour, ".rds", sep = "")
 panel.preprocessed <- purrr::map(obj_files_to_load, function(path) {
   pagoda2_obj <- readRDS(path)
   pagoda2_obj
 })
-names(panel.preprocessed) <- sra_cll
+names(panel.preprocessed) <- sra_tumour
 ```
 
-```{r}
+```{r, eval=FALSE}
 # Load the cell metadata from all pagoda2 objects
-cell_meta_files_to_load <- str_c(path_to_cell_metadata, "cellmetadata_", sra_cll, ".rds", sep = "")
+cell_meta_files_to_load <- str_c(path_to_cell_metadata, "cellmetadata_", sra_tumour, ".rds", sep = "")
 cell_metada.list <- purrr::map(cell_meta_files_to_load, function(path) {
   pagoda2_cell_metadata <- readRDS(path)
   pagoda2_cell_metadata
 })
-names(cell_metada.list) <- sra_cll
+names(cell_metada.list) <- sra_tumour
 ```
 
-```{r}
+```{r, eval=FALSE}
 # Combine all cell metadata together
 cell_metadata_combined <- bind_rows(cell_metada.list) # rbind
 
@@ -88,37 +88,56 @@ colnames(cell_metadata_combined)[colnames(cell_metadata_combined) == "subject_id
 colnames(cell_metadata_combined)[colnames(cell_metadata_combined) == "histologic_type_col"] <- "histologic_type"
 ```
 
-```{r}
+```{r, eval=FALSE}
 # Create conditions column to the cell metadata
 cell_metadata_combined$cond <- ifelse(cell_metadata_combined$subject_id %in% RT_subject_ids, "RT", "CLL")
 ```
 
 ## Create a conos object with pre-processing
 
-```{r}
+```{r, eval=FALSE}
 # Create an object
 con <- Conos$new(panel.preprocessed, n.cores=1)
 ```
 
-```{r, message=FALSE, warning=FALSE, results='hide'}
+```{r, message=FALSE, warning=FALSE, results='hide', eval=FALSE}
 # Build a joint graph
 con$buildGraph(k=30, k.self=5, space='PCA', ncomps=30, n.odgenes=2000, matching.method='mNN', metric='angular', score.component.variance=TRUE, verbose=TRUE)
 ```
 
-```{r}
+```{r, eval=FALSE}
 # Leiden clustering
 set.seed(1234)
 con$findCommunities(method=leiden.community, resolution=1)
 ```
 
-```{r}
+```{r, eval=FALSE}
 # Add clustering results to the cell metadata
 cell_metadata_combined$leiden_cluster <- con$clusters$leiden$groups[rownames(cell_metadata_combined)]
 ```
 
-```{r}
+```{r, message=FALSE, warning=FALSE, results='hide', eval=FALSE}
 # Graph embedding
 con$embedGraph(method='largeVis')
+```
+
+## Save the results
+
+```{r, eval=FALSE}
+saveRDS(con, path_to_save_obj)
+saveRDS(cell_metadata_combined, path_to_save_cell_metadata)
+```
+
+## Visualisation
+
+```{r}
+# Define path
+path_to_obj <- here::here("reanalysis/R_objects/1-tumour_joint_clusters_conos.rds")
+path_to_cell_metadata <- here::here("reanalysis/metadata/1-tumour_joint_clusters_cell_metadata.rds")
+
+# Load the data
+con <- readRDS(path_to_obj)
+cell_metadata_combined <- readRDS(path_to_cell_metadata)
 ```
 
 ```{r}
@@ -137,6 +156,15 @@ con$plotGraph(alpha=0.1,
 ```
 
 ```{r}
+# Plot based on histological type
+histo.vec <- setNames(cell_metadata_combined$histologic_type, row.names(cell_metadata_combined))
+con$plotGraph(alpha=0.1, 
+              groups=histo.vec, 
+              title="Histological types",
+              show.legend = TRUE) 
+```
+
+```{r}
 # Plot based on condtions
 cond.vec <- setNames(cell_metadata_combined$cond, row.names(cell_metadata_combined))
 con$plotGraph(alpha=0.1, 
@@ -144,6 +172,57 @@ con$plotGraph(alpha=0.1,
               title="Subject IDs",
               show.legend = TRUE, 
               mark.groups=FALSE) 
+```
+
+## Biomarker identification
+
+```{r, fig.height=4, fig.width=15}
+# B cell biomerkers
+CD19.plt <- con$plotGraph(gene="CD19", title="CD19")
+CD5.plt <- con$plotGraph(gene="CD5", title="CD5")
+CD79A.plt <- con$plotGraph(gene="CD79A", title="CD79A")
+
+CD19.plt + CD5.plt + CD79A.plt
+```
+
+```{r, fig.height=4, fig.width=15}
+# Erythroid biomarkers
+HBM.plt <- con$plotGraph(gene="HBM", title="HBM")
+HBB.plt <- con$plotGraph(gene="HBB", title="HBB")
+HBA1.plt <- con$plotGraph(gene="HBA1", title="HBA1")
+
+HBM.plt + HBB.plt + HBA1.plt
+```
+
+```{r, fig.height=4, fig.width=5}
+# All T cells
+con$plotGraph(gene="CD3D", title="CD3D")
+```
+
+```{r, fig.height=4, fig.width=15}
+# NK cell biomarkers
+NKG7.plt <- con$plotGraph(gene="NKG7", title="NKG7")
+NCAM1.plt <- con$plotGraph(gene="NCAM1", title="NCAM1 (CD56)")
+FCGR3A.plt <- con$plotGraph(gene="FCGR3A", title="FCGR3A (CD16)")
+
+NKG7.plt + NCAM1.plt + FCGR3A.plt
+```
+
+```{r, fig.height=4, fig.width=15}
+# Myeloid and monocyte biomarkers
+CD14.plt <- con$plotGraph(gene="CD14", title="CD14")
+ITGAX.plt <- con$plotGraph(gene="ITGAX", title="ITGAX (CD11c)")
+FCGR1A.plt <- con$plotGraph(gene="FCGR1A", title="FCGR1A (CD64)")
+
+CD14.plt + ITGAX.plt + FCGR1A.plt
+```
+
+From the feature plots, we can see that cluster 1, 2, 3, 4, and 8 are tumour cells. We then extract them for further analysis.
+
+```{r}
+# Extract cell barcodes which are tumour cells 
+tumour_barcodes <- rownames(cell_metadata_combined)[cell_metadata_combined$leiden_cluster %in% c(1, 2, 3, 4, 8)]
+head(tumour_barcodes)
 ```
 
 ## Pseudobulk analysis between RT and CLL conditions
@@ -161,7 +240,7 @@ library(msigdbr)
 ### Aggregate the raw matrices and gene expression analysis using DESeq2
 
 ```{r}
-# Define function for quality control for raw counts
+# Define function for quality control for raw counts and keep only tumour cells
 my_QC <- function(count) {
   total_counts <- Matrix::colSums(count) # total UMIs
   cell_counts <- Matrix::rowSums(count) # total cells per gene
@@ -181,6 +260,10 @@ my_QC <- function(count) {
   # Filter counts matrix
   filtered_count <- count[keep_genes, keep_cells]
   
+  # Keep tumour cells
+  keep_barcodes <- colnames(filtered_count)[colnames(filtered_count) %in% tumour_barcodes]
+  filtered_count <- filtered_count[, keep_barcodes, drop=FALSE] 
+  
   # Return the filtered matrix
   return(filtered_count)
 }
@@ -189,13 +272,14 @@ my_QC <- function(count) {
 ```{r, message=FALSE, warning=FALSE, results='hide'}
 # Load raw count matrix data
 path_to_rawcount <- here::here("expression_data/")
-rawcounts_files_to_load <- str_c(path_to_rawcount , sra_cll, "/count_matrices/outs/filtered_feature_bc_matrix/", sep = "")
-cell_count.list <- purrr::map(rawcounts_files_to_load, function(path) {
+rawcounts_files_to_load <- str_c(path_to_rawcount , sra_tumour, "/count_matrices/outs/filtered_feature_bc_matrix/", sep = "")
+cell_count.list <- purrr::map2(sra_tumour, rawcounts_files_to_load, function(id, path) {
   raw_counts <- read10xMatrix(path)
+  colnames(raw_counts) <- paste0("sample_", id, "-", colnames(raw_counts)) # Change barcode names based on the samples
   filtered_count <- my_QC(raw_counts)
   filtered_count
 })
-names(cell_count.list) <- sra_cll
+names(cell_count.list) <- sra_tumour
 ```
 
 ```{r}
@@ -224,7 +308,7 @@ rownames(all_counts) <- all_genes
 
 ```{r}
 # Generate metadata for DESeq2
-RT_sra <- sample_metadata[sample_metadata$histological_type == "CLL" & sample_metadata$subject_id %in% RT_subject_ids, "SRA_RUN"]
+RT_sra <- sample_metadata[sample_metadata$subject_id %in% RT_subject_ids, "SRA_RUN"]
 colData <- data.frame(samples = colnames(all_counts))
 colData$condition <- ifelse(colData$samples %in% RT_sra, "RT", "CLL")
 ```
@@ -347,7 +431,9 @@ HM_gse <- GSEA(
 ```{r}
 # Collect the GSEA result
 HM_GSEA.result <- HM_gse@result
-HM_GSEA.result
+HM_GSEA.result %>%
+  as_tibble() %>%
+  dplyr::select(c(Description, NES, pvalue, p.adjust))
 ```
 
 ```{r, fig.height=4, fig.width=18}
@@ -433,12 +519,7 @@ mitochondrial_GO_gsea.plt <- gseaplot(GOBP_gsea,
 OXPHOS_GO_gsea.plt + BCR_GO_gsea.plt + mitochondrial_GO_gsea.plt
 ```
 
-## Save the results
 
-```{r, eval=FALSE}
-saveRDS(con, path_to_save_obj)
-saveRDS(cell_metadata_combined, path_to_save_cell_metadata)
-```
 
 
 
