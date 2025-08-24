@@ -1,0 +1,527 @@
+---
+title: "Parry_2023_microenvironment_analysis"
+author: "Pakorn Sagulkoo"
+format:
+  html:
+    embed-resources: true
+editor: visual
+---
+
+## Import the relevant packages and set working path directory
+
+```{r, setup, message=FALSE, warning=FALSE}
+# Attach the packages you will need for the analysis.
+library(Matrix)
+library(igraph)
+library(pagoda2)
+library(dplyr)
+library(ggplot2)
+library(ggrepel)
+library(patchwork)
+library(conos)
+library(stringr)
+```
+
+```{r}
+# Check root path
+here::here()
+```
+
+## Define paths
+
+```{r}
+path_to_sample_metadata <- here::here("metadata/metadata.csv")
+path_to_obj <- here::here("reanalysis/R_objects/pagoda2_objects/")
+path_to_cell_metadata <- here::here("reanalysis/metadata/pagoda2_cell_metadata/")
+path_to_save_obj <- here::here("reanalysis/R_objects/1-microenviron_joint_clusters_conos.rds")
+path_to_save_cell_metadata <- here::here("reanalysis/metadata/1-microenviron_joint_clusters_cell_metadata.rds")
+```
+
+## Load data
+
+```{r}
+# Load sample metadata
+sample_metadata <- read.csv(path_to_sample_metadata)
+head(sample_metadata)
+```
+
+```{r}
+# Collect sra with microenvironment
+sra_microenviron <- sample_metadata[sample_metadata$is_tumor == "No" & sample_metadata$histological_type != "Erythroid", "SRA_RUN"]
+sra_microenviron
+```
+
+```{r, eval=FALSE}
+# Load the objects and collect in a list
+obj_files_to_load <- str_c(path_to_obj , "pagoda2_", sra_microenviron, ".rds", sep = "")
+panel.preprocessed <- purrr::map(obj_files_to_load, function(path) {
+  pagoda2_obj <- readRDS(path)
+  pagoda2_obj
+})
+names(panel.preprocessed) <- sra_microenviron
+```
+
+```{r, eval=FALSE}
+# Load the cell metadata from all pagoda2 objects
+cell_meta_files_to_load <- str_c(path_to_cell_metadata, "cellmetadata_", sra_microenviron, ".rds", sep = "")
+cell_metada.list <- purrr::map(cell_meta_files_to_load, function(path) {
+  pagoda2_cell_metadata <- readRDS(path)
+  pagoda2_cell_metadata
+})
+names(cell_metada.list) <- sra_microenviron
+```
+
+```{r, eval=FALSE}
+# Combine all cell metadata together
+cell_metadata_combined <- bind_rows(cell_metada.list) # rbind
+
+# Rename in some columns
+colnames(cell_metadata_combined)[colnames(cell_metadata_combined) == "sra_id_col"] <- "sra_id"
+colnames(cell_metadata_combined)[colnames(cell_metadata_combined) == "subject_id_col"] <- "subject_id"
+colnames(cell_metadata_combined)[colnames(cell_metadata_combined) == "histologic_type_col"] <- "histologic_type"
+```
+
+```{r, eval=FALSE}
+# Create conditions column to the cell metadata
+RT_subject_ids <- unique(sample_metadata[sample_metadata$histological_type == "RS", "subject_id"])
+cell_metadata_combined$cond <- ifelse(cell_metadata_combined$subject_id %in% RT_subject_ids, "RT", "CLL")
+```
+
+## Create a conos object with pre-processing
+
+```{r, eval=FALSE}
+# Create an object
+con <- Conos$new(panel.preprocessed, n.cores=1)
+```
+
+```{r, message=FALSE, warning=FALSE, results='hide', eval=FALSE}
+# Build a joint graph
+con$buildGraph(k=30, k.self=5, space='PCA', ncomps=30, n.odgenes=2000, matching.method='mNN', metric='angular', score.component.variance=TRUE, verbose=TRUE)
+```
+
+```{r, eval=FALSE}
+# Leiden clustering
+set.seed(1234)
+con$findCommunities(method=leiden.community, resolution=2.5)
+```
+
+```{r, eval=FALSE}
+# Add clustering results to the cell metadata
+cell_metadata_combined$leiden_cluster <- con$clusters$leiden$groups[rownames(cell_metadata_combined)]
+```
+
+```{r, message=FALSE, warning=FALSE, results='hide', eval=FALSE}
+# Graph embedding
+con$embedGraph(method='largeVis')
+```
+
+## Save the results
+
+```{r, eval=FALSE}
+saveRDS(con, path_to_save_obj)
+saveRDS(cell_metadata_combined, path_to_save_cell_metadata)
+```
+
+## Visualisation
+
+```{r}
+# Define path
+path_to_obj <- here::here("reanalysis/R_objects/1-microenviron_joint_clusters_conos.rds")
+path_to_cell_metadata <- here::here("reanalysis/metadata/1-microenviron_joint_clusters_cell_metadata.rds")
+
+# Load the data
+con <- readRDS(path_to_obj)
+cell_metadata_combined <- readRDS(path_to_cell_metadata)
+```
+
+```{r}
+# Plot based on clusters
+con$plotGraph(alpha=0.1, title="Leiden clusters")
+```
+
+```{r}
+# Plot based on subjects
+subject_id.vec <- setNames(cell_metadata_combined$subject_id, row.names(cell_metadata_combined))
+con$plotGraph(alpha=0.1, 
+              groups=subject_id.vec, 
+              title="Subject IDs",
+              show.legend = TRUE, 
+              mark.groups=FALSE) 
+```
+
+```{r}
+# Plot based on condtions
+cond.vec <- setNames(cell_metadata_combined$cond, row.names(cell_metadata_combined))
+con$plotGraph(alpha=0.1, 
+              groups=cond.vec, 
+              title="Subject IDs",
+              show.legend = TRUE, 
+              mark.groups=FALSE) 
+```
+
+## Biomarker identification
+
+### B cell biomerkers
+
+```{r, fig.height=4, fig.width=15}
+# B cell biomerkers
+CD19.plt <- con$plotGraph(gene="CD19", title="CD19")
+CD5.plt <- con$plotGraph(gene="CD5", title="CD5")
+CD79A.plt <- con$plotGraph(gene="CD79A", title="CD79A")
+
+CD19.plt + CD5.plt + CD79A.plt
+```
+
+### Erythroid cell biomarkers
+
+```{r, fig.height=4, fig.width=15}
+# Erythroid biomarkers
+HBM.plt <- con$plotGraph(gene="HBM", title="HBM")
+HBB.plt <- con$plotGraph(gene="HBB", title="HBB")
+HBA1.plt <- con$plotGraph(gene="HBA1", title="HBA1")
+
+HBM.plt + HBB.plt + HBA1.plt
+```
+
+### T cell biomarkers
+
+```{r, fig.height=4, fig.width=5}
+# All T cells
+con$plotGraph(gene="CD3D", title="CD3D")
+```
+
+#### CD8 T cells
+
+```{r, fig.height=4, fig.width=5}
+# CD8 T cells
+con$plotGraph(gene="CD8A", title="CD8A")
+```
+
+#### CD4 T cells
+
+```{r, fig.height=5, fig.width=12}
+# CD4 T cells
+CD4.plt <- con$plotGraph(gene="CD4", title="CD4")
+IL7R.plt <- con$plotGraph(gene="IL7R", title="IL7R")
+
+CD4.plt + IL7R.plt
+```
+
+### NK cell biomarkers
+
+```{r, fig.height=4, fig.width=15}
+# NK cell biomarkers
+NKG7.plt <- con$plotGraph(gene="NKG7", title="NKG7")
+NCAM1.plt <- con$plotGraph(gene="NCAM1", title="NCAM1 (CD56)")
+FCGR3A.plt <- con$plotGraph(gene="FCGR3A", title="FCGR3A (CD16)")
+
+NKG7.plt + NCAM1.plt + FCGR3A.plt
+```
+
+### Myeloid and monocyte biomarkers
+
+```{r, fig.height=4, fig.width=15}
+# Myeloid and monocyte biomarkers
+CD14.plt <- con$plotGraph(gene="CD14", title="CD14")
+ITGAX.plt <- con$plotGraph(gene="ITGAX", title="ITGAX (CD11c)")
+FCGR1A.plt <- con$plotGraph(gene="FCGR1A", title="FCGR1A (CD64)")
+
+CD14.plt + ITGAX.plt + FCGR1A.plt
+```
+
+### Other biomarkers for lymphocyte subclusters
+
+```{r}
+# Create plots
+gene.list <- c("CD3D", "CD8A", "CD4", "FCGR3A", "PRF1", "GZMB", "XCL1", "GZMK", "IL7R", "SELL", "CX3CR1", 
+               "CCR7", "FOXP3", "TCF7", "TOX")
+
+plot.list <- purrr::map(gene.list, function(gene){
+  plt <- con$plotGraph(gene=gene, title=gene)
+  plt
+})
+
+names(plot.list) <- str_c(gene.list, ".plt", sep="")
+```
+
+```{r, fig.height=8, fig.width=15}
+# Feature plots
+wrap_plots(plot.list, ncol = 5, nrow = 3)
+```
+
+```{r}
+# Feature plot for ZNF683 expression
+gene_interest <- "ZNF683"
+con$plotGraph(gene=gene_interest, title=gene_interest)
+```
+
+## Cell type annotation
+
+```{r}
+# Add cell types to the cell metadata
+cell_metadata_combined <- cell_metadata_combined %>%
+  mutate(cell_type = case_when(
+    leiden_cluster == "1" ~ "T E/EM, CD8+",
+    leiden_cluster == "2" ~ "T naive, CD4+",
+    leiden_cluster == "3" ~ "Erythroid progenitor",
+    leiden_cluster == "4" ~ "T cytotoxic, CD4+",
+    leiden_cluster == "5" ~ "T, CD4+",
+    leiden_cluster == "6" ~ "T E/EM, CD8+",
+    leiden_cluster == "7" ~ "T reg, CD4+",
+    leiden_cluster == "8" ~ "NK, CD16+",
+    leiden_cluster == "9" ~ "T naive, CD4+",
+    leiden_cluster == "10" ~ "T exhausted, CD8+",
+    leiden_cluster == "11" ~ "T mem., GZMK+CD8+",
+    leiden_cluster == "12" ~ "Malignant B",
+    leiden_cluster == "13" ~ "NK, CD16+",
+    leiden_cluster == "14" ~ "Erythroid progenitor",
+    leiden_cluster == "15" ~ "NK, CD16-",
+    leiden_cluster == "16" ~ "monocytes, CD14+",
+    leiden_cluster == "17" ~ "monocytes, CD16+",
+    leiden_cluster == "18" ~ "Malignant B",
+    leiden_cluster == "19" ~ "Suspected doublets"
+  ))
+```
+
+```{r}
+# Visualise the annotation
+cell_anno.vec <- setNames(cell_metadata_combined$cell_type, row.names(cell_metadata_combined))
+con$plotGraph(alpha=0.1, 
+              groups=cell_anno.vec, 
+              mark.groups=FALSE,
+              title="Cell annotation",
+              show.legend = TRUE) +
+  guides(
+    colour = guide_legend(override.aes = list(size=5, alpha = 1))  # increase dot size in legend
+  ) 
+```
+
+## Pseudobulk analysis of lymphocyte subtypes
+
+```{r, message=FALSE, warning=FALSE}
+# Import the relevant packages
+library(DESeq2)
+library(tibble)
+library(pheatmap)
+library(RColorBrewer)
+```
+
+### Create a count matrix for lymphocyte subclusters
+
+```{r}
+# Create a dictionary-like data structure recording cluster numbers and lymphocyte subclusters
+lymphocyte_subclusters.dict <- c("1" = "T E/EM, CD8+",
+                                 "2" = "T naive, CD4+",
+                                 "4" = "T cytotoxic, CD4+",
+                                 "5" = "T, CD4+",
+                                 "6" = "T E/EM, CD8+",
+                                 "7" = "T reg, CD4+",
+                                 "8" = "NK, CD16+",
+                                 "9" = "T naive, CD4+",
+                                 "10" = "T exhausted, CD8+",
+                                 "11" = "T mem., GZMK+CD8+",
+                                 "13" = "NK, CD16+",
+                                 "15" = "NK, CD16-"
+                                 )
+```
+
+```{r}
+# Collect cell barcodes in each subclusters and collect in a list
+lymphocyte_barcodes.list <- purrr::map(lymphocyte_subclusters.dict, function(subtype){
+  barcodes <- rownames(cell_metadata_combined)[cell_metadata_combined$cell_type == subtype]
+  barcodes
+})
+names(lymphocyte_barcodes.list) <- lymphocyte_subclusters.dict
+
+# Barcodes for all lymphocytes
+lymphocyte_barcodes <- unique(unlist(lymphocyte_barcodes.list))
+```
+
+```{r}
+# Define function for quality control for raw counts and keep only tumour cells
+my_QC <- function(count) {
+  total_counts <- Matrix::colSums(count) # total UMIs
+  cell_counts <- Matrix::rowSums(count) # total cells per gene
+  
+  # Calculate mitochondrial percentage
+  genes <- rownames(count) # get gene names
+  mito_genes <- grep("^MT-", genes, value = TRUE) # identify mitochondrial genes
+  mito_counts <- Matrix::colSums(count[mito_genes, ]) # mitochondrial UMIs per cell
+  percent_mito <- mito_counts / total_counts * 100
+  
+  # Keep only cells with <10% mitochondrial expression and 500 < UMI_count < 8000
+  keep_cells <- which(percent_mito < 10 & (total_counts > 500 & total_counts < 8000)) 
+  
+  # Keep only genes with cells > 10
+  keep_genes <- which(cell_counts > 10) 
+  
+  # Filter counts matrix
+  filtered_count <- count[keep_genes, keep_cells]
+  
+  # Keep lymphocytes
+  keep_barcodes <- colnames(filtered_count)[colnames(filtered_count) %in% lymphocyte_barcodes]
+  filtered_count <- filtered_count[, keep_barcodes, drop=FALSE] 
+  
+  # Return the filtered matrix
+  return(filtered_count)
+}
+```
+
+```{r, message=FALSE, warning=FALSE, results='hide'}
+# Load raw count matrix data
+path_to_rawcount <- here::here("expression_data/")
+rawcounts_files_to_load <- str_c(path_to_rawcount , 
+                                 sra_microenviron, 
+                                 "/count_matrices/outs/filtered_feature_bc_matrix/", 
+                                 sep = ""
+                                 )
+cell_count.list <- purrr::map2(sra_microenviron, rawcounts_files_to_load, function(id, path) {
+  raw_counts <- read10xMatrix(path)
+  colnames(raw_counts) <- paste0("sample_", id, "-", colnames(raw_counts)) # Change barcode names based on the samples
+  filtered_count <- my_QC(raw_counts)
+  filtered_count
+})
+names(cell_count.list) <- sra_microenviron
+```
+
+```{r}
+# Create raw count matrix merging all samples
+all_genes <- Reduce(union, lapply(cell_count.list, rownames)) # Get all gene names
+
+aligned.list <- lapply(cell_count.list, function(x) {
+  # Create sparse matrix for all genes
+  mat <- Matrix(0, nrow = length(all_genes), ncol = ncol(x), sparse = TRUE)
+  rownames(mat) <- all_genes
+  colnames(mat) <- colnames(x)
+  
+  # Fill existing counts (sparse assignment)
+  mat[rownames(x),] <- x
+  return(mat)
+})
+
+lymphocyte_counts <- do.call(cbind, aligned.list) # Unlist aligned.list to merge only one count matrix
+```
+
+```{r}
+# Create list collecting counts in each lymphocyte subcluster
+lymphocyte_subcluster_count.list <- purrr::map(lymphocyte_barcodes.list, function(barcode){
+  subcluster_mat <- lymphocyte_counts[, colnames(lymphocyte_counts) %in% barcode, drop=FALSE]
+  subcluster_mat
+})
+names(lymphocyte_subcluster_count.list) <- names(lymphocyte_barcodes.list)
+
+# Aggregate count in each barcode to same genes
+aggregate.list <- lapply(lymphocyte_subcluster_count.list, rowSums)
+
+# Final count matrix
+all_counts <- do.call(cbind, aggregate.list)
+```
+
+### Gene expression analysis
+
+```{r}
+# Generate metadata for DESeq2
+colData <- data.frame(samples = colnames(all_counts))
+colData$condition <- ifelse(grepl("NK", colData$samples), "NK",
+                            ifelse(grepl("CD8", colData$samples), "CD8", "CD4"))
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Generate a DESeq2 object
+dds <- DESeqDataSetFromMatrix(countData = all_counts,
+                              colData = colData,
+                              design = ~ condition)
+```
+
+```{r}
+# Data transformation
+vsd <- vst(dds, blind=FALSE)       # Variance-stabilizing transformation
+#rld <- rlog(dds_filtered, blind=FALSE)      # Regularized log transformation
+
+# Extract transformed expression matrix
+expr_mat <- assay(vsd)
+
+# Calculate z-scores
+zscore_mat <- t(scale(t(expr_mat)))
+```
+
+### Heatmap visualisation
+
+```{r}
+# List of genes
+genes_to_plot <- c(
+  "CD3D", "CD8A", "CD4", "FCGR3A", "NCR1", "TCF7", "SELL", "LEF1", "CCR7", "FOXP3", "IL2RA", "CTLA4", "LAG3", "TIGIT",
+  "PDCD1", "HAVCR2", "CD160", "ENTPD1", "CD27", "CD28", "TNFRSF4", "ICOS", "TNFRSF9", "CD40LG", "CD226", "GZMA", "GZMB",
+  "PRF1", "GZMK", "NKG7", "TBX21", "EOMES", "TOX", "ZNF683", "IL7R", "CX3CR1", "CD69", "CXCR4", "CXCR3", "KLRG1", "IFNG",
+  "TGFB1", "XCL1", "XCL2"
+)
+```
+
+```{r}
+# Change column names of the matrix
+new_col_names <- c("E/EM_1", "Naive_1", "Cytotoxicity", "CD4", "E/EM_2", "T reg", "CD16+_1", "Naive_2", "Exhausted", 
+                   "GZMK+ mem.", "CD16+_2", "CD16-")
+
+# Copy zscore_mat
+zscore_mat_selected_genes <- zscore_mat[rownames(zscore_mat) %in% genes_to_plot, ]
+colnames(zscore_mat_selected_genes) <- new_col_names
+```
+
+```{r}
+# Extract main and sub- clusters info from column names
+primary_clusters <-  ifelse(grepl("NK", colnames(zscore_mat)), "NK",
+                            ifelse(grepl("CD8", colnames(zscore_mat)), "CD8", "CD4"))
+secondary_clusters <- colnames(zscore_mat_selected_genes)
+
+# Create annotation dataframe
+annotation_col <- data.frame(
+  MainType = factor(primary_clusters, levels = c("NK", "CD8", "CD4")),
+  SubType = factor(secondary_clusters, levels = c("CD16+_1", "CD16+_2", "CD16-", "Exhausted", "E/EM_1", "E/EM_2",
+                                                  "GZMK+ mem.", "Cytotoxicity", "T reg", "Naive_1", "Naive_2", "CD4"))
+)
+annotation_col <- annotation_col[, c("SubType", "MainType")] # Put MainType above SubType
+rownames(annotation_col) <- colnames(zscore_mat_selected_genes)
+
+# Create ordered genes
+genes_present <- genes_to_plot[genes_to_plot %in% rownames(zscore_mat_selected_genes)]
+order_rows <- match(genes_present, rownames(zscore_mat_selected_genes))
+
+# Order by primary and then secondary annotation and gene list
+order_cols <- order(annotation_col$SubType, annotation_col$MainType)
+zscore_mat_ordered <- zscore_mat_selected_genes[order_rows, order_cols]
+annotation_col_ordered <- annotation_col[order_cols, , drop = FALSE]
+```
+
+```{r, fig.height=8, fig.width=4}
+# Plot
+pheatmap(
+  zscore_mat_ordered,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  show_rownames = TRUE,
+  color = colorRampPalette(rev(brewer.pal(11, "RdYlBu")))(100),
+  annotation_col = annotation_col_ordered,
+  fontsize = 8,
+  fontsize_row = 7,
+  fontsize_col = 7,
+  gaps_col = which(diff(as.numeric(factor(annotation_col_ordered$MainType))) != 0)
+)
+```
+
+### Principal component plot of the samples
+
+```{r, message=FALSE, warning=FALSE}
+# PCA plot
+pcaData <- plotPCA(vsd, intgroup=c("condition", "samples"), returnData=TRUE)
+percentVar <- round(100 * attr(pcaData, "percentVar"))
+ggplot(pcaData, aes(PC1, PC2, color=samples, shape=condition)) +
+  geom_point(size=3) +
+  xlab(paste0("PC1: ",percentVar[1],"% variance")) +
+  ylab(paste0("PC2: ",percentVar[2],"% variance")) + 
+  coord_fixed() +
+  xlim(c(-30, 30)) +
+  ylim(c(-30, 30))
+```
+
+
+
