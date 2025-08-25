@@ -1,0 +1,544 @@
+---
+title: "Parry_2023_tumour_psedobulk_analysis"
+author: "Pakorn Sagulkoo"
+format:
+  html:
+    embed-resources: true
+editor: visual
+---
+
+## Import the relevant packages and set working path directory
+
+```{r, setup, message=FALSE, warning=FALSE}
+# Attach the packages you will need for the analysis.
+library(Matrix)
+library(igraph)
+library(pagoda2)
+library(dplyr)
+library(ggplot2)
+library(ggrepel)
+library(patchwork)
+library(conos)
+library(stringr)
+```
+
+```{r}
+# Check root path
+here::here()
+```
+
+## Define paths
+
+```{r}
+path_to_sample_metadata <- here::here("metadata/metadata.csv")
+path_to_obj <- here::here("reanalysis/R_objects/pagoda2_objects/")
+path_to_cell_metadata <- here::here("reanalysis/metadata/pagoda2_cell_metadata/")
+path_to_save_obj <- here::here("reanalysis/R_objects/1-tumour_joint_clusters_conos.rds")
+path_to_save_cell_metadata <- here::here("reanalysis/metadata/1-tumour_joint_clusters_cell_metadata.rds")
+```
+
+## Load data
+
+```{r}
+# Load sample metadata
+sample_metadata <- read.csv(path_to_sample_metadata)
+head(sample_metadata)
+```
+
+```{r}
+# Collect sra with CLL
+sra_tumour <- sample_metadata[sample_metadata$is_tumor == "Yes", "SRA_RUN"]
+sra_tumour
+```
+
+```{r}
+# Collect RT subjects
+RT_subject_ids <- sample_metadata[sample_metadata$histological_type == "RS", "subject_id"]
+RT_subject_ids <- unique(RT_subject_ids)
+RT_subject_ids
+```
+
+```{r, eval=FALSE}
+# Load the objects and collect in a list
+obj_files_to_load <- str_c(path_to_obj , "pagoda2_", sra_tumour, ".rds", sep = "")
+panel.preprocessed <- purrr::map(obj_files_to_load, function(path) {
+  pagoda2_obj <- readRDS(path)
+  pagoda2_obj
+})
+names(panel.preprocessed) <- sra_tumour
+```
+
+```{r, eval=FALSE}
+# Load the cell metadata from all pagoda2 objects
+cell_meta_files_to_load <- str_c(path_to_cell_metadata, "cellmetadata_", sra_tumour, ".rds", sep = "")
+cell_metada.list <- purrr::map(cell_meta_files_to_load, function(path) {
+  pagoda2_cell_metadata <- readRDS(path)
+  pagoda2_cell_metadata
+})
+names(cell_metada.list) <- sra_tumour
+```
+
+```{r, eval=FALSE}
+# Combine all cell metadata together
+cell_metadata_combined <- bind_rows(cell_metada.list) # rbind
+
+# Rename in some columns
+colnames(cell_metadata_combined)[colnames(cell_metadata_combined) == "sra_id_col"] <- "sra_id"
+colnames(cell_metadata_combined)[colnames(cell_metadata_combined) == "subject_id_col"] <- "subject_id"
+colnames(cell_metadata_combined)[colnames(cell_metadata_combined) == "histologic_type_col"] <- "histologic_type"
+```
+
+```{r, eval=FALSE}
+# Create conditions column to the cell metadata
+cell_metadata_combined$cond <- ifelse(cell_metadata_combined$subject_id %in% RT_subject_ids, "RT", "CLL")
+```
+
+## Create a conos object with pre-processing
+
+```{r, eval=FALSE}
+# Create an object
+con <- Conos$new(panel.preprocessed, n.cores=1)
+```
+
+```{r, message=FALSE, warning=FALSE, results='hide', eval=FALSE}
+# Build a joint graph
+con$buildGraph(k=30, k.self=5, space='PCA', ncomps=30, n.odgenes=2000, matching.method='mNN', metric='angular', score.component.variance=TRUE, verbose=TRUE)
+```
+
+```{r, eval=FALSE}
+# Leiden clustering
+set.seed(1234)
+con$findCommunities(method=leiden.community, resolution=1)
+```
+
+```{r, eval=FALSE}
+# Add clustering results to the cell metadata
+cell_metadata_combined$leiden_cluster <- con$clusters$leiden$groups[rownames(cell_metadata_combined)]
+```
+
+```{r, message=FALSE, warning=FALSE, results='hide', eval=FALSE}
+# Graph embedding
+con$embedGraph(method='largeVis')
+```
+
+## Save the results
+
+```{r, eval=FALSE}
+saveRDS(con, path_to_save_obj)
+saveRDS(cell_metadata_combined, path_to_save_cell_metadata)
+```
+
+## Visualisation
+
+```{r}
+# Define path
+path_to_obj <- here::here("reanalysis/R_objects/1-tumour_joint_clusters_conos.rds")
+path_to_cell_metadata <- here::here("reanalysis/metadata/1-tumour_joint_clusters_cell_metadata.rds")
+
+# Load the data
+con <- readRDS(path_to_obj)
+cell_metadata_combined <- readRDS(path_to_cell_metadata)
+```
+
+```{r}
+# Plot based on clusters
+con$plotGraph(alpha=0.1, title="Leiden clusters")
+```
+
+```{r}
+# Plot based on subjects
+subject_id.vec <- setNames(cell_metadata_combined$subject_id, row.names(cell_metadata_combined))
+con$plotGraph(alpha=0.1, 
+              groups=subject_id.vec, 
+              title="Subject IDs",
+              show.legend = TRUE, 
+              mark.groups=FALSE) 
+```
+
+```{r}
+# Plot based on histological type
+histo.vec <- setNames(cell_metadata_combined$histologic_type, row.names(cell_metadata_combined))
+con$plotGraph(alpha=0.1, 
+              groups=histo.vec, 
+              title="Histological types",
+              show.legend = TRUE) 
+```
+
+```{r}
+# Plot based on condtions
+cond.vec <- setNames(cell_metadata_combined$cond, row.names(cell_metadata_combined))
+con$plotGraph(alpha=0.1, 
+              groups=cond.vec, 
+              title="Conditions",
+              show.legend = TRUE, 
+              mark.groups=FALSE) 
+```
+
+## Biomarker identification
+
+```{r, fig.height=4, fig.width=15}
+# B cell biomerkers
+CD19.plt <- con$plotGraph(gene="CD19", title="CD19")
+CD5.plt <- con$plotGraph(gene="CD5", title="CD5")
+CD79A.plt <- con$plotGraph(gene="CD79A", title="CD79A")
+
+CD19.plt + CD5.plt + CD79A.plt
+```
+
+```{r, fig.height=4, fig.width=15}
+# Erythroid biomarkers
+HBM.plt <- con$plotGraph(gene="HBM", title="HBM")
+HBB.plt <- con$plotGraph(gene="HBB", title="HBB")
+HBA1.plt <- con$plotGraph(gene="HBA1", title="HBA1")
+
+HBM.plt + HBB.plt + HBA1.plt
+```
+
+```{r, fig.height=4, fig.width=5}
+# All T cells
+con$plotGraph(gene="CD3D", title="CD3D")
+```
+
+```{r, fig.height=4, fig.width=15}
+# NK cell biomarkers
+NKG7.plt <- con$plotGraph(gene="NKG7", title="NKG7")
+NCAM1.plt <- con$plotGraph(gene="NCAM1", title="NCAM1 (CD56)")
+FCGR3A.plt <- con$plotGraph(gene="FCGR3A", title="FCGR3A (CD16)")
+
+NKG7.plt + NCAM1.plt + FCGR3A.plt
+```
+
+```{r, fig.height=4, fig.width=15}
+# Myeloid and monocyte biomarkers
+CD14.plt <- con$plotGraph(gene="CD14", title="CD14")
+ITGAX.plt <- con$plotGraph(gene="ITGAX", title="ITGAX (CD11c)")
+FCGR1A.plt <- con$plotGraph(gene="FCGR1A", title="FCGR1A (CD64)")
+
+CD14.plt + ITGAX.plt + FCGR1A.plt
+```
+
+```{r}
+# Create plots
+gene.list <- c("CD19", "CD5", "CD79A", "HBM", "HBB", "HBA1", "CD3D", "CD8A", "CD4", "IL7R", "NKG7", "NCAM1", "FCGR3A", "CD14",
+               "ITGAX", "FCGR1A")
+
+plot.list <- purrr::map(gene.list, function(gene){
+  plt <- con$plotGraph(gene=gene, title=gene)
+  plt
+})
+
+names(plot.list) <- str_c(gene.list, ".plt", sep="")
+```
+
+```{r, fig.height=10, fig.width=15}
+# Feature plots
+wrap_plots(plot.list, ncol = 4, nrow = 4)
+```
+
+From the feature plots, we can see that cluster 1, 2, 3, 4, and 8 are tumour cells. We then extract them for further analysis.
+
+```{r}
+# Extract cell barcodes which are tumour cells 
+tumour_barcodes <- rownames(cell_metadata_combined)[cell_metadata_combined$leiden_cluster %in% c(1, 2, 3, 4, 8)]
+head(tumour_barcodes)
+```
+
+## Pseudobulk analysis between RT and CLL conditions
+
+```{r, message=FALSE, warning=FALSE}
+# Import the relevant packages
+library(DESeq2)
+library(EnhancedVolcano)
+library(clusterProfiler)
+library(org.Hs.eg.db)
+library(enrichplot)
+library(msigdbr)
+```
+
+### Aggregate the raw matrices and gene expression analysis using DESeq2
+
+```{r}
+# Define function for quality control for raw counts and keep only tumour cells
+my_QC <- function(count) {
+  total_counts <- Matrix::colSums(count) # total UMIs
+  cell_counts <- Matrix::rowSums(count) # total cells per gene
+  
+  # Calculate mitochondrial percentage
+  genes <- rownames(count) # get gene names
+  mito_genes <- grep("^MT-", genes, value = TRUE) # identify mitochondrial genes
+  mito_counts <- Matrix::colSums(count[mito_genes, ]) # mitochondrial UMIs per cell
+  percent_mito <- mito_counts / total_counts * 100
+  
+  # Keep only cells with <10% mitochondrial expression and 500 < UMI_count < 8000
+  keep_cells <- which(percent_mito < 10 & (total_counts > 500 & total_counts < 8000)) 
+  
+  # Keep only genes with cells > 10
+  keep_genes <- which(cell_counts > 10) 
+  
+  # Filter counts matrix
+  filtered_count <- count[keep_genes, keep_cells]
+  
+  # Keep tumour cells
+  keep_barcodes <- colnames(filtered_count)[colnames(filtered_count) %in% tumour_barcodes]
+  filtered_count <- filtered_count[, keep_barcodes, drop=FALSE] 
+  
+  # Return the filtered matrix
+  return(filtered_count)
+}
+```
+
+```{r, message=FALSE, warning=FALSE, results='hide'}
+# Load raw count matrix data
+path_to_rawcount <- here::here("expression_data/")
+rawcounts_files_to_load <- str_c(path_to_rawcount , sra_tumour, "/count_matrices/outs/filtered_feature_bc_matrix/", sep = "")
+cell_count.list <- purrr::map2(sra_tumour, rawcounts_files_to_load, function(id, path) {
+  raw_counts <- read10xMatrix(path)
+  colnames(raw_counts) <- paste0("sample_", id, "-", colnames(raw_counts)) # Change barcode names based on the samples
+  filtered_count <- my_QC(raw_counts)
+  filtered_count
+})
+names(cell_count.list) <- sra_tumour
+```
+
+```{r}
+# Aggregate count in each barcode to same genes
+aggregate.list <- lapply(cell_count.list, rowSums)
+```
+
+```{r}
+# Create raw count matrix merging all samples
+all_genes <- Reduce(union, lapply(aggregate.list, names)) # Get all gene names
+
+aligned.list <- lapply(aggregate.list, function(x) {
+  # Create a vector for all genes, fill with 0
+  vec <- numeric(length(all_genes))
+  names(vec) <- all_genes
+  
+  # Fill with existing counts
+  vec[names(x)] <- x
+  return(vec)
+})
+
+all_counts <- do.call(cbind, aligned.list)
+colnames(all_counts) <- names(aggregate.list)
+rownames(all_counts) <- all_genes
+```
+
+```{r}
+# Generate metadata for DESeq2
+RT_sra <- sample_metadata[sample_metadata$subject_id %in% RT_subject_ids, "SRA_RUN"]
+colData <- data.frame(samples = colnames(all_counts))
+colData$condition <- ifelse(colData$samples %in% RT_sra, "RT", "CLL")
+```
+
+```{r, message=FALSE, warning=FALSE, results='hide'}
+# Create a DESeq2 object
+dds <- DESeqDataSetFromMatrix(countData = all_counts,
+                              colData = colData,
+                              design = ~ condition)
+```
+
+```{r, message=FALSE, warning=FALSE, results='hide'}
+# Run DESeq2
+dds$condition <- relevel(dds$condition, ref = "CLL")
+dds <- DESeq(dds)
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Show the results
+res <- results(dds, contrast = c("condition", "RT", "CLL"))
+res <- lfcShrink(dds, contrast = c("condition", "RT", "CLL"), res=res, type = 'normal')
+dea.df <- as.data.frame(res)
+head(dea.df)
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Volcano plot
+FC <- 1
+p <- 0.05
+ 
+keyvals <- rep('grey75', nrow(dea.df))
+names(keyvals) <- rep('NS', nrow(dea.df))
+ 
+keyvals[which(abs(dea.df$log2FoldChange) > FC & dea.df$padj > p)] <- 'grey50'
+names(keyvals)[which(abs(dea.df$log2FoldChange) > FC & dea.df$padj > p)] <- 'log2FoldChange'
+ 
+keyvals[which(abs(dea.df$log2FoldChange) < FC & dea.df$padj < p)] <- 'grey25'
+names(keyvals)[which(abs(dea.df$log2FoldChange)  < FC & dea.df$padj < p)] <- '-Log10Q'
+ 
+keyvals[which(dea.df$log2FoldChange < -FC & dea.df$padj < p)] <- '#0000CD'
+names(keyvals)[which(dea.df$log2FoldChange  < -FC & dea.df$padj < p)] <- 'Signif. down-regulated'
+ 
+keyvals[which(dea.df$log2FoldChange > FC & dea.df$padj < p)] <- '#DC143C'
+names(keyvals)[which(dea.df$log2FoldChange > FC & dea.df$padj < p)] <- 'Signif. up-regulated'
+ 
+unique(keyvals)
+unique(names(keyvals))
+ 
+volcano.plt <- EnhancedVolcano(dea.df,
+  lab = rownames(dea.df),
+  x = 'log2FoldChange',
+  y = 'padj',
+  #selectLab = rownames(res2)[which(names(keyvals) %in% c('NS','log2FoldChange','-Log10Q','low','high'))],
+  xlim = c(-5,5),
+  ylim = c(-0.1,12),
+  xlab = bquote(~Log[2]~ 'fold change'),
+  ylab = bquote(~-Log[10] ~ italic(P)),
+  title = 'Custom colour over-ride',
+  pCutoff = 0.05,
+  FCcutoff = 1,
+  pointSize = 1,
+  labSize = 3,
+  #shape = c(6, 4, 2, 11, 15),
+  colCustom = keyvals,
+  colAlpha = 0.5,
+  legendPosition = 'right',
+  legendLabSize = 12,
+  legendIconSize = 5.0,
+  drawConnectors = FALSE,
+  widthConnectors = 0.5,
+  colConnectors = 'grey50',
+  gridlines.major = TRUE,
+  gridlines.minor = FALSE,
+  border = 'partial',
+  borderWidth = 1.5,
+  borderColour = 'black')
+ 
+volcano.plt
+```
+
+### Gene Set Enrichment Analysis (GSEA)
+
+```{r}
+# Hallmark set
+hs_hm_sets <- read.csv("/mnt/hp-storage/users/pakorns/scRNAseq/GSE201704/GSM6069857/hs_hm_sets.csv")
+
+# GO:BP set
+hs_go_sets <- read.csv("/mnt/hp-storage/users/pakorns/scRNAseq/GSE201704/GSM6069857/hs_go_sets.csv")
+```
+
+```{r}
+# Manipulate the expression data
+lfc_vector <- dea.df$log2FoldChange # Create a named vector ranked based on the log2 fold change
+names(lfc_vector) <- rownames(dea.df) 
+lfc_vector <- na.omit(lfc_vector) # Omit any NA values
+lfc_vector <- sort(lfc_vector, decreasing = TRUE) # Sort the log2 fold change in descending order
+```
+
+#### Hallmark
+
+```{r, message=FALSE, warning=FALSE}
+# Run GSEA (Hallmarks)
+set.seed(2020)
+HM_gse <- GSEA(
+  geneList = lfc_vector, # Ordered ranked gene list
+  minGSSize = 25, # Minimum gene set size
+  maxGSSize = 500, # Maximum gene set set
+  pvalueCutoff = 0.05, # p-value cutoff
+  eps = 0, # Boundary for calculating the p value
+  seed = TRUE, # Set seed to make results reproducible
+  pAdjustMethod = "BH", # Benjamini-Hochberg correction
+  TERM2GENE = dplyr::select(
+    hs_hm_sets,
+    gs_name,
+    gene_symbol
+  )
+)
+```
+
+```{r}
+# Collect the GSEA result
+HM_GSEA.result <- HM_gse@result
+HM_GSEA.result %>%
+  as_tibble() %>%
+  dplyr::select(c(Description, NES, pvalue, p.adjust))
+```
+
+```{r, fig.height=4, fig.width=18}
+# GSEA plot for HALLMARK_E2F_TARGETS, HALLMARK_MYC_TARGETS_V1, and HALLMARK_OXIDATIVE_PHOSPHORYLATION
+
+E2F_gsea.plt <- gseaplot(HM_gse, 
+                          by = "runningScore", 
+                          title = "HALLMARK_E2F_TARGETS", 
+                          geneSetID = "HALLMARK_E2F_TARGETS",
+                          base_size = 10) +
+  theme(axis.text.x = element_text(angle = 0, hjust = 1))
+
+Myc_gsea.plt <- gseaplot(HM_gse, 
+                          by = "runningScore", 
+                          title = "HALLMARK_MYC_TARGETS_V1", 
+                          geneSetID = "HALLMARK_MYC_TARGETS_V1",
+                          base_size = 10) +
+  theme(axis.text.x = element_text(angle = 0, hjust = 1))
+
+OXPHOS_gsea.plt <- gseaplot(HM_gse, 
+                          by = "runningScore", 
+                          title = "HALLMARK_OXIDATIVE_PHOSPHORYLATION", 
+                          geneSetID = "HALLMARK_OXIDATIVE_PHOSPHORYLATION",
+                          base_size = 10) +
+  theme(axis.text.x = element_text(angle = 0, hjust = 1))
+
+E2F_gsea.plt + Myc_gsea.plt + OXPHOS_gsea.plt
+```
+
+#### GO:BP
+
+```{r, message=FALSE, warning=FALSE}
+# GSEA in GO-BP term
+set.seed(2020)
+GOBP_gsea <- GSEA(
+  geneList = lfc_vector, # Ordered ranked gene list
+  minGSSize = 25, # Minimum gene set size
+  maxGSSize = 500, # Maximum gene set set
+  pvalueCutoff = 0.05, # p-value cutoff
+  eps = 0, # Boundary for calculating the p value
+  seed = TRUE, # Set seed to make results reproducible
+  pAdjustMethod = "BH", # Benjamini-Hochberg correction
+  TERM2GENE = dplyr::select(
+    hs_go_sets,
+    gs_name,
+    gene_symbol
+  )
+)
+```
+
+```{r}
+# Collect the GSEA result
+GOBP_GSEA.result <- GOBP_gsea@result
+GOBP_GSEA.result %>%
+  as_tibble() %>%
+  dplyr::select(c(Description, NES, pvalue, p.adjust))
+```
+
+```{r, fig.height=4, fig.width=18}
+# GSEA plot for GOBP_OXIDATIVE_PHOSPHORYLATION, GOBP_B_CELL_RECEPTOR_SIGNALING_PATHWAY, and GOBP_MITOCHONDRIAL_TRANSLATION
+
+OXPHOS_GO_gsea.plt <- gseaplot(GOBP_gsea, 
+                          by = "runningScore", 
+                          title = "GOBP_OXIDATIVE_PHOSPHORYLATION", 
+                          geneSetID = "GOBP_OXIDATIVE_PHOSPHORYLATION",
+                          base_size = 10) +
+  theme(axis.text.x = element_text(angle = 0, hjust = 1))
+
+BCR_GO_gsea.plt <- gseaplot(GOBP_gsea, 
+                          by = "runningScore", 
+                          title = "GOBP_B_CELL_RECEPTOR_SIGNALING_PATHWAY", 
+                          geneSetID = "GOBP_B_CELL_RECEPTOR_SIGNALING_PATHWAY",
+                          base_size = 10) +
+  theme(axis.text.x = element_text(angle = 0, hjust = 1))
+
+mitochondrial_GO_gsea.plt <- gseaplot(GOBP_gsea, 
+                          by = "runningScore", 
+                          title = "GOBP_MITOCHONDRIAL_TRANSLATION", 
+                          geneSetID = "GOBP_MITOCHONDRIAL_TRANSLATION",
+                          base_size = 10) +
+  theme(axis.text.x = element_text(angle = 0, hjust = 1))
+
+OXPHOS_GO_gsea.plt + BCR_GO_gsea.plt + mitochondrial_GO_gsea.plt
+```
+
+
+
+
+
+
