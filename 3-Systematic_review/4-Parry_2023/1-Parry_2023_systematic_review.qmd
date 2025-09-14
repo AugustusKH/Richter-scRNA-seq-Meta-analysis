@@ -92,7 +92,7 @@ seurat.lst <- purrr::pmap(
     return(seurat.obj)
     }
   )
-names(seurat.lst) <- sample_metadata$GSM_ID
+names(seurat.lst) <- sample_metadata$SRA_RUN
 ```
 
 ```{r, eval=FALSE}
@@ -434,49 +434,29 @@ library(DESeq2)
 ```
 
 ```{r}
+# Define paths to save the results
+path_to_save_deseq2_dea <- here::here("scRNAseq/systematic_review/4-Parry_2023/pseudo_bulk_deseq2/Parry_deseq2_dea.rds")
+path_to_save_deseq2_hm_gsea <- here::here("scRNAseq/systematic_review/4-Parry_2023/pseudo_bulk_deseq2/Parry_deseq2_hm_gsea.rds")
+path_to_save_deseq2_go_gsea <- here::here("scRNAseq/systematic_review/4-Parry_2023/pseudo_bulk_deseq2/Parry_deseq2_go_gsea.rds")
+```
+
+```{r, eval=FALSE}
 # Load the object
 filtered_tumour_seurat <- readRDS(path_to_save_filtered_tumour_obj)
 ```
 
-```{r, message=FALSE, warning=FALSE}
-# Data aggregation
-cts <- AggregateExpression(filtered_tumour_seurat,
-                           group.by = c("case"),
-                           assays = "RNA",
-                           slot = "counts",
-                           resturn.seurat = FALSE
-                           )
-cts <- cts$RNA
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Pseudobulk analysis by aggregation based on cases
+RT_subjects <- unique(sample_metadata[sample_metadata$Condition == "RT", "subject_id"])
+dea.df <- pseudobulk_deseq2(filtered_tumour_seurat, aggregate_group.by = "case", RT_subjects)
 
-# Create pseudocount matrix for tumour cells
-pseudo_count.mat <- as.data.frame(cts)
+# Save the expression results
+saveRDS(dea.df, path_to_save_deseq2_dea)
 ```
 
 ```{r}
-# Create metadata for DESeq2 object
-RT_subjects <- unique(sample_metadata[sample_metadata$histological_type == "RS", "subject_id"])
-colData <- data.frame(samples = colnames(pseudo_count.mat))
-colData$condition <- ifelse(colData$samples %in% RT_subjects, "RT", "CLL")
-```
-
-```{r, message=FALSE, warning=FALSE, results='hide'}
-# Create a DESeq2 object
-dds <- DESeqDataSetFromMatrix(countData = pseudo_count.mat,
-                              colData = colData,
-                              design = ~ condition)
-```
-
-```{r, message=FALSE, warning=FALSE, results='hide'}
-# Run DESeq2
-dds$condition <- relevel(dds$condition, ref = "CLL")
-dds <- DESeq(dds)
-```
-
-```{r, message=FALSE, warning=FALSE}
-# Show the results
-res <- results(dds, contrast = c("condition", "RT", "CLL"))
-res <- lfcShrink(dds, contrast = c("condition", "RT", "CLL"), res=res, type = 'normal')
-dea.df <- as.data.frame(res)
+# Show some expression results
+dea.df <- readRDS(path_to_save_deseq2_dea)
 head(dea.df)
 ```
 
@@ -493,9 +473,7 @@ lfc_vector <- sort(lfc_vector, decreasing = TRUE) # Sort the log2 fold change in
 ```{r, message=FALSE, warning=FALSE}
 # Hallmark
 HM_gsea <- HM_GSEA(lfc_vector)
-```
 
-```{r}
 # Collect the HM GSEA result
 HM_GSEA.result <- HM_gsea@result
 HM_GSEA_selected.result <- HM_GSEA.result %>%
@@ -537,9 +515,7 @@ E2F_gsea.plt + Myc_gsea.plt + OXPHOS_gsea.plt
 ```{r, message=FALSE, warning=FALSE}
 # GO:BP
 GOBP_gsea <- GO_GSEA(lfc_vector)
-```
 
-```{r}
 # Collect the GSEA result
 GOBP_GSEA.result <- GOBP_gsea@result
 GOBP_GSEA_selected.result <- GOBP_GSEA.result %>%
@@ -578,7 +554,11 @@ OXPHOS_GO_gsea.plt + BCR_GO_gsea.plt + mitochondrial_GO_gsea.plt
 
 These results validate our single-cell downstream analysis although gene expression analysis using `FindMarkers()` in Seurat package did not provide the consistent results compared to other studies. However, to be consistent with our standard pipeline for analysis, we will collect the result from `FindMarkers()` for further steps. 
 
-
+```{r, eval=FALSE}
+# Save the enrichment results
+saveRDS(HM_gsea, path_to_save_deseq2_hm_gsea)
+saveRDS(GOBP_gsea, path_to_save_deseq2_go_gsea)
+```
 
 
 
