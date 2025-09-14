@@ -241,7 +241,7 @@ FeaturePlot(tumour_seurat,
 As there are some T cells expressing CD3D (cluster 5), we will remove this cluster before psedobulk analysis.
 
 ```{r, eval=FALSE}
-# Filter out NK cells
+# Filter out T cells
 filtered_tumour_seurat <- subset(tumour_seurat, subset = seurat_clusters != 5) 
 
 # Save the filtered tumour object
@@ -394,7 +394,143 @@ saveRDS(GOBP_gsea, path_to_save_hm_gsea)
 saveRDS(GOBP_gsea, path_to_save_go_gsea)
 ```
 
+### Pseudobulk analysis using DESeq2
 
+```{r, message=FALSE, warning=FALSE}
+# Import the relevant packages
+library(DESeq2)
+```
+
+```{r}
+# Define paths to save the results
+path_to_save_deseq2_dea <- here::here("scRNAseq/systematic_review/3-Hing_2022_GSE205704/pseudo_bulk_deseq2/Hing_deseq2_dea.rds")
+path_to_save_deseq2_hm_gsea <- here::here("scRNAseq/systematic_review/3-Hing_2022_GSE205704/pseudo_bulk_deseq2/Hing_deseq2_hm_gsea.rds")
+path_to_save_deseq2_go_gsea <- here::here("scRNAseq/systematic_review/3-Hing_2022_GSE205704/pseudo_bulk_deseq2/Hing_deseq2_go_gsea.rds")
+```
+
+```{r, eval=FALSE}
+# Load the object
+filtered_tumour_seurat <- readRDS(path_to_save_filtered_tumour_obj)
+```
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Pseudobulk analysis by aggregation based on GSM_ID
+RT_subjects <- unique(sample_metadata[sample_metadata$Condition == "RT", "GSM_ID"])
+dea.df <- pseudobulk_deseq2(filtered_tumour_seurat, aggregate_group.by = "case_id", RT_subjects)
+
+# Save the expression results
+saveRDS(dea.df, path_to_save_deseq2_dea)
+```
+
+```{r}
+# Show some expression results
+dea.df <- readRDS(path_to_save_deseq2_dea)
+head(dea.df)
+```
+
+```{r}
+# Manipulate the expression data
+lfc_vector <- dea.df$log2FoldChange # Create a named vector ranked based on the log2 fold change
+names(lfc_vector) <- rownames(dea.df) 
+lfc_vector <- na.omit(lfc_vector) # Omit any NA values
+lfc_vector <- sort(lfc_vector, decreasing = TRUE) # Sort the log2 fold change in descending order
+```
+
+#### GSEA with Hallmark
+
+```{r, message=FALSE, warning=FALSE}
+# Hallmark
+HM_gsea <- HM_GSEA(lfc_vector)
+```
+
+```{r}
+# Collect the HM GSEA result
+HM_GSEA.result <- HM_gsea@result
+HM_GSEA_selected.result <- HM_GSEA.result %>%
+  as_tibble() %>%
+  dplyr::select(c(Description, NES, pvalue, p.adjust))
+
+DT::datatable(HM_GSEA_selected.result, options = list(scrollX = TRUE))
+```
+
+```{r, fig.height=4, fig.width=18}
+# GSEA plot for HALLMARK_E2F_TARGETS, HALLMARK_MYC_TARGETS_V1, and HALLMARK_OXIDATIVE_PHOSPHORYLATION
+
+E2F_gsea.plt <- gseaplot(HM_gsea, 
+                          by = "runningScore", 
+                          title = "HALLMARK_E2F_TARGETS", 
+                          geneSetID = "HALLMARK_E2F_TARGETS",
+                          base_size = 10) +
+  theme(axis.text.x = element_text(angle = 0, hjust = 1))
+
+Myc_gsea.plt <- gseaplot(HM_gsea, 
+                          by = "runningScore", 
+                          title = "HALLMARK_MYC_TARGETS_V1", 
+                          geneSetID = "HALLMARK_MYC_TARGETS_V1",
+                          base_size = 10) +
+  theme(axis.text.x = element_text(angle = 0, hjust = 1))
+
+OXPHOS_gsea.plt <- gseaplot(HM_gsea, 
+                          by = "runningScore", 
+                          title = "HALLMARK_OXIDATIVE_PHOSPHORYLATION", 
+                          geneSetID = "HALLMARK_OXIDATIVE_PHOSPHORYLATION",
+                          base_size = 10) +
+  theme(axis.text.x = element_text(angle = 0, hjust = 1))
+
+E2F_gsea.plt + Myc_gsea.plt + OXPHOS_gsea.plt
+```
+
+#### GSEA with GO:BP
+
+```{r, message=FALSE, warning=FALSE}
+# GO:BP
+GOBP_gsea <- GO_GSEA(lfc_vector)
+```
+
+```{r}
+# Collect the GSEA result
+GOBP_GSEA.result <- GOBP_gsea@result
+GOBP_GSEA_selected.result <- GOBP_GSEA.result %>%
+  as_tibble() %>%
+  dplyr::select(c(Description, NES, pvalue, p.adjust))
+
+DT::datatable(GOBP_GSEA_selected.result, options = list(scrollX = TRUE))
+```
+
+```{r, fig.height=4, fig.width=18}
+# GSEA plot for GOBP_OXIDATIVE_PHOSPHORYLATION, GOBP_B_CELL_RECEPTOR_SIGNALING_PATHWAY, and GOBP_MITOCHONDRIAL_TRANSLATION
+
+OXPHOS_GO_gsea.plt <- gseaplot(GOBP_gsea, 
+                          by = "runningScore", 
+                          title = "GOBP_OXIDATIVE_PHOSPHORYLATION", 
+                          geneSetID = "GOBP_OXIDATIVE_PHOSPHORYLATION",
+                          base_size = 10) +
+  theme(axis.text.x = element_text(angle = 0, hjust = 1))
+
+BCR_GO_gsea.plt <- gseaplot(GOBP_gsea, 
+                          by = "runningScore", 
+                          title = "GOBP_B_CELL_RECEPTOR_SIGNALING_PATHWAY", 
+                          geneSetID = "GOBP_B_CELL_RECEPTOR_SIGNALING_PATHWAY",
+                          base_size = 10) +
+  theme(axis.text.x = element_text(angle = 0, hjust = 1))
+
+mitochondrial_GO_gsea.plt <- gseaplot(GOBP_gsea, 
+                          by = "runningScore", 
+                          title = "GOBP_MITOCHONDRIAL_TRANSLATION", 
+                          geneSetID = "GOBP_MITOCHONDRIAL_TRANSLATION",
+                          base_size = 10) +
+  theme(axis.text.x = element_text(angle = 0, hjust = 1))
+
+OXPHOS_GO_gsea.plt + BCR_GO_gsea.plt + mitochondrial_GO_gsea.plt
+```
+
+We can see that the enrichment results from pseudobulk approach with DESeq2 are consistent with the results with psedobulk approach using `FindMarkers()` in Seurat package.
+
+```{r, eval=FALSE}
+# Save the enrichment results
+saveRDS(HM_gsea, path_to_save_deseq2_hm_gsea)
+saveRDS(GOBP_gsea, path_to_save_deseq2_go_gsea)
+```
 
 
 
