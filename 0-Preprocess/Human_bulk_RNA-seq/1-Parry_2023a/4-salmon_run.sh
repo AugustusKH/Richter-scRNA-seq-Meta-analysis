@@ -30,7 +30,7 @@ fi
 if [ ! -d "$index_path" ]; then
     salmon index -t "$transcript_ref_dir/Homo_sapiens.GRCh38.cdna.all.fa.gz" \
                  -i "$index_path"
-fimon index -t "$transcript_ref_dir/Homo_sapiens.GRCh38.cdna.all.fa.gz" -i "$transcript_ref_dir/human_index"
+fi
 
 # Define list
 selected_dir=("SRR22839006" "SRR22839010" "SRR22839013" "SRR22839018" "SRR22956586" "SRR22960566" "SRR22960567" "SRR22964505" "SRR22964506" "SRR22964520")
