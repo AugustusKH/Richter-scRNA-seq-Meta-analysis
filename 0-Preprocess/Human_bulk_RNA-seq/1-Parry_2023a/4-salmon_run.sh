@@ -14,7 +14,6 @@ module load gcc/12.1.0
 
 # Define paths
 fastq_dir="/home/pakorns/hc-storage/fastq_files/RNAseq/phs002458.v2.p1/fastq"
-output_dir=""
 transcript_ref_dir="/home/pakorns/hc-storage/fastq_files/RNAseq/transcriptome_ref"
 index_path="$transcript_ref_dir/human_index"
 
