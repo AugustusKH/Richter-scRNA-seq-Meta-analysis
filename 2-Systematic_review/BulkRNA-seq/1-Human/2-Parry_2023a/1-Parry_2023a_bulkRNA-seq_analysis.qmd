@@ -410,7 +410,7 @@ Although the terms such as OXPHOS and mitochondrial translation were not siginif
 
 ```{r, eval=FALSE}
 # Save gene expression and GSEA data
-saveRDS(GOBP_gsea, path_to_save_hm_gsea)
+saveRDS(HM_gsea, path_to_save_hm_gsea)
 saveRDS(GOBP_gsea, path_to_save_go_gsea)
 ```
 
