@@ -7,7 +7,7 @@ format:
 editor: visual
 ---
 
-This source code we will perform quality control (QC) and downstream analysis for single-cell RNA-seq for RT and CLL conditions in [Nadeu et. al. (2022)](https://www.nature.com/articles/s41591-022-01927-8) study which performed longitudinal single-cell analysis in CLL and RT conditions. In Nadeu's study, five cases such as 12, 19, 63, 365, and 3299 were performed scRNA-seq. 
+This source code we will perform quality control (QC) and downstream analysis for single-cell RNA-seq for RT and CLL conditions in [Nadeu et. al. (2022)](https://www.nature.com/articles/s41591-022-01927-8) study which performed longitudinal single-cell analysis in CLL and RT conditions. In Nadeu's study, five cases such as 12, 19, 63, 365, and 3299 were performed scRNA-seq.
 
 ## Import the relevant packages and set working path directory
 
@@ -376,7 +376,7 @@ OXPHOS_GO_gsea.plt + BCR_GO_gsea.plt + mitochondrial_GO_gsea.plt
 
 ```{r, eval=FALSE}
 # Save gene expression and GSEA data
-saveRDS(GOBP_gsea, path_to_save_hm_gsea)
+saveRDS(HM_gsea, path_to_save_hm_gsea)
 saveRDS(GOBP_gsea, path_to_save_go_gsea)
 ```
 
@@ -518,13 +518,3 @@ We can see that the enrichment results from pseudobulk approach with DESeq2 are 
 saveRDS(HM_gsea, path_to_save_deseq2_hm_gsea)
 saveRDS(GOBP_gsea, path_to_save_deseq2_go_gsea)
 ```
-
-
-
-
-
-
-
-
-
-
