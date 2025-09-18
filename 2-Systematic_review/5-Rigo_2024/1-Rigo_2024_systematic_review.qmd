@@ -341,7 +341,7 @@ DT::datatable(HM_GSEA_selected.result, options = list(scrollX = TRUE))
 
 We will explore the trends of other hallmark terms reported from other studies such as Nadeu et al. (2022) and Hing et al (2023). From those studies, the terms such as E2F targets, Myc targets, and oxidative phosphorylation (OXPHOS) were upregulated.
 
-```{r, fig.height=4, fig.width=18}
+```{r, message=FALSE, warning=FALSE, fig.height=4, fig.width=18}
 # GSEA plot for HALLMARK_E2F_TARGETS, HALLMARK_MYC_TARGETS_V1, and HALLMARK_OXIDATIVE_PHOSPHORYLATION
 
 E2F_gsea.plt <- gseaplot(HM_gsea, 
@@ -385,7 +385,7 @@ DT::datatable(GOBP_GSEA_selected.result, options = list(scrollX = TRUE))
 
 We will explore the trends of other GO:BP terms reported from other studies such as Nadeu et al. (2022) and Hing et al (2023). From those studies, the terms such as OXPHOS and mitochondrial translation were upregulated while BCR signalling was downregulated.
 
-```{r, fig.height=4, fig.width=18}
+```{r, message=FALSE, warning=FALSE, fig.height=4, fig.width=18}
 # GSEA plot for GOBP_OXIDATIVE_PHOSPHORYLATION, GOBP_B_CELL_RECEPTOR_SIGNALING_PATHWAY, and GOBP_MITOCHONDRIAL_TRANSLATION
 
 OXPHOS_GO_gsea.plt <- gseaplot(GOBP_gsea, 
@@ -414,7 +414,7 @@ OXPHOS_GO_gsea.plt + BCR_GO_gsea.plt + mitochondrial_GO_gsea.plt
 
 ```{r, eval=FALSE}
 # Save gene expression and GSEA data
-saveRDS(GOBP_gsea, path_to_save_hm_gsea)
+saveRDS(HM_gsea, path_to_save_hm_gsea)
 saveRDS(GOBP_gsea, path_to_save_go_gsea)
 ```
 
