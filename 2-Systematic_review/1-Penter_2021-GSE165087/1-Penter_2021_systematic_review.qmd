@@ -7,7 +7,7 @@ format:
 editor: visual
 ---
 
-This source code we will analysis single-cell RNA-seq for RT and CLL conditions both gene expression and functional enrichment analysis before we will compare the results to other studies for our systematic review. We begin with analysis for [Penter et. al. (2021)](https://aacrjournals.org/cancerdiscovery/article-abstract/11/12/3048/674669/Longitudinal-Single-Cell-Dynamics-of-Chromatin?redirectedFrom=fulltext) study which performed longitudinal single-cell analysis in CLL and RT conditions. 
+This source code we will analysis single-cell RNA-seq for RT and CLL conditions both gene expression and functional enrichment analysis before we will compare the results to other studies for our systematic review. We begin with analysis for [Penter et. al. (2021)](https://aacrjournals.org/cancerdiscovery/article-abstract/11/12/3048/674669/Longitudinal-Single-Cell-Dynamics-of-Chromatin?redirectedFrom=fulltext) study which performed longitudinal single-cell analysis in CLL and RT conditions.
 
 ## Import the relevant packages and set working path directory
 
@@ -258,7 +258,7 @@ library(org.Hs.eg.db)
 ### Find biomarkers of B cells between RT and CLL conditions
 
 ```{r, message=FALSE, warning=FALSE, eval=FALSE}
-# Find markers between CLL and RT-like conditions  
+# Find markers between CLL and RT conditions  
 Idents(filtered_tumour_seurat) <- "cond" # change the default identity
 tumour_seurat <- PrepSCTFindMarkers(filtered_tumour_seurat) # Prepare SCT assay for DE testing
 tumour.ge <- FindMarkers(
@@ -312,7 +312,7 @@ DT::datatable(HM_GSEA_selected.result, options = list(scrollX = TRUE))
 
 We will explore the trends of hallmark terms reported from other studies such as Nadeu et al. (2022) and Hing et al (2023). From those studies, the terms such as E2F targets, Myc targets, and oxidative phosphorylation (OXPHOS) were upregulated.
 
-```{r, fig.height=4, fig.width=18}
+```{r, message=FALSE, warning=FALSE, fig.height=4, fig.width=18}
 # GSEA plot for HALLMARK_E2F_TARGETS, HALLMARK_MYC_TARGETS_V1, and HALLMARK_OXIDATIVE_PHOSPHORYLATION
 
 E2F_gsea.plt <- gseaplot(HM_gsea, 
@@ -358,7 +358,7 @@ DT::datatable(GOBP_GSEA_selected.result, options = list(scrollX = TRUE))
 
 We will explore the trends of GO:BP terms reported from other studies such as Nadeu et al. (2022) and Hing et al (2023). From those studies, the terms such as OXPHOS and mitochondrial translation were upregulated while BCR signalling was downregulated.
 
-```{r, fig.height=4, fig.width=18}
+```{r, message=FALSE, warning=FALSE, fig.height=4, fig.width=18}
 # GSEA plot for GOBP_OXIDATIVE_PHOSPHORYLATION, GOBP_B_CELL_RECEPTOR_SIGNALING_PATHWAY, and GOBP_MITOCHONDRIAL_TRANSLATION
 
 OXPHOS_GO_gsea.plt <- gseaplot(GOBP_gsea, 
@@ -387,7 +387,7 @@ OXPHOS_GO_gsea.plt + BCR_GO_gsea.plt + mitochondrial_GO_gsea.plt
 
 ```{r, eval=FALSE}
 # Save gene expression and GSEA data
-saveRDS(GOBP_gsea, path_to_save_hm_gsea)
+saveRDS(HM_gsea, path_to_save_hm_gsea)
 saveRDS(GOBP_gsea, path_to_save_go_gsea)
 ```
 
@@ -450,7 +450,7 @@ HM_GSEA_selected.result <- HM_GSEA.result %>%
 DT::datatable(HM_GSEA_selected.result, options = list(scrollX = TRUE))
 ```
 
-```{r, fig.height=4, fig.width=18}
+```{r, message=FALSE, warning=FALSE, fig.height=4, fig.width=18}
 # GSEA plot for HALLMARK_E2F_TARGETS, HALLMARK_MYC_TARGETS_V1, and HALLMARK_OXIDATIVE_PHOSPHORYLATION
 
 E2F_gsea.plt <- gseaplot(HM_gsea, 
@@ -494,7 +494,7 @@ GOBP_GSEA_selected.result <- GOBP_GSEA.result %>%
 DT::datatable(GOBP_GSEA_selected.result, options = list(scrollX = TRUE))
 ```
 
-```{r, fig.height=4, fig.width=18}
+```{r, message=FALSE, warning=FALSE, fig.height=4, fig.width=18}
 # GSEA plot for GOBP_OXIDATIVE_PHOSPHORYLATION, GOBP_B_CELL_RECEPTOR_SIGNALING_PATHWAY, and GOBP_MITOCHONDRIAL_TRANSLATION
 
 OXPHOS_GO_gsea.plt <- gseaplot(GOBP_gsea, 
@@ -528,5 +528,3 @@ We can see that the enrichment results from pseudobulk approach with DESeq2 are 
 saveRDS(HM_gsea, path_to_save_deseq2_hm_gsea)
 saveRDS(GOBP_gsea, path_to_save_deseq2_go_gsea)
 ```
-
-
