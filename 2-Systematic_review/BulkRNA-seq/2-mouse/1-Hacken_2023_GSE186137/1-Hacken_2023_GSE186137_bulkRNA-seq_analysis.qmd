@@ -1,7 +1,9 @@
 ---
 title: "Hacken_2023_GSE186137_bulkRNA-seq_analysis"
 author: "Pakorn Sagulkoo"
-format: html
+format:
+  html:
+    embed-resources: true
 editor: visual
 ---
 
