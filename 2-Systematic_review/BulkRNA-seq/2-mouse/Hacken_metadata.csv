@@ -1,0 +1,25 @@
+﻿SRA_RUN,GSM_ID,source_name,cell_type,condition_original,genotype,strain,tissue,condition
+SRR16522866,GSM5639186,RS,Malignant B cells,RS,Multi-plex LOF,C57BL/6,Spleen,RT
+SRR16522867,GSM5639187,RS,Malignant B cells,RS,Multi-plex LOF,C57BL/6,Spleen,RT
+SRR16522868,GSM5639188,RS,Malignant B cells,RS,Multi-plex LOF,C57BL/6,Spleen,RT
+SRR16522869,GSM5639189,RS,Malignant B cells,RS,Multi-plex LOF,C57BL/6,Spleen,RT
+SRR16522870,GSM5639190,RS,Malignant B cells,RS,Multi-plex LOF,C57BL/6,Spleen,RT
+SRR16522871,GSM5639191,RS,Malignant B cells,RS,Multi-plex LOF,C57BL/6,Spleen,RT
+SRR16522872,GSM5639192,RS,Malignant B cells,RS,Multi-plex LOF,C57BL/6,Spleen,RT
+SRR16522873,GSM5639193,RS,Malignant B cells,RS,Multi-plex LOF,C57BL/6,Spleen,RT
+SRR16522874,GSM5639194,RS,Malignant B cells,RS,Multi-plex LOF,C57BL/6,Spleen,RT
+SRR16522875,GSM5639195,RS,Malignant B cells,RS,Multi-plex LOF,C57BL/6,Spleen,RT
+SRR16522876,GSM5639196,RS,Malignant B cells,RS,Multi-plex LOF,C57BL/6,Spleen,RT
+SRR16522881,GSM5639173,B cell,Splenic B cell,normal,wild type,C57BL/6,Spleen,CTRL
+SRR16522882,GSM5639174,B cell,Splenic B cell,normal,wild type,C57BL/6,Spleen,CTRL
+SRR16522883,GSM5639175,B cell,Splenic B cell,normal,wild type,C57BL/6,Spleen,CTRL
+SRR16522884,GSM5639176,B cell,Splenic B cell,normal,wild type,C57BL/6,Spleen,CTRL
+SRR16522885,GSM5639177,CLL,Malignant B cells,CLL,MDR,C57BL/6,Spleen,CLL
+SRR16522886,GSM5639178,CLL,Malignant B cells,CLL,MDR,C57BL/6,Spleen,CLL
+SRR16522887,GSM5639179,CLL,Malignant B cells,CLL,MDR,C57BL/6,Spleen,CLL
+SRR16522888,GSM5639180,CLL,Malignant B cells,CLL,MDR,C57BL/6,Spleen,CLL
+SRR16522889,GSM5639181,CLL,Malignant B cells,CLL,MDR,C57BL/6,Spleen,CLL
+SRR16522890,GSM5639182,CLL_RS2,Malignant B cells,CLL,Multi-plex LOF,C57BL/6,Spleen,CLL/RS
+SRR16522891,GSM5639183,CLL_RS4,Malignant B cells,CLL,Multi-plex LOF,C57BL/6,Spleen,CLL/RS
+SRR16522892,GSM5639184,CLL_RS6,Malignant B cells,CLL,Multi-plex LOF,C57BL/6,Spleen,CLL/RS
+SRR16522893,GSM5639185,CLL_RS7,Malignant B cells,CLL,Multi-plex LOF,C57BL/6,Spleen,CLL/RS
