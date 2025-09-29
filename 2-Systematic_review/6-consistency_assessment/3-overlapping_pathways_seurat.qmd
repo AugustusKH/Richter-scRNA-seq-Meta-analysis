@@ -1,0 +1,614 @@
+---
+title: "Overlapping_pathways_seurat"
+author: "Pakorn Sagulkoo"
+format:
+  html:
+    embed-resources: true
+editor: visual
+---
+
+After we carried out psedobulk gene expression analysis and GSEA for several RT scRNA-sequences datasets, we will evaluate the consistency of functional enrichment results across those studiescalculated from Pseudobulk analysis using `FindMarkers()` in Seurat. Then we will explore overlapping enrichment terms among those studies.
+
+## Import the relevant packages and set working path directory
+
+```{r, setup, message=FALSE, warning=FALSE}
+# Import the relavant packages
+library(UpSetR)
+library(dplyr)
+library(tibble)
+library(stringr)
+library(ggplot2)
+library(ggrepel)
+```
+
+```{r}
+# Check root path
+here::here()
+```
+
+## Define paths
+
+```{r}
+# Define paths to load and save files
+path_to_single_cell_analysis <- here::here("scRNAseq/systematic_review")
+```
+
+## Load data and functions
+
+```{r, message=FALSE, warning=FALSE}
+# Source functions
+source(here::here("bin/utils.R"))
+```
+
+## Define names used in files and labels
+
+```{r}
+# List file names of all studies
+study.lst <- c("1-Penter_2021_GSE165087", "2-Nadeu_2022", "3-Hing_2022_GSE205704", "4-Parry_2023b", "5-Rigo_2024")
+study.lst
+```
+
+```{r}
+# Create names for list later
+names.lst <- sub(
+  "^\\d+-([A-Za-z]+)_([0-9]{4}[A-Za-z]?).*$",  # capture name and year
+  "\\1(\\2)",                         # output as Name(Year)
+  study.lst
+)
+names.lst
+```
+
+```{r}
+# Extract only name of studies
+study_names <- sub("^\\d+-([^_0-9]+).*", "\\1", study.lst)
+study_names
+```
+
+We performed GSEA using five main terms such as Hallmark, GO:BP, KEGG, Reactome, and WikiPath. We will identify these significant terms in both up- and downregulation.
+
+## Overlapping of GSEA results based on Seurat-based pseudobulk analysis
+
+### Hallmark
+
+```{r}
+# Import the results from all studies and collect in a list
+path_to_download <- str_c(path_to_single_cell_analysis, "/", study.lst, "/enrichment_data/", study_names, "_hm_gsea.rds")
+hm_gsea.lst <- purrr::pmap(
+  list(path_to_download), 
+  function(path){
+    gsea <- readRDS(path)
+    return(gsea)
+  }
+)
+names(hm_gsea.lst) <- names.lst
+```
+
+#### Upregulated terms
+
+```{r, message=FALSE, warning=FALSE, fig.height=5, fig.width=8}
+# Extract adjusted significant upregulated hallmark terms
+sig_term.lst <- purrr::pmap(
+  list(hm_gsea.lst),
+  function(gsea){
+    selected_term <- gsea@result[gsea@result$NES > 0, "ID"]
+    return(selected_term)
+  }
+)
+
+# Reorder the list first
+sig_term.lst <- sig_term.lst %>%
+  purrr::discard(~ length(.x) == 0) %>%   # drop empty ones
+  rev()                                   # reverse order
+
+# Convert to UpSetR input
+upset_data <- fromList(sig_term.lst)
+
+# Plot UpSetR
+upset(
+  upset_data,
+  sets = colnames(upset_data),      # ensures only these sets
+  keep.order = TRUE,
+  nintersects = NA
+)
+```
+
+Although no terms were found to be common across all studies, we will identify terms that are shared by three or four studies. This will be explored using set operations and UpSet plots. For example, if we have three sets (A, B, and C), the expression ‘members from A ∩ B’ refers to terms that are present in both A and B but excluded from those present in all three sets (A, B, and C).
+
+```{r}
+# Find common hallmark terms in four studies: Rigo(2024), Hing(2022), Nadeu(2022), and Penter(2021)
+four_common_hm <- Reduce(intersect, sig_term.lst[names(sig_term.lst) != "Parry(2023b)"])
+four_common_hm
+```
+
+```{r}
+# Find common hallmark terms in three studies: Rigo(2024), Nadeu(2022), and Penter(2021)
+three_common_hm <- Reduce(intersect, sig_term.lst[c("Rigo(2024)", "Nadeu(2022)", "Penter(2021)")])
+setdiff(three_common_hm, four_common_hm)
+```
+
+```{r}
+# Find common hallmark terms in three studies: Hing(2022), Nadeu(2022), and Penter(2021)
+three_common_hm <- Reduce(intersect, sig_term.lst[c("Hing(2022)", "Nadeu(2022)", "Penter(2021)")])
+setdiff(three_common_hm, four_common_hm)
+```
+
+We can see that common upregulated hallmark terms found in RT compared to CLL are involved in oxidative phosphorylation (OXPHOS), lipid metabolisms, and E2F and MYC signalling.
+
+#### Downregulated terms
+
+In downregulated hallmark terms we will show only results from Penter, Nadeu, and Hing et al. as other studies have no significant downregulated terms.
+
+```{r, message=FALSE, warning=FALSE, fig.height=5, fig.width=8}
+# Extract adjusted significant downregulated hallmark terms
+sig_term.lst <- purrr::pmap(
+  list(hm_gsea.lst),
+  function(gsea){
+    selected_term <- gsea@result[gsea@result$NES < 0, "ID"]
+    return(selected_term)
+  }
+)
+
+# Reorder the list first
+sig_term.lst <- sig_term.lst %>%
+  purrr::discard(~ length(.x) == 0) %>%   # drop empty ones
+  rev()                                   # reverse order
+
+# Convert to UpSetR input
+upset_data <- fromList(sig_term.lst)
+
+# Plot UpSetR
+upset(
+  upset_data,
+  sets = colnames(upset_data),      # ensures only these sets
+  keep.order = TRUE,
+  nintersects = NA
+)
+```
+
+To compare with the upregulated terms, there was a few of downregulated hallmark terms and no common terms found.
+
+```{r}
+# Common terms between Nadeu and Hing
+Reduce(intersect, sig_term.lst[c("Nadeu(2022)", "Hing(2022)")])
+```
+
+```{r}
+# Common terms between Penter and Nadeu
+Reduce(intersect, sig_term.lst[c("Penter(2021)", "Nadeu(2022)")])
+```
+
+### GO:BP
+
+```{r}
+# Import the results from all studies and collect in a list
+path_to_download <- str_c(path_to_single_cell_analysis, "/", study.lst, "/enrichment_data/", study_names, "_go_gsea.rds")
+go_gsea.lst <- purrr::pmap(
+  list(path_to_download), 
+  function(path){
+    gsea <- readRDS(path)
+    return(gsea)
+  }
+)
+names(go_gsea.lst) <- names.lst
+```
+
+#### Upregulated terms
+
+As no significant upregulated terms were identified in Parry et. al. results, we will exclude them from the plot.
+
+```{r, message=FALSE, warning=FALSE, fig.height=5, fig.width=8}
+# Extract adjusted significant upregulated GO:BP terms
+sig_term.lst <- purrr::pmap(
+  list(go_gsea.lst),
+  function(gsea){
+    selected_term <- gsea@result[gsea@result$NES > 0, "ID"]
+    return(selected_term)
+  }
+)
+
+# Reorder the list first
+sig_term.lst <- sig_term.lst %>%
+  purrr::discard(~ length(.x) == 0) %>%   # drop empty ones
+  rev()                                   # reverse order
+
+# Convert to UpSetR input
+upset_data <- fromList(sig_term.lst)
+
+# Plot UpSetR
+upset(
+  upset_data,
+  sets = colnames(upset_data),      # ensures only these sets
+  keep.order = TRUE,
+  nintersects = NA
+)
+```
+
+```{r}
+# Find common GO:BP terms in four studies 
+four_common_go <- Reduce(intersect, sig_term.lst)
+four_common_go
+```
+
+```{r}
+# Find common GO:BP terms in three studies: Hing(2022), Nadeu(2022), and Penter(2021)  
+three_common_go <- Reduce(intersect, sig_term.lst[c("Hing(2022)", "Nadeu(2022)", "Penter(2021)")])
+setdiff(three_common_go, four_common_go)
+```
+
+```{r}
+# Find common GO:BP terms in three studies: Rigo(2024), Hing(2022), and Penter(2021)
+three_common_go <- Reduce(intersect, sig_term.lst[c("Rigo(2024)", "Hing(2022)", "Penter(2021)")])
+setdiff(three_common_go, four_common_go)
+```
+
+```{r}
+# Find common GO:BP terms in three studies: Rigo(2024), Nadeu(2022), and Penter(2021) 
+three_common_go <- Reduce(intersect, sig_term.lst[c("Rigo(2024)", "Nadeu(2022)", "Penter(2021)")])
+setdiff(three_common_go, four_common_go)
+```
+
+Overall, we can see that the general common terms were related to OXPHOS, indicated by mitochondrial activity involvement, and nucleotide metabolisms.
+
+#### Downregulated terms
+
+As no significant downregulated terms were identified in Parry et. al. results, we will exclude them from the plot.
+
+```{r, message=FALSE, warning=FALSE, fig.height=5, fig.width=8}
+# Extract adjusted significant downregulated GO:BP terms
+sig_term.lst <- purrr::pmap(
+  list(go_gsea.lst),
+  function(gsea){
+    selected_term <- gsea@result[gsea@result$NES < 0, "ID"]
+    return(selected_term)
+  }
+)
+
+# Reorder the list first
+sig_term.lst <- sig_term.lst %>%
+  purrr::discard(~ length(.x) == 0) %>%   # drop empty ones
+  rev()                                   # reverse order
+
+# Convert to UpSetR input
+upset_data <- fromList(sig_term.lst)
+
+# Plot UpSetR
+upset(
+  upset_data,
+  sets = colnames(upset_data),      # ensures only these sets
+  keep.order = TRUE,
+  nintersects = NA
+)
+```
+
+Despite no terms common found in all four studies, we will identify terms that are shared by two studies (Nadeu's and Hing's study).
+
+```{r}
+# Find common GO:BP terms in two studies: Nadeu(2022) and Hing(2022)  
+Reduce(intersect, sig_term.lst[c("Nadeu(2022)", "Hing(2022)")])
+```
+
+### KEGG pathways
+
+```{r}
+# Import the results from all studies and collect in a list
+path_to_download <- str_c(path_to_single_cell_analysis, "/", study.lst, "/enrichment_data/", study_names, "_kegg_gsea.rds")
+kegg_gsea.lst <- purrr::pmap(
+  list(path_to_download), 
+  function(path){
+    gsea <- readRDS(path)
+    return(gsea)
+  }
+)
+names(kegg_gsea.lst) <- names.lst
+```
+
+#### Upregulated terms
+
+```{r, message=FALSE, warning=FALSE, fig.height=5, fig.width=8}
+# Extract adjusted significant upregulated KEGG terms
+sig_term.lst <- purrr::pmap(
+  list(kegg_gsea.lst),
+  function(gsea){
+    selected_term <- gsea@result[gsea@result$NES > 0, "ID"]
+    return(selected_term)
+  }
+)
+
+# Reorder the list first
+sig_term.lst <- sig_term.lst %>%
+  purrr::discard(~ length(.x) == 0) %>%   # drop empty ones
+  rev()                                   # reverse order
+
+# Convert to UpSetR input
+upset_data <- fromList(sig_term.lst)
+
+# Plot UpSetR
+upset(
+  upset_data,
+  sets = colnames(upset_data),      # ensures only these sets
+  keep.order = TRUE,
+  nintersects = NA
+)
+```
+
+One common terms found in three studies such as Penter(2021), Hing(2022), and Rigo(2024).
+
+```{r}
+# Find common KEGG terms in three studies: Penter(2021), Hing(2022), and Rigo(2024)  
+three_common_kegg <- Reduce(intersect, sig_term.lst[c("Penter(2021)", "Hing(2022)", "Rigo(2024)")])
+three_common_kegg
+```
+
+```{r}
+# Common terms between Nadeu and Hing
+two_common_kegg <- Reduce(intersect, sig_term.lst[c("Nadeu(2022)", "Hing(2022)")])
+setdiff(two_common_kegg, three_common_kegg)
+```
+
+```{r}
+# Common terms between Penter and Nadeu
+two_common_kegg <- Reduce(intersect, sig_term.lst[c("Penter(2021)", "Nadeu(2022)")])
+setdiff(two_common_kegg, three_common_kegg)
+```
+
+```{r}
+# Common terms between Nadeu and Rigo
+two_common_kegg <- Reduce(intersect, sig_term.lst[c("Nadeu(2022)", "Rigo(2024)")])
+setdiff(two_common_kegg, three_common_kegg)
+```
+
+```{r}
+# Common terms between Penter and Rigo
+two_common_kegg <- Reduce(intersect, sig_term.lst[c("Penter(2021)", "Rigo(2024)")])
+setdiff(two_common_kegg, three_common_kegg)
+```
+
+Generally, the common upregulated KEGG terms were related to OXPHOS and nucleotide metabolisms, consistent with hallmark and GO:BP upregulated terms.
+
+#### Downregulated terms
+
+In downregulated hallmark terms we will show only results from Penter, Nadeu, and Rigo et al. as other studies have no significant downregulated terms.
+
+```{r, message=FALSE, warning=FALSE, fig.height=5, fig.width=8}
+# Extract adjusted significant downregulated KEGG terms
+sig_term.lst <- purrr::pmap(
+  list(kegg_gsea.lst),
+  function(gsea){
+    selected_term <- gsea@result[gsea@result$NES < 0, "ID"]
+    return(selected_term)
+  }
+)
+
+# Reorder the list first
+sig_term.lst <- sig_term.lst %>%
+  purrr::discard(~ length(.x) == 0) %>%   # drop empty ones
+  rev()                                   # reverse order
+
+# Convert to UpSetR input
+upset_data <- fromList(sig_term.lst)
+
+# Plot UpSetR
+upset(
+  upset_data,
+  sets = colnames(upset_data),      # ensures only these sets
+  keep.order = TRUE,
+  nintersects = NA
+)
+```
+
+No common terms were found.
+
+### Reactome pathways
+
+```{r}
+# Import the results from all studies and collect in a list
+path_to_download <- str_c(path_to_single_cell_analysis, "/", study.lst, "/enrichment_data/", study_names, "_reactome_gsea.rds")
+reactome_gsea.lst <- purrr::pmap(
+  list(path_to_download), 
+  function(path){
+    gsea <- readRDS(path)
+    return(gsea)
+  }
+)
+names(reactome_gsea.lst) <- names.lst
+```
+
+#### Upregulated terms
+
+```{r, message=FALSE, warning=FALSE, fig.height=5, fig.width=8}
+# Extract adjusted significant upregulated Reactome terms
+sig_term.lst <- purrr::pmap(
+  list(reactome_gsea.lst),
+  function(gsea){
+    selected_term <- gsea@result[gsea@result$NES > 0, "ID"]
+    return(selected_term)
+  }
+)
+
+# Reorder the list first
+sig_term.lst <- sig_term.lst %>%
+  purrr::discard(~ length(.x) == 0) %>%   # drop empty ones
+  rev()                                   # reverse order
+
+# Convert to UpSetR input
+upset_data <- fromList(sig_term.lst)
+
+# Plot UpSetR
+upset(
+  upset_data,
+  sets = colnames(upset_data),      # ensures only these sets
+  keep.order = TRUE,
+  nintersects = NA
+)
+```
+
+Although no common upregulated terms were identified in all studies, we will show the common terms found in four studies (Penter, Nadeu, Hing, and Rigo).
+
+```{r}
+# Find common Reactome terms in four studies 
+four_common_reactome <- Reduce(intersect, sig_term.lst[names(sig_term.lst) != "Parry(2023b)"])
+four_common_reactome
+```
+
+Other common terms in three studies were also shown.
+
+```{r}
+# Find common hallmark terms in three studies: Hing, Parry, and Rigo
+three_common_reactome <- Reduce(intersect, sig_term.lst[c("Hing(2022)", "Parry(2023b)", "Rigo(2024)")])
+setdiff(three_common_reactome, four_common_reactome)
+```
+
+```{r}
+# Find common hallmark terms in three studies: Penter, Nadeu, and Hing
+three_common_reactome <- Reduce(intersect, sig_term.lst[c("Penter(2021)", "Nadeu(2022)", "Hing(2022)")])
+setdiff(three_common_reactome, four_common_reactome)
+```
+
+```{r}
+# Find common hallmark terms in three studies: Penter, Hing, and Rigo
+three_common_reactome <- Reduce(intersect, sig_term.lst[c("Penter(2021)", "Hing(2022)", "Rigo(2024)")])
+setdiff(three_common_reactome, four_common_reactome)
+```
+
+```{r}
+# Find common hallmark terms in three studies: Penter, Nadeu, and Rigo
+three_common_reactome <- Reduce(intersect, sig_term.lst[c("Penter(2021)", "Nadeu(2022)", "Rigo(2024)")])
+setdiff(three_common_reactome, four_common_reactome)
+```
+
+```{r}
+# Find common hallmark terms in three studies: Nadeu, Hing, and Rigo
+three_common_reactome <- Reduce(intersect, sig_term.lst[c("Nadeu(2022)", "Hing(2022)", "Rigo(2024)")])
+setdiff(three_common_reactome, four_common_reactome)
+```
+
+Similar to hallmark, these common upregulated terms were related to OXPHOS, nucleotide metabolisms, and cellular proliferation activity.
+
+#### Downregulated terms
+
+We will exclude the result from Parry(2023b) as no sigficant downregulated were detected.
+
+```{r, message=FALSE, warning=FALSE, fig.height=5, fig.width=8}
+# Extract adjusted significant downregulated Reactome terms
+sig_term.lst <- purrr::pmap(
+  list(reactome_gsea.lst),
+  function(gsea){
+    selected_term <- gsea@result[gsea@result$NES < 0, "ID"]
+    return(selected_term)
+  }
+)
+
+# Reorder the list first
+sig_term.lst <- sig_term.lst %>%
+  purrr::discard(~ length(.x) == 0) %>%   # drop empty ones
+  rev()                                   # reverse order
+
+# Convert to UpSetR input
+upset_data <- fromList(sig_term.lst)
+
+# Plot UpSetR
+upset(
+  upset_data,
+  sets = colnames(upset_data),      # ensures only these sets
+  keep.order = TRUE,
+  nintersects = NA
+)
+```
+
+No common downregulated terms were detected.
+
+### WikiPath
+
+```{r}
+# Import the results from all studies and collect in a list
+path_to_download <- str_c(path_to_single_cell_analysis, "/", study.lst, "/enrichment_data/", study_names, "_wikipath_gsea.rds")
+wikipath_gsea.lst <- purrr::pmap(
+  list(path_to_download), 
+  function(path){
+    gsea <- readRDS(path)
+    return(gsea)
+  }
+)
+names(wikipath_gsea.lst) <- names.lst
+```
+
+#### Upregulated terms
+
+```{r, message=FALSE, warning=FALSE, fig.height=5, fig.width=8}
+# Extract adjusted significant upregulated WikiPath terms
+sig_term.lst <- purrr::pmap(
+  list(wikipath_gsea.lst),
+  function(gsea){
+    selected_term <- gsea@result[gsea@result$NES > 0, "ID"]
+    return(selected_term)
+  }
+)
+
+# Reorder the list first
+sig_term.lst <- sig_term.lst %>%
+  purrr::discard(~ length(.x) == 0) %>%   # drop empty ones
+  rev()                                   # reverse order
+
+# Convert to UpSetR input
+upset_data <- fromList(sig_term.lst)
+
+# Plot UpSetR
+upset(
+  upset_data,
+  sets = colnames(upset_data),      # ensures only these sets
+  keep.order = TRUE,
+  nintersects = NA
+)
+```
+
+Although no common upregulated terms were identified in all studies, we will show the common terms found in four studies (Penter, Nadeu, Hing, and Rigo).
+
+```{r}
+# Find common Reactome terms in four studies 
+four_common_wikipath <- Reduce(intersect, sig_term.lst[c("Penter(2021)", "Hing(2022)", "Nadeu(2022)", "Rigo(2024)")])
+four_common_wikipath
+```
+
+```{r}
+# Find common hallmark terms in three studies: Nadeu, Hing, and Rigo
+three_common_wikipath <- Reduce(intersect, sig_term.lst[c("Nadeu(2022)", "Hing(2022)", "Rigo(2024)")])
+setdiff(three_common_wikipath, four_common_wikipath)
+```
+
+Similar to hallmark and reactome, these common upregulated terms were related to OXPHOS.
+
+#### Downregulated terms
+
+As only two studies (Nadeu and Hing) have significant downregulated WikiPath terms, we will show only these.
+
+```{r, message=FALSE, warning=FALSE, fig.height=5, fig.width=8}
+# Extract adjusted significant downregulated WikiPath terms
+sig_term.lst <- purrr::pmap(
+  list(wikipath_gsea.lst),
+  function(gsea){
+    selected_term <- gsea@result[gsea@result$NES < 0, "ID"]
+    return(selected_term)
+  }
+)
+
+# Reorder the list first
+sig_term.lst <- sig_term.lst %>%
+  purrr::discard(~ length(.x) == 0) %>%   # drop empty ones
+  rev()                                   # reverse order
+
+# Convert to UpSetR input
+upset_data <- fromList(sig_term.lst)
+
+# Plot UpSetR
+upset(
+  upset_data,
+  sets = colnames(upset_data),      # ensures only these sets
+  keep.order = TRUE,
+  nintersects = NA
+)
+```
+
+```{r}
+# Find common Reactome terms in two studies 
+Reduce(intersect, sig_term.lst[c("Hing(2022)", "Nadeu(2022)")])
+```
