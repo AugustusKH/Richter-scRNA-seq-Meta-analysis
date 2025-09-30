@@ -38,9 +38,6 @@ path_to_save_merged_obj <- here::here("scRNAseq/systematic_review/3-Hing_2022_GS
 path_to_save_integrated_obj <- here::here("scRNAseq/systematic_review/3-Hing_2022_GSE205704/R_objects/Hing_integrated_seu.rds")
 path_to_save_tumour_obj <- here::here("scRNAseq/systematic_review/3-Hing_2022_GSE205704/R_objects/Hing_tumour_seu.rds")
 path_to_save_filtered_tumour_obj <- here::here("scRNAseq/systematic_review/3-Hing_2022_GSE205704/R_objects/Hing_filtered_tumour_seu.rds")
-path_to_save_dea <- here::here("scRNAseq/systematic_review/3-Hing_2022_GSE205704/expression_data/Hing_dea.rds")
-path_to_save_hm_gsea <- here::here("scRNAseq/systematic_review/3-Hing_2022_GSE205704/enrichment_data/Hing_hm_gsea.rds")
-path_to_save_go_gsea <- here::here("scRNAseq/systematic_review/3-Hing_2022_GSE205704/enrichment_data/Hing_go_gsea.rds")
 ```
 
 ## Load data and functions
@@ -72,7 +69,7 @@ seurat.lst <- purrr::pmap(
     seurat.obj[["case"]] <- case
     seurat.obj[["cond"]] <- cond
     seurat.obj[["tissue"]] <- tissue
-    seurat.obj <- seurat_quality_control(seurat.obj)
+    seurat.obj <- seurat_quality_control(seurat.obj, mad_cutoff=TRUE)
     seurat.obj <- seurat_preprocess(seurat.obj)
     seurat.obj <- doublet_filter(seurat.obj, sct=FALSE)
     return(seurat.obj)
@@ -238,11 +235,11 @@ FeaturePlot(tumour_seurat,
             reduction = "umap") 
 ```
 
-As there are some T cells expressing CD3D (cluster 5), we will remove this cluster before psedobulk analysis.
+As there are some T cells expressing CD3D and NK cells expressing NKG7 (cluster 8), we will remove this cluster before psedobulk analysis.
 
 ```{r, eval=FALSE}
-# Filter out T cells
-filtered_tumour_seurat <- subset(tumour_seurat, subset = seurat_clusters != 5) 
+# Filter out T cells and NK cells
+filtered_tumour_seurat <- subset(tumour_seurat, subset = seurat_clusters != 8) 
 
 # Save the filtered tumour object
 saveRDS(filtered_tumour_seurat, path_to_save_filtered_tumour_obj)
@@ -256,6 +253,16 @@ library(clusterProfiler)
 library(enrichplot)
 library(msigdbr)
 library(org.Hs.eg.db)
+```
+
+```{r}
+# Define paths to save and load
+path_to_save_dea <- here::here("scRNAseq/systematic_review/3-Hing_2022_GSE205704/expression_data/Hing_dea.rds")
+path_to_save_hm_gsea <- here::here("scRNAseq/systematic_review/3-Hing_2022_GSE205704/enrichment_data/Hing_hm_gsea.rds")
+path_to_save_go_gsea <- here::here("scRNAseq/systematic_review/3-Hing_2022_GSE205704/enrichment_data/Hing_go_gsea.rds")
+path_to_save_kegg_gsea <- here::here("scRNAseq/systematic_review/3-Hing_2022_GSE205704/enrichment_data/Hing_kegg_gsea.rds")
+path_to_save_reactome_gsea <- here::here("scRNAseq/systematic_review/3-Hing_2022_GSE205704/enrichment_data/Hing_reactome_gsea.rds")
+path_to_save_wikipath_gsea <- here::here("scRNAseq/systematic_review/3-Hing_2022_GSE205704/enrichment_data/Hing_wikipath_gsea.rds")
 ```
 
 ### Find biomarkers of B cells between RT and CLL conditions
@@ -301,9 +308,7 @@ lfc_vector <- sort(lfc_vector, decreasing = TRUE) # Sort the log2 fold change in
 ```{r, message=FALSE, warning=FALSE}
 # Hallmark
 HM_gsea <- HM_GSEA(lfc_vector)
-```
 
-```{r}
 # Collect the HM GSEA result
 HM_GSEA.result <- HM_gsea@result
 HM_GSEA_selected.result <- HM_GSEA.result %>%
@@ -347,9 +352,7 @@ E2F_gsea.plt + Myc_gsea.plt + OXPHOS_gsea.plt
 ```{r, message=FALSE, warning=FALSE}
 # GO:BP
 GOBP_gsea <- GO_GSEA(lfc_vector)
-```
 
-```{r}
 # Collect the GSEA result
 GOBP_GSEA.result <- GOBP_gsea@result
 GOBP_GSEA_selected.result <- GOBP_GSEA.result %>%
@@ -388,13 +391,63 @@ mitochondrial_GO_gsea.plt <- gseaplot(GOBP_gsea,
 OXPHOS_GO_gsea.plt + BCR_GO_gsea.plt + mitochondrial_GO_gsea.plt
 ```
 
-```{r, eval=FALSE}
-# Save gene expression and GSEA data
-saveRDS(HM_gsea, path_to_save_hm_gsea)
-saveRDS(GOBP_gsea, path_to_save_go_gsea)
+We also performed GSEA with additional enrichment systems such as KEGG pathways, Reactome, and WikiPath.
+
+#### KEGG pathway
+
+```{r, message=FALSE, warning=FALSE}
+# KEGG pathway
+KEGG_gsea <- KEGG_GSEA(lfc_vector)
+
+# Collect the HM GSEA result
+KEGG_GSEA.result <- KEGG_gsea@result
+KEGG_GSEA_selected.result <- KEGG_GSEA.result %>%
+  as_tibble() %>%
+  dplyr::select(c(Description, NES, pvalue, p.adjust))
+
+DT::datatable(KEGG_GSEA_selected.result, options = list(scrollX = TRUE))
 ```
 
-### Pseudobulk analysis using DESeq2
+#### Reactome
+
+```{r, message=FALSE, warning=FALSE}
+# REACTOME
+REACTOME_gsea <- REACTOME_GSEA(lfc_vector)
+
+# Collect the HM GSEA result
+REACTOME_GSEA.result <- REACTOME_gsea@result
+REACTOME_GSEA_selected.result <- REACTOME_GSEA.result %>%
+  as_tibble() %>%
+  dplyr::select(c(Description, NES, pvalue, p.adjust))
+
+DT::datatable(REACTOME_GSEA_selected.result, options = list(scrollX = TRUE))
+```
+
+#### WikiPath
+
+```{r, message=FALSE, warning=FALSE}
+# WikiPath
+WIKIPATH_gsea <- WIKIPATH_GSEA(lfc_vector)
+
+# Collect the HM GSEA result
+WIKIPATH_GSEA.result <- WIKIPATH_gsea@result
+WIKIPATH_GSEA_selected.result <- WIKIPATH_GSEA.result %>%
+  as_tibble() %>%
+  dplyr::select(c(Description, NES, pvalue, p.adjust))
+
+DT::datatable(WIKIPATH_GSEA_selected.result, options = list(scrollX = TRUE))
+```
+
+```{r, eval=FALSE}
+# Save GSEA results
+saveRDS(HM_gsea, path_to_save_hm_gsea)
+saveRDS(GOBP_gsea, path_to_save_go_gsea)
+saveRDS(KEGG_gsea, path_to_save_kegg_gsea)
+saveRDS(REACTOME_gsea, path_to_save_reactome_gsea)
+saveRDS(WIKIPATH_gsea, path_to_save_wikipath_gsea)
+```
+
+## Pseudobulk analysis using DESeq2
 
 ```{r, message=FALSE, warning=FALSE}
 # Import the relevant packages
@@ -406,6 +459,9 @@ library(DESeq2)
 path_to_save_deseq2_dea <- here::here("scRNAseq/systematic_review/3-Hing_2022_GSE205704/pseudo_bulk_deseq2/Hing_deseq2_dea.rds")
 path_to_save_deseq2_hm_gsea <- here::here("scRNAseq/systematic_review/3-Hing_2022_GSE205704/pseudo_bulk_deseq2/Hing_deseq2_hm_gsea.rds")
 path_to_save_deseq2_go_gsea <- here::here("scRNAseq/systematic_review/3-Hing_2022_GSE205704/pseudo_bulk_deseq2/Hing_deseq2_go_gsea.rds")
+path_to_save_deseq2_kegg_gsea <- here::here("scRNAseq/systematic_review/3-Hing_2022_GSE205704/pseudo_bulk_deseq2/Hing_deseq2_kegg_gsea.rds")
+path_to_save_deseq2_reactome_gsea <- here::here("scRNAseq/systematic_review/3-Hing_2022_GSE205704/pseudo_bulk_deseq2/Hing_deseq2_reactome_gsea.rds")
+path_to_save_deseq2_wikipath_gsea <- here::here("scRNAseq/systematic_review/3-Hing_2022_GSE205704/pseudo_bulk_deseq2/Hing_deseq2_wikipath_gsea.rds")
 ```
 
 ```{r, eval=FALSE}
@@ -436,14 +492,14 @@ lfc_vector <- na.omit(lfc_vector) # Omit any NA values
 lfc_vector <- sort(lfc_vector, decreasing = TRUE) # Sort the log2 fold change in descending order
 ```
 
-#### GSEA with Hallmark
+### GSEA
+
+#### Hallmark
 
 ```{r, message=FALSE, warning=FALSE}
 # Hallmark
 HM_gsea <- HM_GSEA(lfc_vector)
-```
 
-```{r}
 # Collect the HM GSEA result
 HM_GSEA.result <- HM_gsea@result
 HM_GSEA_selected.result <- HM_GSEA.result %>%
@@ -480,14 +536,12 @@ OXPHOS_gsea.plt <- gseaplot(HM_gsea,
 E2F_gsea.plt + Myc_gsea.plt + OXPHOS_gsea.plt
 ```
 
-#### GSEA with GO:BP
+#### GO:BP
 
 ```{r, message=FALSE, warning=FALSE}
 # GO:BP
 GOBP_gsea <- GO_GSEA(lfc_vector)
-```
 
-```{r}
 # Collect the GSEA result
 GOBP_GSEA.result <- GOBP_gsea@result
 GOBP_GSEA_selected.result <- GOBP_GSEA.result %>%
@@ -524,10 +578,58 @@ mitochondrial_GO_gsea.plt <- gseaplot(GOBP_gsea,
 OXPHOS_GO_gsea.plt + BCR_GO_gsea.plt + mitochondrial_GO_gsea.plt
 ```
 
+#### KEGG pathway
+
+```{r, message=FALSE, warning=FALSE}
+# KEGG pathway
+KEGG_gsea <- KEGG_GSEA(lfc_vector)
+
+# Collect the HM GSEA result
+KEGG_GSEA.result <- KEGG_gsea@result
+KEGG_GSEA_selected.result <- KEGG_GSEA.result %>%
+  as_tibble() %>%
+  dplyr::select(c(Description, NES, pvalue, p.adjust))
+
+DT::datatable(KEGG_GSEA_selected.result, options = list(scrollX = TRUE))
+```
+
+#### Reactome
+
+```{r, message=FALSE, warning=FALSE}
+# REACTOME
+REACTOME_gsea <- REACTOME_GSEA(lfc_vector)
+
+# Collect the HM GSEA result
+REACTOME_GSEA.result <- REACTOME_gsea@result
+REACTOME_GSEA_selected.result <- REACTOME_GSEA.result %>%
+  as_tibble() %>%
+  dplyr::select(c(Description, NES, pvalue, p.adjust))
+
+DT::datatable(REACTOME_GSEA_selected.result, options = list(scrollX = TRUE))
+```
+
+#### WikiPath
+
+```{r, message=FALSE, warning=FALSE}
+# WikiPath
+WIKIPATH_gsea <- WIKIPATH_GSEA(lfc_vector)
+
+# Collect the HM GSEA result
+WIKIPATH_GSEA.result <- WIKIPATH_gsea@result
+WIKIPATH_GSEA_selected.result <- WIKIPATH_GSEA.result %>%
+  as_tibble() %>%
+  dplyr::select(c(Description, NES, pvalue, p.adjust))
+
+DT::datatable(WIKIPATH_GSEA_selected.result, options = list(scrollX = TRUE))
+```
+
 We can see that the enrichment results from pseudobulk approach with DESeq2 are consistent with the results with psedobulk approach using `FindMarkers()` in Seurat package.
 
 ```{r, eval=FALSE}
 # Save the enrichment results
 saveRDS(HM_gsea, path_to_save_deseq2_hm_gsea)
 saveRDS(GOBP_gsea, path_to_save_deseq2_go_gsea)
+saveRDS(KEGG_gsea, path_to_save_deseq2_kegg_gsea)
+saveRDS(REACTOME_gsea, path_to_save_deseq2_reactome_gsea)
+saveRDS(WIKIPATH_gsea, path_to_save_deseq2_wikipath_gsea)
 ```
