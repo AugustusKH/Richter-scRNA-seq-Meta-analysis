@@ -1,0 +1,413 @@
+---
+title: "Rejeski_2022_GSE201704_reanalysis"
+author: "Pakorn Sagulkoo"
+format:
+  html:
+    toc: true
+    toc-location: left
+    embed-resources: true
+editor: visual
+---
+
+This source code we reanalysed single-cell data for a CLL patient with RT progression from [Rejeski et al. (2022)](https://ashpublications.org/blood/article/140/20/2175/485763/Oligoclonal-T-cell-expansion-in-a-patient-with). The patient received CAR T-cell therapy (CART) and experienced with the bone marrow failure with T-cell expansion.
+
+# Import the relevant packages and set working path directory
+
+```{r, setup, message=FALSE, warning=FALSE}
+# Import the packages
+library(Seurat)
+library(SingleR)
+library(celldex)
+library(dplyr)
+library(ggplot2)
+library(ggrepel)
+library(patchwork)
+library(pheatmap)
+library(RColorBrewer)
+library(DT)
+```
+
+```{r}
+# Check root path
+here::here()
+```
+
+# Define paths
+
+```{r}
+# Define paths to load and save
+path_to_merged_obj <- here::here("scRNAseq/GSE201704/GSM6069857/with_protein/GSM6069857_merged.rds")
+path_to_save_downstream_obj <- here::here("scRNAseq/GSE201704/GSM6069857/reanalysis/R_objects/Rejeski_2022_GSE201704_downstream_seu.rds")
+```
+
+# Load data and function
+
+```{r, message=FALSE, warning=FALSE}
+# Source functions
+source(here::here("bin/utils.R"))
+```
+
+```{r}
+# Load the merged object
+seurat <- readRDS(path_to_merged_obj)
+```
+
+# Downstream analysis
+
+```{r, message=FALSE, warning=FALSE}
+# Downstream analysis pipeline
+seurat <- JoinLayers(seurat)
+seurat <- NormalizeData(seurat)
+seurat <- FindVariableFeatures(seurat, nfeatures = 1000)
+seurat <- ScaleData(seurat)
+seurat <- RunPCA(seurat)
+```
+
+# Clustering and running t-SNE and UMAP
+
+```{r, message=FALSE, warning=FALSE}
+# Graph-based clustering and running UMAP
+seurat <- FindNeighbors(seurat, dims = 1:30)
+seurat <- FindClusters(seurat, resolution = 0.45)
+seurat <- RunUMAP(seurat, dims = 1:30)
+seurat <- RunTSNE(seurat, dims = 1:30)
+```
+
+# Data visualisation
+
+## Clustering
+
+```{r fig.height=4, fig.width=10}
+# Plot UMAP based on clusters 
+umap_cluster.plt <- DimPlot(seurat, reduction = "umap", group.by = "seurat_clusters", label = TRUE) + 
+  labs(y= "UMAP 2", x = "UMAP 1")
+
+# Plot tSNE based on clusters 
+tsne_cluster.plt <- DimPlot(seurat, reduction = "tsne", group.by = "seurat_clusters", label = TRUE) + 
+  labs(y= "tSNE 2", x = "tSNE 1")
+
+cluster.plt <- umap_cluster.plt + tsne_cluster.plt
+cluster.plt
+```
+
+## Gene expression
+
+```{r, warning=FALSE, fig.height=7, fig.width=9}
+# Plot UMAP based on SingleR
+FeaturePlot(seurat, 
+            features = c("CD8A", "IL7R", "CD4", "CD19", "CD79A", "CD79B", "CD14", "GNLY", "NKG7"),
+            reduction = "umap",
+            min.cutoff = 'q10',
+            max.cutoff = 'q90') 
+```
+
+```{r, warning=FALSE, fig.height=7, fig.width=9}
+# Plot UMAP based on SingleR
+FeaturePlot(seurat, 
+            features = c("CD8A", "IL7R", "CD4", "CD19", "CD79A", "CD79B", "CD14", "GNLY", "NKG7"),
+            reduction = "tsne",
+            min.cutoff = 'q10',
+            max.cutoff = 'q90')
+```
+
+## Surface protein expression
+
+```{r}
+# Change default assay to antibody capture and normalisation
+DefaultAssay(seurat) <- "ADT"
+```
+
+```{r fig.height=7, fig.width=6}
+# Plot UMAP based on surface protein expression
+umap_feature.plt <- FeaturePlot(
+  seurat,
+  features = c("CD3", "CD4.1", "CD8", "CD19.1", "CD11c", "CD56"),
+  reduction = "umap",
+  min.cutoff = 'q10',
+  max.cutoff = 'q90'
+)
+
+umap_feature.plt
+```
+
+```{r fig.height=7, fig.width=6}
+# Plot tSNE based on surface protein expression
+tsne_feature.plt <- FeaturePlot(
+  seurat,
+  features = c("CD3", "CD4.1", "CD8", "CD19.1", "CD11c", "CD56"),
+  reduction = "tsne",
+  min.cutoff = 'q10',
+  max.cutoff = 'q90'
+)
+
+tsne_feature.plt
+```
+
+## HTO sample origin
+
+```{r fig.height=4, fig.width=10.5}
+# Plot UMAP based on HTO 
+umap_hto.plt <- DimPlot(seurat, reduction = "umap", group.by = 'HTO') + labs(y= "UMAP 2", x = "UMAP 1")
+
+# Plot tSNE based on HTO 
+tsne_hto.plt <- DimPlot(seurat, reduction = "tsne", group.by = 'HTO') + labs(y= "tSNE 2", x = "tSNE 1")
+
+hto.plt <- umap_hto.plt + tsne_hto.plt
+hto.plt
+```
+
+# Cell annotation
+
+## Annotation using SingleR
+
+```{r, message=FALSE, warning=FALSE}
+# Cell annotation with SingleR
+DefaultAssay(seurat) <- "RNA"
+seurat <- singleR_cell_annotation(seurat) 
+```
+
+```{r fig.height=4, fig.width=11}
+# Plot UMAP based on SingleR 
+umap_singler.plt <- DimPlot(seurat, reduction = "umap", group.by = 'singleR.labels_main') +
+  labs(y= "UMAP 2", x = "UMAP 1")
+
+# Plot tSNE based on SingleR 
+tsne_singler.plt <- DimPlot(seurat, reduction = "tsne", group.by = 'singleR.labels_main') +
+  labs(y= "tSNE 2", x = "tSNE 1")
+
+singler.plt <- umap_singler.plt + tsne_singler.plt
+singler.plt
+```
+
+## Annotated based on manually clustering and biomarker identification
+
+```{r}
+# Define new cluster labels
+new.cluster.ids <- c("T cell", "NK cell", "Myeloid cell", "B cell", "T cell", "T cell", "Myeloid cell", "Myeloid cell", 
+                     "Myeloid cell", "Unclassified", "NK cell", "Unclassified", "B cell", "Myeloid cell", "Myeloid cell", 
+                     "NK cell", "Unclassified")
+
+# Map these to the cluster identities (i.e., Idents of the Seurat object)
+names(new.cluster.ids) <- levels(seurat)
+
+# Now map cluster IDs to the manual labels
+seurat$manually_annotated <- plyr::mapvalues(
+  x = as.character(Idents(seurat)),
+  from = names(new.cluster.ids),
+  to = new.cluster.ids
+)
+```
+
+```{r fig.height=4, fig.width=11}
+# Plot UMAP based on manually annotation 
+umap_annotated.plt <- DimPlot(seurat, reduction = "umap", group.by = "manually_annotated", label = TRUE) +
+  labs(y= "UMAP 2", x = "UMAP 1")
+
+# Plot tSNE based on manually annotation 
+tsne_annotated.plt <- DimPlot(seurat, reduction = "tsne", group.by = "manually_annotated", label = TRUE) +
+  labs(y= "tSNE 2", x = "tSNE 1")
+
+annotated.plt <- umap_annotated.plt + tsne_annotated.plt
+annotated.plt
+```
+
+```{r, eval=FALSE}
+# Save the downstream analysed object
+saveRDS(seurat, path_to_save_downstream_obj)
+```
+
+# Gene expression and functional enrichment analysis between pre- and post CAR-T treatment
+
+```{r, message=FALSE, warning=FALSE}
+# Import the related libraries in functional enrichment analysis
+library(clusterProfiler)
+library(msigdbr)
+library(org.Hs.eg.db)
+```
+
+## T cells
+
+### GSEA with Hallmarks
+
+```{r}
+# Extract only T cells
+t_cell_seurat <- subset(seurat, subset = manually_annotated == 'T cell')
+
+# Find markers between pre- and post-treatment  
+Idents(t_cell_seurat) <- "HTO" # change the default identity
+t_cell_pre_post.ge <- FindMarkers(t_cell_seurat, ident.1 = 'CMO306', ident.2 = 'CMO305')
+```
+
+```{r}
+# Manipulate the expression data
+t_cell_dea <- cbind(gene = rownames(t_cell_pre_post.ge), t_cell_pre_post.ge)
+lfc_vector <- t_cell_dea$avg_log2FC # Create a named vector ranked based on the log2 fold change
+names(lfc_vector) <- t_cell_dea$gene
+lfc_vector <- na.omit(lfc_vector) # Omit any NA values
+lfc_vector <- sort(lfc_vector, decreasing = TRUE) # Sort the log2 fold change in descending order
+```
+
+```{r}
+# Show some gene expression results
+head(t_cell_dea)
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Hallmark
+HM_gsea <- HM_GSEA(lfc_vector)
+
+# Collect the HM GSEA result
+HM_GSEA.result <- HM_gsea@result
+HM_GSEA_selected.result <- HM_GSEA.result %>%
+  as_tibble() %>%
+  dplyr::select(c(Description, NES, pvalue, p.adjust))
+
+DT::datatable(HM_GSEA_selected.result, options = list(scrollX = TRUE))
+```
+
+```{r, message=FALSE, warning=FALSE, fig.height=4, fig.width=18}
+# GSEA plot for HALLMARK_IL2_STAT5_SIGNALING, HALLMARK_MYC_TARGETS_V1, and HALLMARK_INFLAMMATORY_RESPONSE
+
+IL2_STAT5_gsea.plt <- gseaplot(HM_gsea, 
+                          by = "runningScore", 
+                          title = "HALLMARK_IL2_STAT5_SIGNALING", 
+                          geneSetID = "HALLMARK_IL2_STAT5_SIGNALING",
+                          base_size = 10) +
+  scale_x_continuous(breaks = seq(0, 10000, by = 2000)) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+Myc_gsea.plt <- gseaplot(HM_gsea, 
+                          by = "runningScore", 
+                          title = "HALLMARK_MYC_TARGETS_V1", 
+                          geneSetID = "HALLMARK_MYC_TARGETS_V1",
+                          base_size = 10) +
+  scale_x_continuous(breaks = seq(0, 10000, by = 2000)) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+inflam_response_gsea.plt <- gseaplot(HM_gsea, 
+                          by = "runningScore", 
+                          title = "HALLMARK_INFLAMMATORY_RESPONSE", 
+                          geneSetID = "HALLMARK_INFLAMMATORY_RESPONSE",
+                          base_size = 10) +
+  scale_x_continuous(breaks = seq(0, 10000, by = 2000)) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+IL2_STAT5_gsea.plt + Myc_gsea.plt + inflam_response_gsea.plt
+```
+
+In our T cell GSEA hallmark results, the IL2_STAT5 signalling and MYC targets terms were consistent with the original results (Fig. S7A in the original supplemental materials) while inflammatory response in our results was not clear, compared to the original study that this term was downregulated.
+
+## Myeloid cells
+
+### GSEA with Hallmarks
+
+```{r}
+# Extract only myeloid cells
+myeloid_cell_seurat <- subset(seurat, subset = manually_annotated == 'Myeloid cell')
+
+# Find markers between pre- and post-treatment  
+Idents(myeloid_cell_seurat) <- "HTO" # change the default identity
+myeloid_cell_pre_post.ge <- FindMarkers(myeloid_cell_seurat, ident.1 = 'CMO306', ident.2 = 'CMO305')
+```
+
+```{r}
+# Manipulate the expression data
+myeloid_cell_dea <- cbind(gene = rownames(myeloid_cell_pre_post.ge), myeloid_cell_pre_post.ge)
+lfc_vector <- myeloid_cell_dea$avg_log2FC # Create a named vector ranked based on the log2 fold change
+names(lfc_vector) <- myeloid_cell_dea$gene
+lfc_vector <- na.omit(lfc_vector) # Omit any NA values
+lfc_vector <- sort(lfc_vector, decreasing = TRUE) # Sort the log2 fold change in descending order
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Hallmark
+HM_gsea <- HM_GSEA(lfc_vector)
+
+# Collect the HM GSEA result
+HM_GSEA.result <- HM_gsea@result
+HM_GSEA_selected.result <- HM_GSEA.result %>%
+  as_tibble() %>%
+  dplyr::select(c(Description, NES, pvalue, p.adjust))
+
+DT::datatable(HM_GSEA_selected.result, options = list(scrollX = TRUE))
+```
+
+```{r, message=FALSE, warning=FALSE, fig.height=4, fig.width=18}
+# GSEA plot for HALLMARK_ALLOGRAFT_REJECTION, HALLMARK_IL2_STAT5_SIGNALING, and HALLMARK_INFLAMMATORY_RESPONSE
+
+allograft_reject_gsea.plt <- gseaplot(HM_gsea, 
+                          by = "runningScore", 
+                          title = "HALLMARK_ALLOGRAFT_REJECTION", 
+                          geneSetID = "HALLMARK_ALLOGRAFT_REJECTION",
+                          base_size = 10) +
+  scale_x_continuous(breaks = seq(0, 10000, by = 2000)) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+IL2_STAT5_gsea.plt <- gseaplot(HM_gsea, 
+                          by = "runningScore", 
+                          title = "HALLMARK_IL2_STAT5_SIGNALING", 
+                          geneSetID = "HALLMARK_IL2_STAT5_SIGNALING",
+                          base_size = 10) +
+  scale_x_continuous(breaks = seq(0, 10000, by = 2000)) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+inflam_response_gsea.plt <- gseaplot(HM_gsea, 
+                          by = "runningScore", 
+                          title = "HALLMARK_INFLAMMATORY_RESPONSE", 
+                          geneSetID = "HALLMARK_INFLAMMATORY_RESPONSE",
+                          base_size = 10) +
+  scale_x_continuous(breaks = seq(0, 10000, by = 2000)) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+allograft_reject_gsea.plt + IL2_STAT5_gsea.plt + inflam_response_gsea.plt
+```
+
+For our myeloid GSEA hallmark results, allograft rejection and IL2-STAT5 signalling terms were upregulated, consistent with the original study (Fig. S7B) while inflammatory in our results was downregulated while the original results was upregulated.
+
+### GSEA with GO:BP
+
+```{r, message=FALSE, warning=FALSE}
+# GO:BP
+GOBP_gsea <- GO_GSEA(lfc_vector)
+
+# Collect the GSEA result
+GOBP_GSEA.result <- GOBP_gsea@result
+GOBP_GSEA_selected.result <- GOBP_GSEA.result %>%
+  as_tibble() %>%
+  dplyr::select(c(Description, NES, pvalue, p.adjust))
+
+DT::datatable(GOBP_GSEA_selected.result, options = list(scrollX = TRUE))
+```
+
+```{r, message=FALSE, warning=FALSE, fig.height=4, fig.width=15}
+# GSEA plot for GOBP_ANTIGEN_PROCESSING_AND_PRESENTATION_OF_PEPTIDE_ANTIGEN and GOBP_MYELOID_LEUKOCYTE_MEDIATED_IMMUNITY
+
+antigen_present_gsea.plt <- gseaplot(GOBP_gsea, 
+                          by = "runningScore", 
+                          title = "GOBP_ANTIGEN_PROCESSING_AND_PRESENTATION_OF_PEPTIDE_ANTIGEN", 
+                          geneSetID = "GOBP_ANTIGEN_PROCESSING_AND_PRESENTATION_OF_PEPTIDE_ANTIGEN",
+                          base_size = 10) +
+  scale_x_continuous(breaks = seq(0, 10000, by = 2000)) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+myeloid_mediated_gsea.plt <- gseaplot(GOBP_gsea, 
+                          by = "runningScore", 
+                          title = "GOBP_MYELOID_LEUKOCYTE_MEDIATED_IMMUNITY", 
+                          geneSetID = "GOBP_MYELOID_LEUKOCYTE_MEDIATED_IMMUNITY",
+                          base_size = 10) +
+  scale_x_continuous(breaks = seq(0, 10000, by = 2000)) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+antigen_present_gsea.plt + myeloid_mediated_gsea.plt 
+```
+
+For our myeloid GSEA GO:BP results, antigen processing and presentation was downregulated, similar to the original study (Fig. S7B) while myeloid leukocyte immunity in our results was not clear while the original results was downregulated.
+
+# Session Information
+
+```{r}
+sessionInfo()
+```
+
+
+

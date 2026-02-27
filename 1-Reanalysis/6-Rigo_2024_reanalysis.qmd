@@ -1,0 +1,719 @@
+---
+title: "Rigo_2024_reanalysis"
+author: "Pakorn Sagulkoo"
+format:
+  html:
+    toc: true
+    toc-location: left
+    embed-resources: true
+editor: visual
+---
+
+# Import the relevant packages and set working path directory
+
+```{r, setup, message=FALSE, warning=FALSE}
+# Attach the packages you will need for the analysis.
+library(Seurat)
+library(harmony)
+library(dplyr)
+library(ggplot2)
+library(ggrepel)
+library(patchwork)
+library(stringr)
+library(DoubletFinder)
+library(SingleR)
+library(celldex)
+library(DT)
+```
+
+```{r}
+# Check root path
+here::here()
+```
+
+# Define paths and load the functions
+
+```{r}
+path_to_cnt <- here::here("scRNAseq/Rigo_2024_scRNAseq/count_matrices")
+path_to_save_obj_lst <- here::here("scRNAseq/Rigo_2024_scRNAseq/reanalysis/R_objects/0-individual_seurat_list.rds")
+path_to_save_merged_obj <- here::here("scRNAseq/Rigo_2024_scRNAseq/reanalysis/R_objects/1-merged_seurat.rds")
+path_to_save_integrated_obj <- here::here("scRNAseq/Rigo_2024_scRNAseq/reanalysis/R_objects/2-integrated_seurat.rds")
+path_to_save_tumour_obj <- here::here("scRNAseq/Rigo_2024_scRNAseq/reanalysis/R_objects/3-tumour_seurat.rds")
+path_to_save_dea <- here::here("scRNAseq/Rigo_2024_scRNAseq/reanalysis/R_objects/4-rt_cll_dea.rds")
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Source functions
+source(here::here("bin/utils.R"))
+```
+
+# Define function for doublet detecttion
+
+We will use multiple rate table from [10X](https://kb.10xgenomics.com/hc/en-us/articles/360001378811-What-is-the-maximum-number-of-cells-that-can-be-profiled) and use the rate based on our number of cell barcodes to run DoubletFinder.
+
+```{r}
+# Create 10X multiple rate table 
+multiple_rate.tbl <- data.frame(
+  'Multiplet_rate'= c(0.004, 0.008, 0.016, 0.024, 0.032, 0.04, 0.048, 0.056, 0.064, 0.072, 0.08),
+  'Loaded_cells' = c(825, 1650, 3300, 4950, 6600, 8250, 9900, 11550, 13200, 14850, 16500),
+  'Recovered_cells' = c(500, 1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000)
+  )
+
+DT::datatable(multiple_rate.tbl, options = list(scrollX = TRUE))
+```
+
+```{r}
+# Define a function to filter out doublets based DoubletFinder package
+my_doublet_filter <- function(seurat.obj){
+  multiplet_rate <- multiple_rate.tbl %>% 
+    dplyr::filter(Recovered_cells < nrow(seurat.obj@meta.data)) %>% 
+    dplyr::slice(which.max(Recovered_cells)) %>% # select the min threshold depending on your number of samples
+    dplyr::select(Multiplet_rate) %>% as.numeric(as.character()) 
+  
+  # pK Identification (no ground-truth)
+  sweep_list <- paramSweep(seurat.obj, PCs = 1:30, sct = FALSE) 
+  sweep_stats <- summarizeSweep(sweep_list)
+  bcmvn <- find.pK(sweep_stats)
+  optimal.pk <- bcmvn %>% 
+    dplyr::filter(BCmetric == max(BCmetric)) %>%
+    dplyr::select(pK)
+  optimal.pk <- as.numeric(as.character(optimal.pk[[1]]))
+  
+  # Homotypic Doublet Proportion Estimate
+  annotations <- seurat.obj@meta.data$seurat_clusters
+  homotypic.prop <- modelHomotypic(annotations)
+  nExp.poi <- round(multiplet_rate * nrow(seurat.obj@meta.data))
+  nExp.poi.adj <- round(nExp.poi*(1-homotypic.prop))
+  
+  # Run DoubletFinder
+  seurat.obj <- doubletFinder(seu = seurat.obj, PCs = 1:30, pK = optimal.pk, nExp = nExp.poi.adj) 
+  
+  # Change name of metadata column with Singlet/Doublet information
+  colnames(seurat.obj@meta.data)[grepl('DF.classifications.*', colnames(seurat.obj@meta.data))] <- "doublet_finder"
+  
+  # Filter out doublets
+  singlets <- subset(seurat.obj, doublet_finder == "Singlet")
+  
+  return(singlets)
+} 
+```
+
+# Load count data and create Seurat objects with quality control, preprocessing, cell annotation, and filtering out doublets
+
+```{r}
+# Define a function for cell type annotation using SingleR
+my_cell_annotation <- function(seurat.obj){
+  ref <- celldex::DatabaseImmuneCellExpressionData()
+  seurat_counts <- GetAssayData(seurat.obj, layer = 'data')
+  pred <- SingleR(test = seurat_counts,
+                ref = ref,
+                labels = ref$label.main)
+  seurat.obj$singleR.labels_main <- pred$labels[match(rownames(seurat.obj@meta.data), rownames(pred))]
+  return(seurat.obj)
+}
+```
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE, results='hide'}
+# Create the objects and collect in a list
+cnt_files_to_load <- list.files(path_to_cnt) # list count file names
+path_to_load <- str_c(path_to_cnt, "/", cnt_files_to_load, "/outs/filtered_feature_bc_matrix/")
+name_ids <- cnt_files_to_load %>% str_remove("case14_")
+seurat.lst <- purrr::map2(name_ids, path_to_load, function(name, path){
+  count_matrix <- Read10X(path)
+  obj <- CreateSeuratObject(count_matrix) %>% 
+    RenameCells(add.cell.id = name)
+  obj[["cond"]] <- name
+  obj[["percent.mt"]] <- PercentageFeatureSet(obj, pattern="^MT-.")
+  obj[["percent.ribo"]] <- PercentageFeatureSet(obj, pattern="^RP[SL]")
+  obj <- subset(obj, 
+                subset = 
+                  nCount_RNA > 600 & nCount_RNA < 15000 & 
+                  nFeature_RNA > 200 & nFeature_RNA < 4000 &
+                  percent.ribo > 10 & percent.ribo < 60 &
+                  percent.mt < 10
+                )
+  obj <- NormalizeData(obj, normalization.method = "LogNormalize", scale.factor = 10000) 
+  obj <- FindVariableFeatures(obj) 
+  obj <- ScaleData(obj) 
+  obj <- RunPCA(obj) 
+  obj <- RunUMAP(obj, dims = 1:30)
+  obj <- FindNeighbors(obj, dims = 1:30)              
+  obj <- FindClusters(obj, resolution = 0.1)
+  obj <- my_doublet_filter(obj)
+  obj
+})
+names(seurat.lst) <- name_ids
+```
+
+```{r, eval=FALSE}
+# Save the list
+saveRDS(seurat.lst, path_to_save_obj_lst)
+```
+
+# Merge and integrate the objects
+
+```{r, eval=FALSE}
+# Merge the objects
+seurat <- seurat.lst[[1]]
+for (i in 2:length(seurat.lst)) {
+  seurat <- merge(x = seurat, y = seurat.lst[[i]])
+  seurat.lst[[i]] <- NA
+}
+rm(seurat.lst)
+```
+
+```{r, eval=FALSE}
+## Save the merged object
+saveRDS(seurat, path_to_save_merged_obj)
+```
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Reanalysis after merging and data integration 
+seurat <- JoinLayers(seurat)
+seurat <- NormalizeData(seurat, normalization.method = "LogNormalize", scale.factor = 10000) 
+seurat <- FindVariableFeatures(seurat) 
+seurat <- ScaleData(seurat) 
+seurat <- RunPCA(seurat) 
+seurat <- RunHarmony(seurat, group.by.vars = "cond", dims = 1:30) 
+seurat <- RunUMAP(seurat, dims = 1:30, reduction = "harmony")
+seurat <- RunTSNE(seurat, dims = 1:20, reduction = "harmony")
+seurat <- FindNeighbors(seurat, dims = 1:30)              
+seurat <- FindClusters(seurat, resolution = 0.1)
+seurat <- my_cell_annotation(seurat) 
+```
+
+# Save the integrated object
+
+```{r, eval=FALSE}
+# Save the object
+saveRDS(seurat, path_to_save_integrated_obj)
+```
+
+# Visualisation
+
+```{r}
+# Load the integrated data
+seurat <- readRDS(path_to_save_integrated_obj)
+```
+
+```{r, message=FALSE, warning=FALSE, fig.height=4, fig.width=15}
+# Plot based on conditions, cell types, and clusters
+cond.plt <- DimPlot(seurat, reduction = "umap", group.by = "cond") + 
+  labs(y= "UMAP 2", x = "UMAP 1")
+
+cell.plt <- DimPlot(seurat, reduction = "umap", group.by = "singleR.labels_main") +
+  labs(y= "UMAP 2", x = "UMAP 1")
+
+cluster.plt <- DimPlot(seurat, reduction = "umap", group.by = "seurat_clusters") +
+  labs(y= "UMAP 2", x = "UMAP 1")
+
+cond.plt + cell.plt + cluster.plt
+```
+
+```{r, message=FALSE, warning=FALSE, fig.height=6, fig.width=7}
+# Plot based on gene expression
+FeaturePlot(seurat, 
+            features = c("LDHA", "HRK", "PMAIP1", "PRMT5"),
+            reduction = "umap")
+```
+
+```{r, fig.height=7, fig.width=9, warning=FALSE, message=FALSE}
+# Plot based on gene expression
+FeaturePlot(seurat, 
+            features = c("CD8A", "IL7R", "CD4", "CD19", "CD79A", "CD79B", "CD14", "GNLY", "NKG7"),
+            reduction = "umap") 
+```
+
+# B cell cluster analysis
+
+```{r, message=FALSE, warning=FALSE, results='hide'}
+# Extract B cells and re-downstream analysis
+Bcell_seurat <- subset(seurat, subset = singleR.labels_main == "B cells")
+Bcell_seurat <- NormalizeData(Bcell_seurat, normalization.method = "LogNormalize", scale.factor = 10000) 
+Bcell_seurat <- FindVariableFeatures(Bcell_seurat) 
+Bcell_seurat <- ScaleData(Bcell_seurat) 
+Bcell_seurat <- RunPCA(Bcell_seurat) 
+Bcell_seurat <- RunHarmony(Bcell_seurat, group.by.vars = "cond", dims = 1:30) 
+Bcell_seurat <- RunUMAP(Bcell_seurat, dims = 1:30, reduction = "harmony")
+Bcell_seurat <- FindNeighbors(Bcell_seurat, dims = 1:30)              
+Bcell_seurat <- FindClusters(Bcell_seurat, resolution = 0.1)
+```
+
+```{r, fig.height=5, fig.width=6}
+# Plot based on clusters
+DimPlot(Bcell_seurat, reduction = "umap", group.by = "seurat_clusters") +
+  labs(y= "UMAP 2", x = "UMAP 1")
+```
+
+```{r, fig.height=5, fig.width=6}
+# Remove outlier cells outside the main cluster
+Bcell_seurat <- subset(Bcell_seurat, subset = seurat_clusters %in% c("0", "1"))
+
+# Plot based on clusters
+DimPlot(Bcell_seurat, reduction = "umap", group.by = "seurat_clusters", pt.size = 0.5) +
+  labs(y= "UMAP 2", x = "UMAP 1")
+```
+
+```{r, fig.height=5, fig.width=5.5}
+# Manually remove outlier cells outside the main cluster
+#noise_cells <- CellSelector(DimPlot(Bcell_seurat))
+noise_cells <- c("CLL_CCCTGATGTCACAGAG-1", 
+                 "CLL_GGACGTCGTTGTTGAC-1", 
+                 "RT-like_TGCAGGCGTGCTGCAC-1", 
+                 "RT-like_TGGAGAGGTTTGTTCT-1")
+Bcell_seurat <- subset(Bcell_seurat, cell = setdiff(colnames(Bcell_seurat), noise_cells))
+
+# Plot based on clusters
+DimPlot(Bcell_seurat, reduction = "umap", group.by = "seurat_clusters", pt.size = 0.5) +
+  labs(y= "UMAP 2", x = "UMAP 1")
+```
+
+## Apoptotic-related gene feature plots
+
+```{r, fig.height=5, fig.width=5.5}
+# Plot based on conditions
+DimPlot(Bcell_seurat, reduction = "umap", pt.size = 0.5, group.by = "cond") +
+  scale_color_manual(values = c("CLL" = "steelblue", "RT-like" = "firebrick")) +
+  labs(y= "UMAP 2", x = "UMAP 1")
+```
+
+```{r, message=FALSE, warning=FALSE, fig.height=4, fig.width=15}
+# Feature plots
+HRK.plt <- FeaturePlot(Bcell_seurat, features = "HRK", reduction = "umap", pt.size = 1) +
+  scale_color_viridis_c(option = "magma") +
+  labs(y= "UMAP 2", x = "UMAP 1")
+
+BCL2A1.plt <- FeaturePlot(Bcell_seurat, features = "BCL2A1", reduction = "umap", pt.size = 1) +
+  scale_color_viridis_c(option = "magma") +
+  labs(y= "UMAP 2", x = "UMAP 1")
+
+BID.plt <- FeaturePlot(Bcell_seurat, features = "BID", reduction = "umap", pt.size = 1) +
+  scale_color_viridis_c(option = "magma") +
+  labs(y= "UMAP 2", x = "UMAP 1")
+
+HRK.plt | BCL2A1.plt | BID.plt
+```
+
+## Cell Cycle Score
+
+```{r, warning=FALSE, message=FALSE, fig.height=4, fig.width=15}
+# Consider cell cycle genes based on cell cycle upregulation is a hallmark of Richter transformation
+Bcell_seurat <- CellCycleScoring(
+  Bcell_seurat,
+  s.features = cc.genes$s.genes,
+  g2m.features = cc.genes$g2m.genes,
+  set.ident = FALSE
+)
+
+cell_cycle.plt <- DimPlot(Bcell_seurat, group.by = "Phase", pt.size = 1) + labs(y= "UMAP 2", x = "UMAP 1")
+
+umap_s_score <- FeaturePlot(Bcell_seurat, features = "S.Score", pt.size = 1) +
+  scale_color_viridis_c(option = "magma") +
+  labs(title = "S Score", y= "UMAP 2", x = "UMAP 1") 
+  
+umap_g2m_score <- FeaturePlot(Bcell_seurat, features = "G2M.Score", pt.size = 1) +
+  scale_color_viridis_c(option = "magma") +
+  labs(title = "G2M Score", y= "UMAP 2", x = "UMAP 1") 
+
+cell_cycle.plt + umap_s_score + umap_g2m_score
+```
+
+# Pseudobulk gene expression analysis
+
+```{r, message=FALSE, warning=FALSE}
+# Import the related libraries in functional enrichment analysis
+library(clusterProfiler)
+library(enrichplot)
+library(msigdbr)
+library(org.Hs.eg.db)
+```
+
+## Find biomarkers of B cells between RT and CLL conditions
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Find markers between CLL and RT-like conditions  
+Idents(Bcell_seurat) <- "cond" # change the default identity
+Bcell_RT_CLL.ge <- FindMarkers(
+  Bcell_seurat,
+  ident.1 = "RT-like",
+  ident.2 = "CLL",
+  test.use = "t",
+  only.pos = FALSE,
+  logfc.threshold = 0
+)
+```
+
+```{r, eval=FALSE}
+# Save the dea results
+saveRDS(Bcell_RT_CLL.ge, path_to_save_dea)
+```
+
+```{r}
+# Manipulate the expression data
+Bcell_RT_CLL.ge <- readRDS(path_to_save_dea)
+Bcell.ge <- cbind(gene = rownames(Bcell_RT_CLL.ge), Bcell_RT_CLL.ge)
+lfc_vector <- Bcell.ge$avg_log2FC # Create a named vector ranked based on the log2 fold change
+names(lfc_vector) <- Bcell.ge$gene
+lfc_vector <- na.omit(lfc_vector) # Omit any NA values
+lfc_vector <- sort(lfc_vector, decreasing = TRUE) # Sort the log2 fold change in descending order
+```
+
+```{r, fig.height=5, fig.width=5.5}
+# Plot genes of interest
+gene_plot = c("HRK", "PMAIP1", "BCL2L11", "BAX", "BAK1", "BBC3", "BMF", "BAD", "BID")
+selected_df <- Bcell.ge[Bcell.ge$gene %in% gene_plot, ]
+
+ggplot(selected_df, aes(x = avg_log2FC, y = -log10(p_val), fill = -log10(p_val_adj))) +
+  geom_point(shape = 21, size = 4, colour = "black", stroke = 0.6) +
+  scale_fill_viridis_c(option = "viridis", direction = -1) +
+  geom_hline(yintercept = -log10(0.05), linetype = "dashed") +
+  geom_vline(xintercept = c(-1, 1), linetype = "dashed") +
+  geom_text_repel(aes(label = gene), size = 4, max.overlaps = 20, color = "black") +
+  scale_x_continuous(
+    limits = c(-5, 5),
+    breaks = seq(-6, 6, 2)
+  ) +
+  ylim(-10, 180) +
+  labs(
+    x = "Fold-change RS-like phase vs CLL phase",
+    y = "-log(P-Value)",
+    fill = "-log(FDR)"
+  ) +
+  guides(
+    fill = guide_colorbar(
+      barheight = unit(10, "cm"),   # adjust height
+      barwidth = unit(0.6, "cm"),  # adjust width
+      direction = "vertical"
+    )
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    axis.line = element_line(color = "black", linewidth = 0.5),
+    panel.grid = element_blank()  # optional, remove grid lines
+  )
+```
+
+## Gene Set Enrichment Analysis (GSEA)
+
+### Hallmark
+
+```{r, message=FALSE, warning=FALSE}
+# Hallmark
+HM_gsea <- HM_GSEA(lfc_vector, minGSSize = 25, maxGSSize = 500)
+
+# Collect the HM GSEA result
+HM_GSEA.result <- HM_gsea@result
+HM_GSEA_selected.result <- HM_GSEA.result %>%
+  as_tibble() %>%
+  dplyr::select(c(Description, NES, pvalue, p.adjust))
+
+DT::datatable(HM_GSEA_selected.result, options = list(scrollX = TRUE))
+```
+
+```{r, message=FALSE, warning=FALSE, fig.height=4, fig.width=18}
+# GSEA plot for HALLMARK_E2F_TARGETS, HALLMARK_MYC_TARGETS_V1, and HALLMARK_OXIDATIVE_PHOSPHORYLATION
+
+E2F_gsea.plt <- gseaplot(HM_gsea, 
+                          by = "runningScore", 
+                          title = "HALLMARK_E2F_TARGETS", 
+                          geneSetID = "HALLMARK_E2F_TARGETS",
+                          base_size = 10) +
+  theme(axis.text.x = element_text(angle = 0, hjust = 1))
+
+Myc_gsea.plt <- gseaplot(HM_gsea, 
+                          by = "runningScore", 
+                          title = "HALLMARK_MYC_TARGETS_V1", 
+                          geneSetID = "HALLMARK_MYC_TARGETS_V1",
+                          base_size = 10) +
+  theme(axis.text.x = element_text(angle = 0, hjust = 1))
+
+OXPHOS_gsea.plt <- gseaplot(HM_gsea, 
+                          by = "runningScore", 
+                          title = "HALLMARK_OXIDATIVE_PHOSPHORYLATION", 
+                          geneSetID = "HALLMARK_OXIDATIVE_PHOSPHORYLATION",
+                          base_size = 10) +
+  theme(axis.text.x = element_text(angle = 0, hjust = 1))
+
+E2F_gsea.plt + Myc_gsea.plt + OXPHOS_gsea.plt
+```
+
+### GO:BP
+
+```{r, message=FALSE, warning=FALSE}
+# GO:BP
+GOBP_gsea <- GO_GSEA(lfc_vector, minGSSize = 25, maxGSSize = 500)
+
+# Collect the GSEA result
+GOBP_GSEA.result <- GOBP_gsea@result
+GOBP_GSEA_selected.result <- GOBP_GSEA.result %>%
+  as_tibble() %>%
+  dplyr::select(c(Description, NES, pvalue, p.adjust))
+
+DT::datatable(GOBP_GSEA_selected.result, options = list(scrollX = TRUE))
+```
+
+```{r, message=FALSE, warning=FALSE, fig.height=4, fig.width=18}
+# GSEA plot for GOBP_OXIDATIVE_PHOSPHORYLATION, GOBP_B_CELL_RECEPTOR_SIGNALING_PATHWAY, and GOBP_MITOCHONDRIAL_TRANSLATION
+
+OXPHOS_GO_gsea.plt <- gseaplot(GOBP_gsea, 
+                          by = "runningScore", 
+                          title = "GOBP_OXIDATIVE_PHOSPHORYLATION", 
+                          geneSetID = "GOBP_OXIDATIVE_PHOSPHORYLATION",
+                          base_size = 10) +
+  theme(axis.text.x = element_text(angle = 0, hjust = 1))
+
+BCR_GO_gsea.plt <- gseaplot(GOBP_gsea, 
+                          by = "runningScore", 
+                          title = "GOBP_B_CELL_RECEPTOR_SIGNALING_PATHWAY", 
+                          geneSetID = "GOBP_B_CELL_RECEPTOR_SIGNALING_PATHWAY",
+                          base_size = 10) +
+  theme(axis.text.x = element_text(angle = 0, hjust = 1))
+
+mitochondrial_GO_gsea.plt <- gseaplot(GOBP_gsea, 
+                          by = "runningScore", 
+                          title = "GOBP_MITOCHONDRIAL_TRANSLATION", 
+                          geneSetID = "GOBP_MITOCHONDRIAL_TRANSLATION",
+                          base_size = 10) +
+  theme(axis.text.x = element_text(angle = 0, hjust = 1))
+
+OXPHOS_GO_gsea.plt + BCR_GO_gsea.plt + mitochondrial_GO_gsea.plt
+```
+
+We also performed GSEA with additional enrichment systems such as KEGG pathways, Reactome, and WikiPath.
+
+### KEGG pathway
+
+```{r, message=FALSE, warning=FALSE}
+# KEGG pathway
+KEGG_gsea <- KEGG_GSEA(lfc_vector, minGSSize = 25, maxGSSize = 500)
+
+# Collect the HM GSEA result
+KEGG_GSEA.result <- KEGG_gsea@result
+KEGG_GSEA_selected.result <- KEGG_GSEA.result %>%
+  as_tibble() %>%
+  dplyr::select(c(Description, NES, pvalue, p.adjust))
+
+DT::datatable(KEGG_GSEA_selected.result, options = list(scrollX = TRUE))
+```
+
+### Reactome
+
+```{r, message=FALSE, warning=FALSE}
+# REACTOME
+REACTOME_gsea <- REACTOME_GSEA(lfc_vector, minGSSize = 25, maxGSSize = 500)
+
+# Collect the HM GSEA result
+REACTOME_GSEA.result <- REACTOME_gsea@result
+REACTOME_GSEA_selected.result <- REACTOME_GSEA.result %>%
+  as_tibble() %>%
+  dplyr::select(c(Description, NES, pvalue, p.adjust))
+
+DT::datatable(REACTOME_GSEA_selected.result, options = list(scrollX = TRUE))
+```
+
+### WikiPath
+
+```{r, message=FALSE, warning=FALSE}
+# WikiPath
+WIKIPATH_gsea <- WIKIPATH_GSEA(lfc_vector, minGSSize = 25, maxGSSize = 500)
+
+# Collect the HM GSEA result
+WIKIPATH_GSEA.result <- WIKIPATH_gsea@result
+WIKIPATH_GSEA_selected.result <- WIKIPATH_GSEA.result %>%
+  as_tibble() %>%
+  dplyr::select(c(Description, NES, pvalue, p.adjust))
+
+DT::datatable(WIKIPATH_GSEA_selected.result, options = list(scrollX = TRUE))
+```
+
+```{r}
+# Bar plot of GSEA 
+gsea_bp <- rbind(HM_GSEA_selected.result[HM_GSEA_selected.result$Description == "HALLMARK_OXIDATIVE_PHOSPHORYLATION",],
+                 HM_GSEA_selected.result[HM_GSEA_selected.result$Description == "HALLMARK_FATTY_ACID_METABOLISM",],
+                 REACTOME_GSEA_selected.result[REACTOME_GSEA_selected.result$Description == 
+                                                 "REACTOME_AEROBIC_RESPIRATION_AND_RESPIRATORY_ELECTRON_TRANSPORT",],
+                 GOBP_GSEA_selected.result[GOBP_GSEA_selected.result$Description == "GOBP_MITOCHONDRIAL_TRANSLATION",],
+                 GOBP_GSEA_selected.result[GOBP_GSEA_selected.result$Description == "GOBP_CELL_CYCLE_PHASE_TRANSITION",],
+                 WIKIPATH_GSEA_selected.result[WIKIPATH_GSEA_selected.result$Description == "WP_GLYCOLYSIS_AND_GLUCONEOGENESIS",],
+                 HM_GSEA_selected.result[HM_GSEA_selected.result$Description == "HALLMARK_MTORC1_SIGNALING",],
+                 HM_GSEA_selected.result[HM_GSEA_selected.result$Description == "HALLMARK_E2F_TARGETS",],
+                 HM_GSEA_selected.result[HM_GSEA_selected.result$Description == "HALLMARK_G2M_CHECKPOINT",],
+                 HM_GSEA_selected.result[HM_GSEA_selected.result$Description == "HALLMARK_APOPTOSIS",],
+                 GOBP_GSEA_selected.result[GOBP_GSEA_selected.result$Description == "GOBP_REGULATION_OF_APOPTOTIC_SIGNALING_PATHWAY",],
+                 GOBP_GSEA_selected.result[GOBP_GSEA_selected.result$Description == "GOBP_PROGRAMMED_NECROTIC_CELL_DEATH",],
+                 GOBP_GSEA_selected.result[GOBP_GSEA_selected.result$Description == "GOBP_POSITIVE_REGULATION_OF_CARBOHYDRATE_METABOLIC_PROCESS",],
+                 REACTOME_GSEA_selected.result[REACTOME_GSEA_selected.result$Description == 
+                                                 "REACTOME_REGULATION_OF_ENDOGENOUS_RETROELEMENTS",],
+                 WIKIPATH_GSEA_selected.result[WIKIPATH_GSEA_selected.result$Description == "WP_CILIOPATHIES",]
+)
+
+gsea_bp$Description <- gsub("HALLMARK_", "", gsea_bp$Description)
+gsea_bp$Description <- gsub("GOBP_", "", gsea_bp$Description)
+gsea_bp$Description <- gsub("KEGG_", "", gsea_bp$Description)
+gsea_bp$Description <- gsub("REACTOME_", "", gsea_bp$Description)
+gsea_bp$Description <- gsub("WP_", "", gsea_bp$Description)
+gsea_bp$Description <- gsub("_V1", "", gsea_bp$Description)
+gsea_bp$Description <- gsub("OXIDATIVE_PHOSPHORYLATION", "OXPHOS", gsea_bp$Description)
+gsea_bp$Description <- gsub("AEROBIC_RESPIRATION_AND_RESPIRATORY_ELECTRON_TRANSPORT", "RESPIRATORY_ELECTRON_TRANSPORT", gsea_bp$Description)
+gsea_bp$Description <- gsub("REGULATION_OF_APOPTOTIC_SIGNALING_PATHWAY", "APOPTOTIC_SIGNALING_PATHWAY", gsea_bp$Description)
+gsea_bp$Description <- gsub("POSITIVE_REGULATION_OF_CARBOHYDRATE_METABOLIC_PROCESS", "CARBOHYDRATE_METABOLIC_PROCESS", gsea_bp$Description)
+gsea_bp$Description <- gsub("REGULATION_OF_ENDOGENOUS_RETROELEMENTS", "ENDOGENOUS_RETROELEMENTS", gsea_bp$Description)
+gsea_bp$Description <- gsub("_", " ", gsea_bp$Description)
+
+gsea_bp$Description <- factor(gsea_bp$Description, levels = gsea_bp$Description)
+gsea_bp$Direction <- "Up"
+gsea_bp$Direction[gsea_bp$NES<0] <- "Down"
+
+gsea_bar.plt <- ggplot(gsea_bp, aes(x=Description, y=NES, fill=Direction)) +
+  geom_bar(stat = "identity", color="black", width = 0.75) +  
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  geom_hline(yintercept = 0) + 
+  ylab("NES") + xlab(NULL) + 
+  scale_fill_manual(values=c("#8882BA", "#EF7F6A")) + theme(legend.position = "none")
+
+gsea_bar.plt
+```
+
+# Trajectory analysis
+
+```{r, message=FALSE, warning=FALSE}
+# Import the related libraries in trajectory analysis
+library(monocle3)
+library(SeuratWrappers)
+```
+
+## Transfer seurat data to monocle
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Create monocle object and generate graph (reanalysis in monocle)
+#cds <- as.cell_data_set(Bcell_seurat) # Convert the seurat object to monocle object using SeuratWrappers
+#cds <- preprocess_cds(cds, num_dim = 30)       
+#cds <- reduce_dimension(cds, preprocess_method = "PCA", reduction_method = "UMAP")  
+#cds <- cluster_cells(cds, reduction_method = "UMAP")
+#cds <- learn_graph(cds)
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Create monocle object and generate graph (use data from seurat)
+cds <- as.cell_data_set(Bcell_seurat) # Convert the seurat object to monocle object using SeuratWrappers
+
+# Assign seurat clusters to monocle partitions
+recreate.partitions <- c(rep(1, length(cds@colData@rownames)))
+names(recreate.partitions) <- cds@colData@rownames
+recreate.partitions <- as.factor(recreate.partitions)
+cds@clusters@listData[["UMAP"]][["partitions"]] <- recreate.partitions
+cds@clusters@listData[["UMAP"]][["clusters"]] <- Bcell_seurat@active.ident
+
+# Assign UMAP coordination
+cds@int_colData@listData[["reducedDims"]]@listData[["UMAP"]] <- Bcell_seurat@reductions$umap@cell.embeddings
+```
+
+```{r, message=FALSE, warning=FALSE, fig.height=3, fig.width=4}
+# Monocle plot before trajectory analysis
+plot_cells(cds, 
+           color_cells_by = "cluster", 
+           label_groups_by_cluster = FALSE, 
+           group_label_size = 5
+           ) + 
+  theme(legend.position = "right")
+```
+
+## Trajectory analysis
+
+```{r}
+# Learn trajectory
+cds <- learn_graph(cds, use_partition = FALSE)
+```
+
+```{r, fig.height=3.5, fig.width=9}
+# Plot after learning trajectory
+cond.plt <- plot_cells(cds, 
+                       color_cells_by = "cond",
+                       graph_label_size=5,
+                       show_trajectory_graph = TRUE
+                       ) + 
+  ggtitle("cond") +
+  theme(
+    legend.position = "right",
+    plot.title = element_text(size = 16, face = "bold", hjust = 0.5)
+    )
+
+cluster.plt <- plot_cells(cds, 
+                       color_cells_by = "seurat_clusters",
+                       graph_label_size=5,
+                       show_trajectory_graph = TRUE
+                       ) + 
+  ggtitle("seurat clusters") +
+  theme(legend.position = "right",
+        plot.title = element_text(size = 16, face = "bold", hjust = 0.5)
+        )
+
+cond.plt + cluster.plt
+```
+
+```{r, fig.height=4, fig.width=5}
+root.plt <- plot_cells(cds, label_principal_points = TRUE) + 
+  ggtitle("root principal node") +
+  theme(legend.position = "right",
+        plot.title = element_text(size = 16, face = "bold", hjust = 0.5)
+        )
+
+root.plt
+```
+
+```{r, message=FALSE, warning=FALSE, fig.height=4, fig.width=5}
+# Order cells in pseudotime
+cds <- order_cells(cds, reduction_method = "UMAP", root_pr_nodes = "Y_2")
+
+plot_cells(cds, 
+           color_cells_by = "pseudotime",
+           graph_label_size=5,
+           show_trajectory_graph = FALSE
+           ) +
+  ggtitle("Pseudotime progression") +
+  theme(legend.position = "right",
+        plot.title = element_text(size = 16, face = "bold", hjust = 0.5)
+        )
+```
+
+```{r}
+# Transfer pseudotime to seurat object
+Bcell_seurat$pseudotime <- pseudotime(cds)
+```
+
+```{r, message=FALSE, warning=FALSE, fig.height=4, fig.width=17}
+# Feature plots between pseudotime and gene expression
+pseudotime.plt <- FeaturePlot(Bcell_seurat, features = "pseudotime", reduction = "umap", pt.size = 1) +
+  scale_color_viridis_c(option = "magma") +
+  labs(y= "UMAP 2", x = "UMAP 1")
+
+LDHA.plt <- FeaturePlot(Bcell_seurat, features = "LDHA", reduction = "umap", pt.size = 1) +
+  scale_color_viridis_c(option = "magma") +
+  labs(y= "UMAP 2", x = "UMAP 1")
+
+HRK.plt <- FeaturePlot(Bcell_seurat, features = "HRK", reduction = "umap", pt.size = 1) +
+  scale_color_viridis_c(option = "magma") +
+  labs(y= "UMAP 2", x = "UMAP 1")
+
+PMAIP1.plt <- FeaturePlot(Bcell_seurat, features = "PMAIP1", reduction = "umap", pt.size = 1) +
+  scale_color_viridis_c(option = "magma") +
+  labs(y= "UMAP 2", x = "UMAP 1")
+
+pseudotime.plt | LDHA.plt | HRK.plt | PMAIP1.plt
+```
+
+# Save the object
+
+```{r, eval=FALSE}
+# Save the tumour object
+saveRDS(Bcell_seurat, path_to_save_tumour_obj) 
+```
+
+# Session Information
+
+```{r}
+sessionInfo()
+```
+
+

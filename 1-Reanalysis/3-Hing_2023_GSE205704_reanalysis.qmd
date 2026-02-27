@@ -1,0 +1,345 @@
+---
+title: "GSE205704_reanalysis"
+author: "Pakorn Sagulkoo"
+format:
+  html:
+    embed-resources: true
+editor: visual
+---
+
+## Import the relevant packages and set working path directory
+
+```{r, setup, message=FALSE, warning=FALSE}
+# Attach the packages you will need for the analysis.
+library(blaseRtools)
+library(blaseRdata)
+library(monocle3)
+library(Seurat)
+library(SeuratDisk)
+library(patchwork)
+library(tidyverse)
+library(cowplot)
+library(fastSave)
+library(conflicted)
+conflict_prefer("filter", "dplyr")
+conflicts_prefer(base::setdiff)
+theme_set(theme_cowplot(font_size = 12))
+```
+
+```{r}
+# Load module pigz from bash to R
+Sys.setenv(PATH = paste("/software/apps/pigz/2.8/bin", Sys.getenv("PATH"), sep = ":"))
+system("which pigz")
+```
+
+```{r}
+# Set working path
+setwd("/mnt/hp-storage/users/pakorns/scRNAseq/GSE205704/")
+getwd()
+```
+
+## Load a config file and objects provided from this codes
+
+```{r}
+# Load the config file
+analysis_configs <- read_csv(file = "config.csv", show_col_types = FALSE)
+analysis_configs
+```
+
+```{r}
+# Load the objected generated from this codes (load them as the prolong running for generating)
+load.pigz("cds_list.rda")
+load.pigz("doubletfinder_list.rda")
+load.pigz("cds_main.rda")
+load.pigz("cds_main_filtered.rda")
+```
+
+## Create a single-cell object
+
+```{r, eval=FALSE, results='hide', echo=TRUE}
+# Generate a list of CDS objects using purrr::map
+cds_list <- map(
+  .x = analysis_configs$sample,
+  .f = function(x, conf = analysis_configs) {
+    conf_filtered <- conf %>%
+      dplyr::filter(sample == x)
+    cds <- bb_load_tenx_targz(targz_file = conf_filtered$targz_path,
+                              sample_metadata_tbl = conf_filtered %>% 
+                                select(-c(sample, targz_path))
+                              )
+    return(cds)
+  }
+) %>% 
+  set_names(nm = analysis_configs$sample)
+```
+
+```{r, eval = FALSE}
+# Save file
+save.pigz(cds_list, file = "cds_list.rda")
+```
+
+## QC
+
+```{r, eval = FALSE}
+# Generate a list of qc results for individual CDS objects
+qc_res <- pmap(.l = list(cds = cds_list,
+                             cds_name = names(cds_list),
+                             genome = rep("human", times = length(cds_list))),
+                   .f = bb_qc
+                   ) %>%
+  set_names(nm = names(cds_list))
+```
+
+```{r, eval = FALSE}
+# Gets the number of cells in each cds and divides it by 100000
+anticipated_doublet_rate <- unlist(map(cds_list, ncol))/100000
+
+# Extracts the first element of the qc result list for each cds
+qc_calls <- map(qc_res,1)
+
+# Generates a list of tables with doubletfinder results
+doubletfinder_list <-
+  pmap(
+    .l = list(
+      cds = cds_list,
+      doublet_prediction = anticipated_doublet_rate,
+      qc_table = qc_calls
+    ),
+    .f = bb_doubletfinder
+  ) %>%
+  set_names(names(cds_list))
+```
+
+```{r, eval = FALSE}
+names(doubletfinder_list) <- names(cds_list)
+save.pigz(doubletfinder_list, file = "doubletfinder_list.rda")
+```
+
+## Merge the objects
+
+```{r, eval = FALSE}
+# Rejoin and combine
+cds_list_rejoined <- pmap(
+  .l = list(
+    cds = cds_list,
+    qc_data = purrr::map(qc_res, 1),
+    doubletfinder_data = doubletfinder_list
+  ),
+  .f = bb_rejoin
+) %>% set_names(names(cds_list))
+
+cds_main <- combine_cds(cds_list = cds_list_rejoined, keep_all_genes = TRUE)
+```
+
+## Dimension reduction
+
+```{r, eval = FALSE}
+# Remove cells flagged with qc.any == TRUE
+cds_main <- cds_main[,colData(cds_main)$qc.any == FALSE]
+```
+
+```{r, eval = FALSE}
+# Preprocess the cds
+cds_main <- preprocess_cds(cds = cds_main, num_dim = 100)
+```
+
+```{r, eval = FALSE}
+# Reduce dimensions
+cds_main <- reduce_dimension(cds_main, cores = 39)
+```
+
+```{r, eval = FALSE}
+# Save the cds_main
+save.pigz(cds_main, file = "cds_main.rda")
+```
+
+```{r, fig.align='center', fig.height=4, fig.width=5.2}
+# Previz to look at doublets
+#bb_var_umap(cds_main, var = "doubletfinder_low_conf", foreground_alpha = 0.2 ,cell_size = 1)
+bb_var_umap(cds_main, var = "doubletfinder_high_conf", foreground_alpha = 0.2 ,cell_size = 1) +
+  labs(title = "Doubletfinder")
+```
+
+```{r, eval = FALSE}
+# Remove the high confidence homotypic doublets
+cds_main_filtered <- cds_main[,colData(cds_main)$doubletfinder_high_conf=="Singlet"]
+
+# Remove columns we don't need
+colData(cds_main_filtered)$doubletfinder_low_conf <- NULL
+colData(cds_main_filtered)$doubletfinder_high_conf <- NULL
+colData(cds_main_filtered)$qc.any <- NULL
+```
+
+```{r, eval = FALSE}
+# Recalculate PCAs with cds_final
+cds_main_filtered <- preprocess_cds(cds = cds_main_filtered, num_dim = 100)
+
+# Reduce dimensions with cds_final
+cds_main_filtered <- reduce_dimension(cds_main_filtered, cores = 39)
+```
+
+# Batch correction
+
+```{r, eval = FALSE}
+# Align by patient id
+cds_main_filtered <- bb_align(cds = cds_main_filtered, align_by = "patient", n_cores = 39)
+```
+
+```{r, fig.align='center', fig.height=4, fig.width=11, warning=FALSE}
+# UMAP plot for samples before batch correction
+bf_align.plt <- bb_var_umap(cds_main_filtered, var = "sample", 
+                            alt_dim_x = "prealignment_dim1", 
+                            alt_dim_y = "prealignment_dim2") + 
+  labs(y= "UMAP 2", x = "UMAP 1", title = "Sample before alignment")
+
+# UMAP plot for samples after batch correction
+at_align.plt <- bb_var_umap(cds_main_filtered, var = "sample") +
+  labs(title = "Sample after alignment")
+
+bf_align.plt + at_align.plt
+```
+
+## Clustering
+
+```{r, eval = FALSE, results='hide'}
+cds_main_filtered <- bb_triplecluster(cds_main_filtered, 
+                                      n_top_markers = 50, 
+                                      outfile = "cds_main_top_markers.csv", 
+                                      n_cores = 16)
+```
+
+```{r, fig.height=4.5, fig.width=16}
+# UMAP plots for clustering results
+
+partition.plt <- bb_var_umap(cds_main_filtered, var = "partition") +
+  labs(title = "Partition")
+
+leiden.plt <- bb_var_umap(cds_main_filtered, var = "leiden") +
+  labs(title = "Leiden") 
+
+louvain.plt <- bb_var_umap(cds_main_filtered, var = "louvain") +
+  labs(title = "Louvain")
+
+partition.plt + leiden.plt + louvain.plt
+```
+
+## Cell type annotation
+
+```{r, eval = FALSE}
+#' A function to generate automated cell labelings with Seurat
+#
+#' @param cds A cell data set object
+#' @param reference Seurat reference data.
+#' @return A modified cds with Seurat cell assignments.
+#' @export
+#' @importFrom SeuratDisk LoadH5Seurat
+#' @importFrom monocle3 exprs
+#' @importFrom dplyr left_join pull
+#' @importFrom tibble tibble as_tibble
+#' @importFrom SeuratObject CreateSeuratObject
+#' @importFrom Seurat SCTransform FindTransferAnchors VariableFeatures TransferData IntegrateEmbeddings ProjectUMAP
+#' @importFrom SummarizedExperiment colData
+bb_seurat_anno_adapted <- function(cds, reference) {
+  seurat_reference <- reference
+  exprs <- monocle3::exprs(cds)
+  rownames(exprs) <-
+  make.unique(
+    dplyr::left_join(tibble::tibble(feature_id = rownames(exprs)),
+                     bb_rowmeta(cds)) |>
+    dplyr::pull(gene_short_name)
+  )
+  seurat_cds <- SeuratObject::CreateSeuratObject(counts = exprs, assay = "RNA")
+  seurat_cds <- Seurat::SCTransform(seurat_cds)
+  anchors <- Seurat::FindTransferAnchors(
+    reference = seurat_reference,
+    query = seurat_cds,
+    normalization.method = "SCT",
+    reference.reduction = "spca",
+    dims = 1:50,
+    features = base::intersect(
+      rownames(x = seurat_reference),
+      Seurat::VariableFeatures(object = seurat_cds)
+    ),
+    reference.assay = "SCT",
+    query.assay = "SCT",
+    verbose = T,
+    recompute.residuals = F
+  )
+  seurat_cds <-
+    Seurat::TransferData(
+      anchorset = anchors,
+      reference = seurat_reference,
+      query = seurat_cds,
+      refdata = list(
+        celltype.l1 = "celltype.l1",
+        celltype.l2 = "celltype.l2",
+        predicted_ADT = "ADT"
+      )
+    )
+  seurat_cds <-
+    Seurat::IntegrateEmbeddings(
+      anchorset = anchors,
+      reference = seurat_reference,
+      query = seurat_cds,
+      new.reduction.name = "ref.spca"
+    )
+  seurat_cds <-
+    Seurat::ProjectUMAP(
+      query = seurat_cds,
+      query.reduction = "ref.spca",
+      reference = seurat_reference,
+      reference.reduction = "spca",
+      reduction.model = "wnn.umap"
+    )
+  seurat_metadata <-
+    tibble::as_tibble(seurat_cds@meta.data, rownames = "barcode")
+  seurat_dims <-
+    tibble::as_tibble(seurat_cds@reductions[["ref.umap"]][[1:dim(seurat_cds@reductions[["ref.umap"]])[1]]],
+              rownames = "barcode")
+  seurat_data <- dplyr::left_join(seurat_dims, seurat_metadata)
+  cds_data <-
+    dplyr::left_join(
+      SummarizedExperiment::colData(cds) |>
+        tibble::as_tibble(rownames = "barcode_sample"),
+      seurat_data,
+      by = c(barcode_sample = "barcode")
+    )
+  SummarizedExperiment::colData(cds)$seurat_dim1 <- cds_data$refUMAP_1
+  SummarizedExperiment::colData(cds)$seurat_dim2 <- cds_data$refUMAP_2
+  SummarizedExperiment::colData(cds)$seurat_celltype_l1 <- cds_data$predicted.celltype.l1
+  SummarizedExperiment::colData(cds)$seurat_celltype_l2 <- cds_data$predicted.celltype.l2
+  return(cds)
+}
+```
+
+```{r, eval = FALSE}
+reference <- LoadH5Seurat("pbmc_multimodal.h5seurat")
+```
+
+```{r, eval = FALSE, warning=FALSE}
+cds_main_filtered <- bb_seurat_anno_adapted(cds = cds_main_filtered, 
+                                    reference=reference)
+```
+
+```{r, fig.height=4, fig.width=5.2}
+bb_var_umap(cds_main_filtered, 
+            var = "seurat_celltype_l1") + 
+  labs(y= "UMAP 2", x = "UMAP 1", title = "Cell annotation")
+```
+
+### Gene module
+
+```{r, eval = FALSE}
+# Gene modules
+cds_main_filtered <- bb_gene_modules(cds_main_filtered, n_cores = 16)
+```
+
+### Save the object
+
+```{r, eval = FALSE}
+save.pigz(cds_main_filtered, file = "cds_main_filtered.rda", n.cores = 8)
+```
+
+
+
+

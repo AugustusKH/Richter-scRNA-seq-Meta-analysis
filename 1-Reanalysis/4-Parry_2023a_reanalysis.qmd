@@ -1,0 +1,559 @@
+---
+title: "Parry_2023a_reanalysis"
+author: "Pakorn Sagulkoo"
+format:
+  html:
+    toc: true
+    toc-location: left
+    embed-resources: true
+editor: visual
+---
+
+This source code we reanalysed single-cell RNA-seq datasets for RT patients from [Parry et. al. (2023)](https://www.nature.com/articles/s41591-022-02113-6). The original study sorted cell types, such as CLL and RT tumour cells, using flow cytometry before single-cell sequencing. Then, the samples were based on the sorted cells.
+
+# Import the relevant packages and set working path directory
+
+```{r, setup, message=FALSE, warning=FALSE}
+# Attach the packages you will need for the analysis.
+library(Seurat)
+library(dplyr)
+library(DoubletFinder)
+library(harmony)
+library(SingleR)
+library(celldex)
+library(clustree)
+```
+
+```{r}
+# Check root path
+here::here()
+```
+
+# Define paths
+
+```{r}
+# Define paths to load and save 
+path_to_metadata <- here::here("scRNAseq/Parry_2023a/sample_metadata.csv")
+path_to_count_matrices <- here::here("scRNAseq/Parry_2023a/expression_data/")
+path_to_save_obj_lst <- here::here("scRNAseq/Parry_2023a/reanalysis/R_objects/Parry_2023a_reanalysis_seu_lst.rds")
+path_to_save_merged_obj_lst <- here::here("scRNAseq/Parry_2023a/reanalysis/R_objects/Parry_2023a_reanalysis_merged_seu_lst.rds")
+path_to_save_harmony_integrated_obj_lst <- here::here("scRNAseq/Parry_2023a/reanalysis/R_objects/Parry_2023a_reanalysis_harmony_integrated_seu_lst.rds")
+path_to_save_cca_integrated_obj_lst <- here::here("scRNAseq/Parry_2023a/reanalysis/R_objects/Parry_2023a_reanalysis_cca_integrated_seu_lst.rds")
+```
+
+# Load data and functions
+
+```{r, message=FALSE, warning=FALSE}
+# Source functions
+source(here::here("bin/utils.R"))
+```
+
+```{r}
+# Load the sample metadata
+sample_metadata <- read.csv(path_to_metadata)
+DT::datatable(sample_metadata, options = list(scrollX = TRUE))
+```
+
+We will import count matrices and convert them to Seurat objects with quality control and pre-processing. We used the parameters same as the original study.
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Create the objects and collect in a list
+path_to_download <- str_c(path_to_count_matrices, "/", sample_metadata$Run, "/count_matrices/outs/filtered_feature_bc_matrix/")
+seurat.lst <- purrr::pmap(
+  list(path_to_download, 
+       sample_metadata$Run, 
+       sample_metadata$Case, 
+       sample_metadata$histological_type,
+       sample_metadata$Condition, 
+       sample_metadata$Tissue), 
+  function(path, sra_run, case, histological_type, cond, tissue){
+    count_matrix <- Read10X(path)
+    seurat.obj <- CreateSeuratObject(count_matrix) %>% 
+      RenameCells(add.cell.id = sra_run)
+    seurat.obj[["ref"]] <- "Parry_2023a"
+    seurat.obj[["case_id"]] <- sra_run
+    seurat.obj[["histological_type"]] <- histological_type
+    seurat.obj[["case"]] <- case
+    seurat.obj[["cond"]] <- cond
+    seurat.obj[["tissue"]] <- tissue
+    seurat.obj <- seurat_quality_control(seurat.obj, 
+                                         min_nCount = 500, max_nCount = 50000,
+                                         min_nFeature = 0, max_nFeature = 20000,
+                                         max_percent_mt = 10, 
+                                         min_percent_ribo = 0, max_percent_ribo = 100,
+                                         mad_cutoff=FALSE)
+    seurat.obj <- seurat_preprocess(seurat.obj)
+    if (ncol(seurat.obj) > 500) {  # pass doublet detection if objects have too low cells
+      seurat.obj <- doublet_filter(seurat.obj, sct=FALSE)
+    } else {
+      message("Skipping doublet filtering for object with <500 cells")
+    }
+    return(seurat.obj)
+    }
+  )
+names(seurat.lst) <- sample_metadata$Run
+```
+
+```{r, eval=FALSE}
+# See the preprocessing results
+seurat.lst
+```
+
+```{r, eval=FALSE}
+# Save the list
+saveRDS(seurat.lst, path_to_save_obj_lst)
+```
+
+# Merge the objects
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Merge the objects based on individual patients
+seurat_merged_case.lst <- vector("list", 3)  # create empty list of length 3
+names(seurat_merged_case.lst) <- c("patient_43", "patient_4", "patient_10")
+
+# Loop to merge the Seurat objects per patient
+for (i in c(43, 4, 10)) {
+  sra_related_case <- sample_metadata[sample_metadata$Case == i, "Run"]
+  seurat_sublst <- seurat.lst[sra_related_case]
+  
+  # Start with the first object
+  seurat.obj <- seurat_sublst[[1]]
+  
+  # Merge remaining ones (if any)
+  if (length(seurat_sublst) > 1) {
+    for (j in 2:length(seurat_sublst)) {
+      seurat.obj <- merge(x = seurat.obj, y = seurat_sublst[[j]])
+    }
+  }
+  
+  # Save into list
+  seurat_merged_case.lst[[paste0("patient_", i)]] <- seurat.obj
+}
+```
+
+```{r, eval=FALSE}
+# Save the list
+saveRDS(seurat_merged_case.lst, path_to_save_merged_obj_lst)
+```
+
+# Integrate the objects
+
+## Harmony approach
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Data integration and re-downstream analysis
+seurat_integrated_case.lst <- purrr::map(seurat_merged_case.lst, function(seurat.obj){
+  DefaultAssay(seurat.obj) <- "RNA"
+  seurat.obj <- JoinLayers(seurat.obj)
+  seurat.obj <- NormalizeData(seurat.obj)
+  seurat.obj <- FindVariableFeatures(seurat.obj)
+  seurat.obj <- ScaleData(seurat.obj)
+  seurat.obj <- RunPCA(seurat.obj)
+  seurat.obj <- RunHarmony(seurat.obj, group.by.vars = "case", dims = 1:30) 
+  seurat.obj <- RunUMAP(seurat.obj, dims = 1:30, reduction = "harmony")
+  seurat.obj <- FindNeighbors(seurat.obj, reduction = "harmony", dims = 1:30) 
+  seurat.obj <- FindClusters(
+      seurat.obj,
+      random.seed = 12345,
+      verbose = FALSE,
+      resolution = seq(0.1, 0.9, by = 0.1)
+    )
+  seurat.obj <- singleR_cell_annotation(seurat.obj) 
+})
+names(seurat_integrated_case.lst) <- names(seurat_merged_case.lst)
+```
+
+```{r, eval=FALSE}
+# Save the list
+saveRDS(seurat_integrated_case.lst, path_to_save_harmony_integrated_obj_lst)
+```
+
+## Canonical correlation analysis (CCA) approach
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Integrate the objects based on individual patients
+seurat_integrated_case.lst <- vector("list", 3)  # create empty list of length 3
+names(seurat_integrated_case.lst) <- c("patient_43", "patient_4", "patient_10")
+
+# Loop to integrate the Seurat objects per patient
+for (i in c(43, 4, 10)) {
+  sra_related_case <- sample_metadata[sample_metadata$Case == i, "Run"]
+  seurat_sublst <- seurat.lst[sra_related_case]
+  
+  seurat_sublst <- lapply(seurat_sublst, function(obj) {
+    obj <- NormalizeData(obj)
+    obj <- FindVariableFeatures(obj, selection.method = "vst")
+    return(obj)
+    })
+  
+  # Select feature, find anchor, and integrate the objects
+  features <- SelectIntegrationFeatures(object.list = seurat_sublst)
+  anchors <- FindIntegrationAnchors(object.list = seurat_sublst, anchor.features = features)
+  integrated_seurat <- IntegrateData(anchorset = anchors)
+  
+  # Downstream analysis after integration
+  DefaultAssay(integrated_seurat) <- "integrated"
+  integrated_seurat <- ScaleData(integrated_seurat)
+  integrated_seurat <- RunPCA(integrated_seurat)
+  integrated_seurat <- RunUMAP(integrated_seurat, dims = 1:30)
+  integrated_seurat <- FindNeighbors(integrated_seurat, dims = 1:30)
+  integrated_seurat <- FindClusters(
+      integrated_seurat,
+      random.seed = 12345,
+      verbose = FALSE,
+      resolution = seq(0.1, 0.9, by = 0.1)
+    )
+  
+  # Save into list
+  seurat_integrated_case.lst[[paste0("patient_", i)]] <- integrated_seurat
+}
+```
+
+```{r, eval=FALSE}
+# Save the list
+saveRDS(seurat_integrated_case.lst, path_to_save_cca_integrated_obj_lst)
+```
+
+After we preprocessed, merged, and integrated the objects, we will analyse individual patients. From the original article, they used CCA for data integration. Then we will use the results from CCA for further analysis.
+
+```{r}
+# Load the integrated list as the previous steps take a long time
+seurat_integrated_case.lst <- readRDS(path_to_save_cca_integrated_obj_lst)
+```
+
+# Patient 43 analysis
+
+```{r}
+# Extract seurat object case 43 from the integrated list
+case43_seurat <- seurat_integrated_case.lst$patient_43
+```
+
+## Clustering evaluation
+
+```{r, height=20, widght=10}
+# Carry out clustree to evaluate clustering stability at various resolution
+clustree.plt <- clustree(case43_seurat, prefix = "integrated_snn_res.")
+clustree.plt
+```
+
+We can see that clustering was stable at the resolution between 0.1 to 0.3. Then we will use resolution 0.1 for further analysis.
+
+```{r, message=FALSE, warning=FALSE, fig.height=4, fig.width=5}
+# Clustering plot
+cluster.plt <- DimPlot(case43_seurat, reduction = "umap", group.by = "integrated_snn_res.0.1") +
+  labs(y= "UMAP 2", x = "UMAP 1")
+
+cluster.plt
+```
+
+## Noise removal
+
+Due to many noises from the integration, we will remove them using DBSCAN algorithm.
+
+```{r, message=FALSE, warning=FALSE}
+# Import the package
+library(dbscan)
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Remove noises using DBSCAN algorithm
+umap <- Embeddings(case43_seurat, "umap")
+db <- dbscan(umap, eps = 1.5, minPts = 800)  # tune eps and minPts
+
+# db$cluster gives 0 for noise/outliers
+keep.cells <- rownames(umap)[db$cluster != 0]
+filtered_case43_seurat <- subset(case43_seurat, cells = keep.cells)
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Reclustering after noise removal
+filtered_case43_seurat <- FindClusters(
+      filtered_case43_seurat,
+      random.seed = 12345,
+      verbose = FALSE,
+      resolution = seq(0.1, 0.9, by = 0.1)
+    )
+```
+
+```{r, height=20, widght=10}
+# Carry out clustree to evaluate clustering stability at various resolution
+clustree.plt <- clustree(filtered_case43_seurat, prefix = "integrated_snn_res.")
+clustree.plt
+```
+
+```{r, message=FALSE, warning=FALSE, fig.height=4, fig.width=5}
+# Clustering plot after noise removal
+cluster.plt <- DimPlot(filtered_case43_seurat, reduction = "umap", group.by = "integrated_snn_res.0.1", label = TRUE) +
+  labs(y= "UMAP 2", x = "UMAP 1")
+
+cluster.plt
+```
+
+## Cell biomarker expression
+
+```{r, warning=FALSE, fig.height=7, fig.width=9}
+# Cell biomarker feature plot
+DefaultAssay(filtered_case43_seurat) <- "RNA"
+FeaturePlot(filtered_case43_seurat, 
+            features = c("HBM", "HBA2", "CD3D", "CD8A", "CD4", "CD19", "CD79A", "CD14", "NKG7"),
+            reduction = "umap",
+            min.cutoff = 'q10',
+            max.cutoff = 'q90')
+```
+
+From the feature plot, we can see that no non-tumour cells were detected.
+
+## CLL and RT cell identification
+
+```{r}
+# Define features from the original study
+features <- rev(c("EZH2", "CD83", "TRAF4", "IRF4", "IRF5", "CCNB1", "PRC1", "HMGN2", "LEF1"))
+```
+
+```{r, message=FALSE, warning=FALSE, fig.height=4, fig.width=5}
+# Dot plot to identify CLL and RT cells
+DotPlot(filtered_case43_seurat, features = features, group.by = "integrated_snn_res.0.1") + 
+  coord_flip()
+```
+
+We can see from the dot plot that cluster 0, 1, and 4 expressed EZH2, CD83, TRAF4, IRF4, and IRF5 similar to cluster 3 and 4 for the original study (Fig. 5d). Therefore, these clusters were RT cells while cluster 2 and 3 were CLL cells, similar to cluster 1 and 2 in the original results.
+
+# Patient 10 analysis
+
+```{r}
+# Extract seurat object case 10 from the integrated list
+case10_seurat <- seurat_integrated_case.lst$patient_10
+```
+
+## Clustering evaluation
+
+```{r, height=20, widght=10}
+# Carry out clustree to evaluate clustering stability at various resolution
+clustree.plt <- clustree(case10_seurat, prefix = "integrated_snn_res.")
+clustree.plt
+```
+
+We can see that clustering was stable at the resolution between 0.2 to 0.3. Then we will use resolution 0.1 for further analysis.
+
+```{r, message=FALSE, warning=FALSE, fig.height=4, fig.width=5}
+# Clustering plot
+cluster.plt <- DimPlot(case10_seurat, reduction = "umap", group.by = "integrated_snn_res.0.2") +
+  labs(y= "UMAP 2", x = "UMAP 1")
+
+cluster.plt
+```
+
+## Noise removal
+
+Due to many noises from the integration, we will remove them using DBSCAN algorithm.
+
+```{r, message=FALSE, warning=FALSE}
+# Remove noises using DBSCAN algorithm
+umap <- Embeddings(case10_seurat, "umap")
+db <- dbscan(umap, eps = 1.5, minPts = 400)  # tune eps and minPts
+
+# db$cluster gives 0 for noise/outliers
+keep.cells <- rownames(umap)[db$cluster != 0]
+filtered_case10_seurat <- subset(case10_seurat, cells = keep.cells)
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Reclustering after noise removal
+filtered_case10_seurat <- FindClusters(
+      filtered_case10_seurat,
+      random.seed = 12345,
+      verbose = FALSE,
+      resolution = seq(0.1, 0.9, by = 0.1)
+    )
+```
+
+```{r, height=20, widght=10}
+# Carry out clustree to evaluate clustering stability at various resolution
+clustree.plt <- clustree(filtered_case10_seurat, prefix = "integrated_snn_res.")
+clustree.plt
+```
+
+For clustree, the resolution was quite stable at 0.3.
+
+```{r, message=FALSE, warning=FALSE, fig.height=4, fig.width=5}
+# Clustering plot after noise removal
+cluster.plt <- DimPlot(filtered_case10_seurat, reduction = "umap", group.by = "integrated_snn_res.0.3", label = TRUE) +
+  labs(y= "UMAP 2", x = "UMAP 1")
+
+cluster.plt
+```
+
+## Cell biomarker expression
+
+```{r, warning=FALSE, fig.height=7, fig.width=9}
+# Cell biomarker feature plot
+DefaultAssay(filtered_case10_seurat) <- "RNA"
+FeaturePlot(filtered_case10_seurat, 
+            features = c("HBM", "HBA2", "CD3D", "CD8A", "CD4", "CD19", "CD79A", "CD14", "NKG7"),
+            reduction = "umap",
+            min.cutoff = 'q10',
+            max.cutoff = 'q90')
+```
+
+## Filtering tumour cells
+
+We will select tumour cells (cluster 4 and 7).
+
+```{r, message=FALSE, warning=FALSE}
+# Subset tumoure cells and reclustering after subset
+DefaultAssay(filtered_case10_seurat) <- "integrated"
+case10_tumour_seurat <- subset(filtered_case10_seurat, subset = integrated_snn_res.0.3 %in% c(4, 7))
+case10_tumour_seurat <- FindClusters(
+      case10_tumour_seurat,
+      random.seed = 12345,
+      verbose = FALSE,
+      resolution = seq(0.1, 0.9, by = 0.1)
+    )
+```
+
+```{r, message=FALSE, warning=FALSE, fig.height=4, fig.width=5}
+# Clustering plot after noise removal
+cluster.plt <- DimPlot(case10_tumour_seurat, reduction = "umap", group.by = "integrated_snn_res.0.1", label = TRUE) +
+  labs(y= "UMAP 2", x = "UMAP 1")
+
+cluster.plt
+```
+
+## CLL and RT cell identification
+
+```{r, message=FALSE, warning=FALSE, fig.height=4, fig.width=5}
+# Dot plot to identify CLL and RT cells
+DefaultAssay(case10_tumour_seurat) <- "RNA"
+DotPlot(case10_tumour_seurat, features = features, group.by = "integrated_snn_res.0.1") + 
+  coord_flip()
+```
+
+We observed from the dot plot that cluster 1 expressed EZH2, CD83, TRAF4, IRF4, and IRF5, consistent with the transcriptional features of RT cells, and comparable to cluster 3 in the original study (Fig. 5e). Cluster 0 displayed transcriptional profiles characteristic of CLL cells, resembling cluster 1 in the published results. Meanwhile, cluster 2 showed an intermediate expression pattern between RT and CLL, similar to cluster 2 in the reference study.
+
+# Patient 4 analysis
+
+```{r}
+# Extract seurat object case 4 from the integrated list
+case4_seurat <- seurat_integrated_case.lst$patient_4
+```
+
+## Clustering evaluation
+
+```{r, height=20, widght=10}
+# Carry out clustree to evaluate clustering stability at various resolution
+clustree.plt <- clustree(case4_seurat, prefix = "integrated_snn_res.")
+clustree.plt
+```
+
+We can see that clustering was stable at the resolution between 0.2 to 0.3. Then we will use resolution 0.1 for further analysis.
+
+```{r, message=FALSE, warning=FALSE, fig.height=4, fig.width=5}
+# Clustering plot
+cluster.plt <- DimPlot(case4_seurat, reduction = "umap", group.by = "integrated_snn_res.0.2") +
+  labs(y= "UMAP 2", x = "UMAP 1")
+
+cluster.plt
+```
+
+## Noise removal
+
+Due to many noises from the integration, we will remove them using DBSCAN algorithm.
+
+```{r, message=FALSE, warning=FALSE}
+# Remove noises using DBSCAN algorithm
+umap <- Embeddings(case4_seurat, "umap")
+db <- dbscan(umap, eps = 1.5, minPts = 400)  # tune eps and minPts
+
+# db$cluster gives 0 for noise/outliers
+keep.cells <- rownames(umap)[db$cluster != 0]
+filtered_case4_seurat <- subset(case4_seurat, cells = keep.cells)
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Reclustering after noise removal
+filtered_case4_seurat <- FindClusters(
+      filtered_case4_seurat,
+      random.seed = 12345,
+      verbose = FALSE,
+      resolution = seq(0.1, 0.9, by = 0.1)
+    )
+```
+
+```{r, height=20, widght=10}
+# Carry out clustree to evaluate clustering stability at various resolution
+clustree.plt <- clustree(filtered_case4_seurat, prefix = "integrated_snn_res.")
+clustree.plt
+```
+
+For clustree, the resolution was quite stable at 0.1.
+
+```{r, message=FALSE, warning=FALSE, fig.height=4, fig.width=5}
+# Clustering plot after noise removal
+cluster.plt <- DimPlot(filtered_case4_seurat, reduction = "umap", group.by = "integrated_snn_res.0.1", label = TRUE) +
+  labs(y= "UMAP 2", x = "UMAP 1")
+
+cluster.plt
+```
+
+## Cell biomarker expression
+
+```{r, warning=FALSE, fig.height=7, fig.width=9}
+# Cell biomarker feature plot
+DefaultAssay(filtered_case4_seurat) <- "RNA"
+FeaturePlot(filtered_case4_seurat, 
+            features = c("HBM", "HBA2", "CD3D", "CD8A", "CD4", "CD19", "CD79A", "CD14", "NKG7"),
+            reduction = "umap",
+            min.cutoff = 'q10',
+            max.cutoff = 'q90')
+```
+
+## Filtering tumour cells
+
+We will select tumour cells (cluster 4).
+
+```{r, message=FALSE, warning=FALSE}
+# Subset tumoure cells and reclustering after subset
+DefaultAssay(filtered_case4_seurat) <- "integrated"
+case4_tumour_seurat <- subset(filtered_case4_seurat, subset = integrated_snn_res.0.3 == 4)
+case4_tumour_seurat <- FindClusters(
+      case4_tumour_seurat,
+      random.seed = 12345,
+      verbose = FALSE,
+      resolution = seq(0.1, 0.9, by = 0.1)
+    )
+```
+
+```{r, height=20, widght=10}
+# Carry out clustree to evaluate clustering stability at various resolution
+clustree.plt <- clustree(case4_tumour_seurat, prefix = "integrated_snn_res.")
+clustree.plt
+```
+
+```{r, message=FALSE, warning=FALSE, fig.height=4, fig.width=5}
+# Clustering plot after noise removal
+cluster.plt <- DimPlot(case4_tumour_seurat, reduction = "umap", group.by = "integrated_snn_res.0.3", label = TRUE) +
+  labs(y= "UMAP 2", x = "UMAP 1")
+
+cluster.plt
+```
+
+## CLL and RT cell identification
+
+```{r, message=FALSE, warning=FALSE, fig.height=4, fig.width=5}
+# Dot plot to identify CLL and RT cells
+DefaultAssay(case4_tumour_seurat) <- "RNA"
+DotPlot(case4_tumour_seurat, features = features, group.by = "integrated_snn_res.0.3") + 
+  coord_flip()
+```
+
+From the dot plot, clusters 0 and 1 expressed transcriptional profiles similar to RT cells while cluster 2 and 3 exhibited the intermediate profiles between RT and CLL cells. As the original study did not show the results for patient 4, we cannot conclude clearly about this result.
+
+# Session Information
+
+```{r}
+sessionInfo()
+```
+
+
+
+

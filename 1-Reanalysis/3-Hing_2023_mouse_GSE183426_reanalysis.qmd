@@ -1,0 +1,1494 @@
+---
+title: "Hing_2023_mouse_GSE183426_reanalysis"
+author: "Pakorn Sagulkoo"
+format:
+  html:
+    toc: true
+    toc-location: left
+    embed-resources: true
+editor: visual
+---
+
+This source code we generated Seurat objects and reanalysed single-cell RNA-seq for RT- and CLL-like conditions in mouse experiments. We analysed for [Hing et. al. (2023)](https://www.nature.com/articles/s41467-022-35778-1) study which employed a mouse experimental model using Eµ-hTCL1 and Eµ-hPRMT5/hTCL1 mouse model for CLL and RT, respectively.
+
+# Import the relevant packages and set working path directory
+
+```{r, setup, message=FALSE, warning=FALSE}
+# Attach the packages you will need for the analysis.
+library(Seurat)
+library(harmony)
+library(dplyr)
+library(tidyr)
+library(SingleR)
+library(celldex)
+```
+
+```{r}
+# Check root path
+here::here()
+```
+
+# Define paths
+
+```{r}
+# Define paths to load and save
+path_to_metadata <- here::here("scRNAseq/Hing_2023_GSE183426/sample_metadata.csv")
+path_to_count_matrices <- here::here("scRNAseq/Hing_2023_GSE183426")
+path_to_save_obj_lst <- here::here("scRNAseq/Hing_2023_GSE183426/R_objects/Hing_2023_GSE183426_reanalysed_seu_lst.rds")
+path_to_cell_annotat_ref <- here::here("scRNAseq/Hing_2023_GSE183426/ImmGenData_ref.rds")
+```
+
+# Load data and functions
+
+```{r, message=FALSE, warning=FALSE}
+# Source functions
+source(here::here("bin/utils.R"))
+```
+
+```{r}
+# Load the sample metadata
+sample_metadata <- read.csv(path_to_metadata)
+DT::datatable(sample_metadata, options = list(scrollX = TRUE))
+```
+
+We will import count matrices and convert them to Seurat objects with quality control and pre-processing.
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Create the objects and collect in a list
+path_to_download <- str_c(path_to_count_matrices, "/", sample_metadata$GSM_ID, "/count_matrices/")
+seurat.lst <- purrr::pmap(
+  list(path_to_download, sample_metadata$GSM_ID, sample_metadata$tissue, sample_metadata$Model, sample_metadata$cond), 
+  function(path, gsm_id, tissue, model, cond){
+    print(gsm_id)
+    count_matrix <- Read10X(path)
+    seurat.obj <- CreateSeuratObject(count_matrix, min.cells=10) %>% 
+      RenameCells(add.cell.id = gsm_id)
+    seurat.obj[["ref"]] <- "Hing_2022"
+    seurat.obj[["case_id"]] <- gsm_id
+    seurat.obj[["tissue"]] <- tissue
+    seurat.obj[["model"]] <- model
+    seurat.obj[["cond"]] <- cond
+    seurat.obj <- subset(seurat.obj, subset = nCount_RNA > 600 & nFeature_RNA > 200) # filter out numerous zero-count cells
+    seurat.obj <- seurat_quality_control(seurat.obj, species="mouse", mad_cutoff=TRUE)
+    return(seurat.obj)
+    }
+  )
+names(seurat.lst) <- sample_metadata$GSM_ID
+```
+
+```{r, eval=FALSE}
+# Explore the list
+seurat.lst
+```
+
+```{r, eval=FALSE}
+# Save the list
+saveRDS(seurat.lst, path_to_save_obj_lst)
+```
+
+# Comparison between Eµ-hPRMT5 and Eµ-hTCL1 in spleen
+
+We will reanalyse the results according to Figure 3 and Supplemental Figure 2 in the original article.
+
+```{r}
+# Select samples of interest
+selected_metadata <- sample_metadata %>%
+  filter(tissue == "Spl" & Model %in% c("Eµ-hPRMT5", "Eµ-hTCL1"))
+selected_metadata
+```
+
+```{r}
+# Define path to save and load
+path_to_save_merged_obj <- here::here("scRNAseq/Hing_2023_GSE183426/R_objects/Hing_2023_GSE183426_prmt5_tcl1_merged_seu.rds")
+path_to_save_integrated_obj <- here::here("scRNAseq/Hing_2023_GSE183426/R_objects/Hing_2023_GSE183426_prmt5_tcl1_integrated_seu.rds")
+path_to_save_markers <- here::here("scRNAseq/Hing_2023_GSE183426/R_objects/Hing_2023_GSE183426_prmt5_tcl1_seu_marker.rds")
+```
+
+## Merge and integrate the data
+
+```{r, eval=FALSE}
+# Merge the objects
+interested_lst <- seurat.lst[selected_metadata$GSM_ID]
+seurat <- interested_lst[[1]]
+for (i in 2:length(interested_lst)) {
+  seurat <- merge(x = seurat, y = interested_lst[[i]])
+  interested_lst[[i]] <- NA
+}
+rm(interested_lst)
+```
+
+```{r, eval=FALSE}
+# Save the merged object
+saveRDS(seurat, path_to_save_merged_obj)
+```
+
+We used Harmony package for data integration and batch correction, and annotated the cell types using SingleR package.
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Reanalysis after merging and data integration 
+DefaultAssay(seurat) <- "RNA"
+seurat <- JoinLayers(seurat)
+seurat <- NormalizeData(seurat)
+seurat <- FindVariableFeatures(seurat)
+seurat <- ScaleData(seurat)
+seurat <- RunPCA(seurat)
+seurat <- RunHarmony(seurat, group.by.vars = "case_id", dims = 1:30) 
+seurat <- RunUMAP(seurat, dims = 1:30, reduction = "harmony")
+seurat <- FindNeighbors(seurat, dims = 1:30, reduction = "harmony")              
+seurat <- FindClusters(
+    seurat,
+    random.seed = 12345,
+    verbose = FALSE,
+    resolution = seq(0.1, 0.9, by = 0.1)
+  )
+```
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Cell annotation
+ref <- readRDS(path_to_cell_annotat_ref)
+seurat <- singleR_cell_annotation(seurat, ref=ref) 
+```
+
+```{r, eval=FALSE}
+# Save the integrated object
+saveRDS(seurat, path_to_save_integrated_obj)
+```
+
+## Visualisation after data integration
+
+```{r}
+# Define path
+path_to_obj <- path_to_save_integrated_obj
+
+# Load the data
+seurat <- readRDS(path_to_obj)
+```
+
+```{r, message=FALSE, warning=FALSE, fig.height=4, fig.width=16}
+# Plot based on case_id, conditions, cell types, and clusters
+case_id.plt <- DimPlot(seurat, reduction = "umap", group.by = "case_id") + 
+  labs(y= "UMAP 2", x = "UMAP 1")
+
+model.plt <- DimPlot(seurat, reduction = "umap", group.by = "model") + 
+  labs(y= "UMAP 2", x = "UMAP 1")
+
+cell.plt <- DimPlot(seurat, reduction = "umap", group.by = "singleR.labels_main") +
+  labs(y= "UMAP 2", x = "UMAP 1")
+
+case_id.plt + model.plt + cell.plt
+```
+
+```{r, fig.height=7, fig.width=9, warning=FALSE, message=FALSE}
+# Plot based on gene expression
+FeaturePlot(seurat, 
+            features = c("Hbb-bt", "Hba-a1", "Cd3d", "Cd8a", "Cd4", "Cd19", "Cd79a", "Cd14", "Ncr1"),
+            reduction = "umap") 
+```
+
+```{r, fig.height=4, fig.width=8}
+# Plot by spliting the model (Eµ-hPRMT5 and Eµ-hTCL1)
+cell_split.plt <- DimPlot(seurat, reduction = "umap", group.by = "singleR.labels_main", split.by = "model")
+cell_split.plt 
+```
+
+```{r, fig.height=10, fig.width=10, warning=FALSE, message=FALSE}
+# Visualise the varied clusters
+varied_clusters.plt <- plot_varying_cluster_resolution(seurat, assay_to_use = "RNA")
+varied_clusters.plt
+```
+
+We used seurat cluster at resolution = 0.3 for further analysis.
+
+```{r, fig.height=4, fig.width=4.5}
+# Plot clusters at resolution = 0.3
+cluster.plt <- DimPlot(seurat, reduction = "umap", group.by = "RNA_snn_res.0.3", label = TRUE) + 
+  labs(y= "UMAP 2", x = "UMAP 1")
+cluster.plt
+```
+
+## Cell type annotation
+
+As automatic SingleR annotation labelled cells in more detail, we will manually annotated them.
+
+```{r}
+# Define new cluster labels
+new.cluster.ids <- c("Cd8+ T", "B", "B", "Cd4+ T", "B", "B", "Cd8+ T", "Monocyte",
+                     "B", "Neutrophil", "Cd8+ T", "NK", "Unassigned", "B", "Erythrocyte")
+
+# Map these to the cluster identities (i.e., Idents of the Seurat object)
+Idents(seurat) <- "RNA_snn_res.0.3"
+names(new.cluster.ids) <- levels(seurat)
+
+# Now map cluster IDs to the manual labels
+seurat$manually_annotated <- plyr::mapvalues(
+  x = as.character(Idents(seurat)),
+  from = names(new.cluster.ids),
+  to = new.cluster.ids
+)
+```
+
+```{r, fig.height=4, fig.width=10}
+# Plot clusters and cell types
+cell.plt <- DimPlot(seurat, reduction = "umap", group.by = "manually_annotated") +
+  labs(y= "UMAP 2", x = "UMAP 1") 
+
+cluster.plt + cell.plt
+```
+
+```{r, fig.height=3, fig.width=12}
+# Dot plot for biomarker expression in each cell type
+
+# 1. Create meta-data to concatenate clusters and cell types
+seurat$cluster_celltype <- paste0("C", seurat$RNA_snn_res.0.3, " - ", seurat$manually_annotated)
+
+# 2. Extract a data frame from Seurat dot plot
+features = c("Cd3d", "Cd8a", "Cd4", "Ncr1", "Pdcd1", "Foxp3", "Cd19", "Itgam", "Cd177", "Cd14", "Hbb-bt")
+dotdata <- DotPlot(
+  seurat,
+  features = features,
+  group.by = "cluster_celltype"  
+)$data
+
+# 3. Preprocess the data frame compatible with ggplot
+dotdata <- dotdata %>% 
+  tidyr::separate(col = id, into = c("cluster", "celltype"), sep = " - ") %>%
+  dplyr::mutate(proportion=pct.exp/100) %>%
+  dplyr::rename(
+    gene_name = features.plot,
+    expression = avg.exp.scaled
+  )
+
+# 4. Factor levels
+dotdata$cluster <- factor(dotdata$cluster, levels = unique(dotdata$cluster))
+dotdata$gene_name <- factor(dotdata$gene_name, levels = rev(features))
+celltype_order <- c("Cd8+ T", "B", "Cd4+ T", "NK", "Neutrophil", "Monocyte", "Erythrocyte", "Unassigned")
+dotdata$celltype <- factor(dotdata$celltype, levels = celltype_order)
+
+# 5. ggplot for the dot plot
+biomarker_dot.plt <- ggplot(dotdata, aes(x = cluster, 
+                                         y = gene_name, 
+                                         color = expression,
+                                         size = proportion)) +
+  geom_point() +
+  scale_size_area() +
+  scale_color_viridis_c() +
+  facet_wrap(~celltype, scales = "free_x", nrow=1) +
+  theme_minimal(base_size = 8) +
+  theme(strip.background = ggh4x::element_part_rect(side = "b", colour = "black", fill = "transparent")) +
+  theme(axis.text.y = element_text(face = "italic")) +
+  labs(x = NULL, y = NULL, size = "Proportion", color = "Expression")
+
+biomarker_dot.plt
+```
+
+## Gene expression analysis between PRMT5 and TCL1 cells
+
+```{r, fig.height=4, fig.width=8}
+# Plot clusters by spliting the model (Eµ-hPRMT5 and Eµ-hTCL1)
+cluster_split.plt <- DimPlot(seurat, reduction = "umap", group.by = "RNA_snn_res.0.3", split.by = "model", label = TRUE) +
+  NoLegend()
+cluster_split.plt 
+```
+
+From the clustering results, we can see that cluster 4 and 13 of tumour cells predominated in TCL1 model (similar to cluster 3.3 in the original article in Figure 3d) while cluster 5 predominated in PRMT5 model (similar to cluster 3.4 and 3.6 in the original study).
+
+```{r, eval=FALSE}
+# Biomarker identification
+Idents(seurat) <- "RNA_snn_res.0.3"
+seurat.markers <- FindAllMarkers(seurat, only.pos = TRUE)
+```
+
+```{r, eval=FALSE}
+# Save the marker result
+saveRDS(seurat.markers, path_to_save_markers)
+```
+
+## Heatmap for top 500 markers
+
+```{r, message=FALSE, warning=FALSE}
+# Import the relevant packages
+library(ComplexHeatmap)
+library(circlize)
+library(grid)
+```
+
+```{r}
+# Take top 500 per cluster
+seurat.markers <- readRDS(path_to_save_markers)
+top_n_genes <- seurat.markers %>%
+  group_by(cluster) %>%
+  top_n(n = 500, wt = avg_log2FC)
+
+# Filter to specific clusters of interest (e.g. "4", "5")
+top_markers <- top_n_genes %>%
+  filter(cluster %in% c("4", "5", "13")) %>%  
+  pull(gene) %>%
+  unique()
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Extract scaled expression matrix
+Bcell_seurat <- subset(seurat, subset = RNA_snn_res.0.3 %in% c(1, 2, 4, 5, 8, 13))
+avg_expr <- AverageExpression(
+  Bcell_seurat,
+  features = top_markers,
+  assays = "RNA",     
+  slot = "data"       
+)$RNA
+
+# Scale genes 
+expr_mat <- t(scale(t(avg_expr)))
+colnames(expr_mat) <- c("C1", "C2", "C4", "C5", "C8", "C13")
+```
+
+```{r}
+# Set up colours and annotation
+colfun <- circlize::colorRamp2(
+  breaks = c(min(expr_mat), 0, max(expr_mat)),
+  colors = c("#2166AC", "white", "#B2182B")
+)
+
+# highlight genes (as in your example)
+highlights <- c("Hmgb1","Cd69","Hmgb2","Junb","Top2a","Ccr7","Birc5","Cd83",
+                "Atf4","Tuba1b","Tubb5","Hspa5","Ccdc34","Ube2c","Il2rg",
+                "Cks1b","Smc2","Stmn1","Tyms","Ubc","Gapdh","Apoe","Xrcc1",
+                "Cd79a","Zfp36","Ppp1r15a","Ldha","Mki67","Cdk1","Gpx4","Btg1",
+                "Itm2b","Xbp1","Rel","Aurkb","Eif5a","C1qbp","Cd79b","Tk1",
+                "Nfkbia","Hsp90aa1","Cenpm","Nr4a1","Pfdn5","Eif4a2","Pim1",
+                "Cdca3","Pclaf","Ccnb2","Rrm2")
+
+fig_anno <- rowAnnotation(
+  link = anno_mark(
+    at = which(rownames(expr_mat) %in% highlights),
+    labels = rownames(expr_mat)[rownames(expr_mat) %in% highlights],
+    labels_gp = gpar(fontsize = 5),
+    padding = 1.2
+  )
+)
+```
+
+```{r, fig.height=6, fig.width=5}
+# Draw heatmap
+heatmap.plt <- ComplexHeatmap::Heatmap(
+  expr_mat,
+  col = colfun,
+  name = "Expression",
+  show_row_names = FALSE,
+  right_annotation = fig_anno,
+  row_dend_width = unit(3, "mm"),
+  column_dend_height = unit(3, "mm"),
+  heatmap_legend_param = list(
+    legend_direction = "vertical",
+    title_position = "lefttop-rot",
+    title_gp = gpar(fontsize = 6)
+  )
+)
+
+draw(heatmap.plt)
+```
+
+In original study they reported these genes in the top 50 genes while we can show these in the top 500 genes although the genes were in the same clusters (PRMT5 and TCL1 cells). We think that using different analysis tools such as monocle and seurat can result in different results.
+
+## Enrichment analysis
+
+We also performed gene list-based enrichment analysis based on the top 500 markers identified from cluster 5, 4, and 13.
+
+```{r, message=FALSE, warning=FALSE}
+# Import the relevant packages
+library(clusterProfiler)
+library(org.Mm.eg.db)  # Mouse annotation database
+library(enrichplot)    
+```
+
+### TCL1 cells
+
+#### Cluster 4
+
+```{r, message=FALSE, warning=FALSE}
+# Extract top 500 gene name from cluster 4
+top_markers_4 <- top_n_genes %>%
+  filter(cluster == "4") %>%  
+  pull(gene)
+
+# Convert symbols to Entrez IDs
+gene_df <- bitr(top_markers_4, fromType = "SYMBOL",
+                toType = "ENTREZID",
+                OrgDb = org.Mm.eg.db)
+
+entrez_genes <- gene_df$ENTREZID
+```
+
+```{r, message=FALSE, warning=FALSE}
+# GO:BP
+gobp_enrich <- enrichGO(
+  gene = entrez_genes,
+  OrgDb = org.Mm.eg.db,
+  keyType = "ENTREZID",
+  ont = "BP",          
+  pAdjustMethod = "BH",
+  pvalueCutoff = 0.05,
+  qvalueCutoff = 0.2,
+  readable = TRUE       
+)
+
+# View results
+gobb_df <- as.data.frame(gobp_enrich)
+DT::datatable(gobb_df, options = list(scrollX = TRUE))
+```
+
+```{r, fig.height=9, fig.width=7}
+# Dotplot of top GO terms
+dotplot(gobp_enrich, showCategory = 20) + ggtitle("GO Biological Process")
+```
+
+#### Cluster 13
+
+```{r, message=FALSE, warning=FALSE}
+# Extract top 500 gene name from cluster 13
+top_markers_13 <- top_n_genes %>%
+  filter(cluster == "13") %>%  
+  pull(gene)
+
+# Convert symbols to Entrez IDs
+gene_df <- bitr(top_markers_13, fromType = "SYMBOL",
+                toType = "ENTREZID",
+                OrgDb = org.Mm.eg.db)
+
+entrez_genes <- gene_df$ENTREZID
+```
+
+```{r, message=FALSE, warning=FALSE}
+# GO:BP
+gobp_enrich <- enrichGO(
+  gene = entrez_genes,
+  OrgDb = org.Mm.eg.db,
+  keyType = "ENTREZID",
+  ont = "BP",          
+  pAdjustMethod = "BH",
+  pvalueCutoff = 0.05,
+  qvalueCutoff = 0.2,
+  readable = TRUE       
+)
+
+# View results
+gobb_df <- as.data.frame(gobp_enrich)
+DT::datatable(gobb_df, options = list(scrollX = TRUE))
+```
+
+```{r, fig.height=4, fig.width=7}
+# Dotplot of top GO terms
+dotplot(gobp_enrich, showCategory = 20) + ggtitle("GO Biological Process")
+```
+
+### PRMT5 cells
+
+```{r, message=FALSE, warning=FALSE}
+# Extract top 500 gene name from cluster 5
+top_markers_5 <- top_n_genes %>%
+  filter(cluster == "5") %>%  
+  pull(gene)
+
+# Convert symbols to Entrez IDs
+gene_df <- bitr(top_markers_5, fromType = "SYMBOL",
+                toType = "ENTREZID",
+                OrgDb = org.Mm.eg.db)
+
+entrez_genes <- gene_df$ENTREZID
+```
+
+```{r, message=FALSE, warning=FALSE}
+# GO:BP
+gobp_enrich <- enrichGO(
+  gene = entrez_genes,
+  OrgDb = org.Mm.eg.db,
+  keyType = "ENTREZID",
+  ont = "BP",          
+  pAdjustMethod = "BH",
+  pvalueCutoff = 0.05,
+  qvalueCutoff = 0.2,
+  readable = TRUE       
+)
+
+# View results
+gobb_df <- as.data.frame(gobp_enrich)
+DT::datatable(gobb_df, options = list(scrollX = TRUE))
+```
+
+```{r, fig.height=9, fig.width=7}
+# Dotplot of top GO terms
+dotplot(gobp_enrich, showCategory = 20) + ggtitle("GO Biological Process")
+```
+
+## Visulaise other genes of interest
+
+```{r, message=FALSE, warning=FALSE, fig.height=10, fig.width=20}
+# Visualise feature expression according to the original study
+
+# 1. Define genes of interest
+features <- c("Ighm", "Pax5", "Ighd", "Ebf1", "Cd93", "Cd69", "Spn", "Myc", "Mki67")
+
+# 2. Compute global min and max expression across all selected genes
+expr_matrix <- GetAssayData(seurat, assay = "RNA", layer = "data")
+expr_min <- min(expr_matrix)
+expr_max <- max(expr_matrix)
+
+# 3. Generate plots
+feature_plots <- lapply(features, function(gene) {
+  
+  # Return individual ggplots for each split
+  plt_list <- FeaturePlot(
+    seurat,
+    features = gene,
+    reduction = "umap",
+    pt.size = 1,
+    split.by = "model",
+    combine = FALSE,         # IMPORTANT: return list of ggplots
+    keep.scale = "feature"
+  )
+  
+  # Apply the same global colour scale and labels to each split
+  plt_list <- lapply(plt_list, function(x) {
+    x + 
+      scale_color_viridis_c(
+        option = "viridis",
+        limits = c(expr_min, expr_max)  # same scale for all
+      ) +
+      labs(y = "UMAP 2", x = "UMAP 1", title = gene)
+  })
+  
+  # Combine splits for the same gene
+  wrap_plots(plt_list)
+})
+
+# 4. Combine all genes and keep only one legend
+combined_plot <- wrap_plots(feature_plots, ncol = 3, guides = "collect")
+
+# 5. Make legend appear once, at the bottom
+combined_plot & theme(legend.position = "bottom")
+```
+
+# Comparison between Eµ-hPRMT5/hTCL1 and Eµ-hTCL1 in spleen
+
+We will reanalyse the results according to Figure 5 and Supplemental Figure 4 in the original article.
+
+```{r}
+# Select samples of interest
+selected_metadata <- sample_metadata %>%
+  filter(tissue == "Spl" & Model %in% c("Eµ-hPRMT5/hTCL1", "Eµ-hTCL1"))
+selected_metadata
+```
+
+```{r}
+# Define path to save and load
+path_to_save_merged_obj <- here::here("scRNAseq/Hing_2023_GSE183426/R_objects/Hing_2023_GSE183426_rt_cll_spl_merged_seu.rds")
+path_to_save_integrated_obj <- here::here("scRNAseq/Hing_2023_GSE183426/R_objects/Hing_2023_GSE183426_rt_cll_spl_integrated_seu.rds")
+path_to_save_markers <- here::here("scRNAseq/Hing_2023_GSE183426/R_objects/Hing_2023_GSE183426_rt_cll_spl_seu_marker.rds")
+```
+
+## Merge and integrate the data
+
+```{r, eval=FALSE}
+# Merge the objects
+interested_lst <- seurat.lst[selected_metadata$GSM_ID]
+seurat <- interested_lst[[1]]
+for (i in 2:length(interested_lst)) {
+  seurat <- merge(x = seurat, y = interested_lst[[i]])
+  interested_lst[[i]] <- NA
+}
+rm(interested_lst)
+```
+
+```{r, eval=FALSE}
+# Save the merged object
+saveRDS(seurat, path_to_save_merged_obj)
+```
+
+We used Harmony package for data integration and batch correction, and annotated the cell types using SingleR package.
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Reanalysis after merging and data integration 
+DefaultAssay(seurat) <- "RNA"
+seurat <- JoinLayers(seurat)
+seurat <- NormalizeData(seurat)
+seurat <- FindVariableFeatures(seurat)
+seurat <- ScaleData(seurat)
+seurat <- RunPCA(seurat)
+seurat <- RunHarmony(seurat, group.by.vars = "case_id", dims = 1:30) 
+seurat <- RunUMAP(seurat, dims = 1:30, reduction = "harmony")
+seurat <- FindNeighbors(seurat, dims = 1:30, reduction = "harmony")              
+seurat <- FindClusters(
+    seurat,
+    random.seed = 12345,
+    verbose = FALSE,
+    resolution = seq(0.1, 0.9, by = 0.1)
+  )
+seurat <- singleR_cell_annotation(seurat, ref=ref) 
+```
+
+```{r, eval=FALSE}
+# Save the integrated object
+saveRDS(seurat, path_to_save_integrated_obj)
+```
+
+## Visualisation after data integration
+
+```{r}
+# Define path
+path_to_obj <- path_to_save_integrated_obj
+
+# Load the data
+seurat <- readRDS(path_to_obj)
+```
+
+```{r, message=FALSE, warning=FALSE, fig.height=4, fig.width=16}
+# Plot based on case_id, conditions, cell types, and clusters
+case_id.plt <- DimPlot(seurat, reduction = "umap", group.by = "case_id") + 
+  labs(y= "UMAP 2", x = "UMAP 1")
+
+model.plt <- DimPlot(seurat, reduction = "umap", group.by = "model") + 
+  labs(y= "UMAP 2", x = "UMAP 1")
+
+cell.plt <- DimPlot(seurat, reduction = "umap", group.by = "singleR.labels_main") +
+  labs(y= "UMAP 2", x = "UMAP 1")
+
+case_id.plt + model.plt + cell.plt
+```
+
+```{r, fig.height=7, fig.width=9, warning=FALSE, message=FALSE}
+# Plot based on gene expression
+FeaturePlot(seurat, 
+            features = c("Hbb-bt", "Hba-a1", "Cd3d", "Cd8a", "Cd4", "Cd19", "Cd79a", "Cd14", "Nkg7"),
+            reduction = "umap") 
+```
+
+```{r, fig.height=4, fig.width=8}
+# Plot by spliting the model (Eµ-hPRMT5/hTCL1 and Eµ-hTCL1)
+cell_split.plt <- DimPlot(seurat, reduction = "umap", group.by = "singleR.labels_main", split.by = "model")
+cell_split.plt 
+```
+
+```{r, fig.height=10, fig.width=10, warning=FALSE, message=FALSE}
+# Visualise the varied clusters
+varied_clusters.plt <- plot_varying_cluster_resolution(seurat, assay_to_use = "RNA")
+varied_clusters.plt
+```
+
+We used seurat cluster at resolution = 0.3 for further analysis.
+
+```{r, fig.height=4, fig.width=4.5}
+# Plot clusters at resolution = 0.3
+cluster.plt <- DimPlot(seurat, reduction = "umap", group.by = "RNA_snn_res.0.3", label = TRUE) + 
+  labs(y= "UMAP 2", x = "UMAP 1")
+cluster.plt
+```
+
+## Cell type annotation
+
+As automatic SingleR annotation labelled cells in more detail, we will manually annotated them.
+
+```{r}
+# Define new cluster labels
+new.cluster.ids <- c("B", "Cd8+ T", "Cd4+ T", "B", "B", "B", "B", "Monocyte",
+                     "B", "Cd8+ T", "Unassigned", "B", "NK", "Neutrophil", "Neutrophil", "Erythrocyte")
+
+# Map these to the cluster identities (i.e., Idents of the Seurat object)
+Idents(seurat) <- "RNA_snn_res.0.3"
+names(new.cluster.ids) <- levels(seurat)
+
+# Now map cluster IDs to the manual labels
+seurat$manually_annotated <- plyr::mapvalues(
+  x = as.character(Idents(seurat)),
+  from = names(new.cluster.ids),
+  to = new.cluster.ids
+)
+```
+
+```{r, fig.height=4, fig.width=10}
+# Plot clusters and cell types
+cell.plt <- DimPlot(seurat, reduction = "umap", group.by = "manually_annotated") +
+  labs(y= "UMAP 2", x = "UMAP 1") 
+
+cluster.plt + cell.plt
+```
+
+```{r, fig.height=3, fig.width=12}
+# Dot plot for biomarker expression in each cell type
+
+# 1. Create meta-data to concatenate clusters and cell types
+seurat$cluster_celltype <- paste0("C", seurat$RNA_snn_res.0.3, " - ", seurat$manually_annotated)
+
+# 2. Extract a data frame from Seurat dot plot
+features = c("Cd3d", "Cd8a", "Cd4", "Ncr1", "Pdcd1", "Foxp3", "Cd19", "Itgam", "Cd177", "Cd14", "Hbb-bt")
+dotdata <- DotPlot(
+  seurat,
+  features = features,
+  group.by = "cluster_celltype"  
+)$data
+
+# 3. Preprocess the data frame compatible with ggplot
+dotdata <- dotdata %>% 
+  tidyr::separate(col = id, into = c("cluster", "celltype"), sep = " - ") %>%
+  dplyr::mutate(proportion=pct.exp/100) %>%
+  dplyr::rename(
+    gene_name = features.plot,
+    expression = avg.exp.scaled
+  )
+
+# 4. Factor levels
+dotdata$cluster <- factor(dotdata$cluster, levels = unique(dotdata$cluster))
+dotdata$gene_name <- factor(dotdata$gene_name, levels = rev(features))
+celltype_order <- c("Cd8+ T", "B", "Cd4+ T", "NK", "Neutrophil", "Monocyte", "Erythrocyte", "Unassigned")
+dotdata$celltype <- factor(dotdata$celltype, levels = celltype_order)
+
+# 5. ggplot for the dot plot
+biomarker_dot.plt <- ggplot(dotdata, aes(x = cluster, 
+                                         y = gene_name, 
+                                         color = expression,
+                                         size = proportion)) +
+  geom_point() +
+  scale_size_area() +
+  scale_color_viridis_c() +
+  facet_wrap(~celltype, scales = "free_x", nrow=1) +
+  theme_minimal(base_size = 8) +
+  theme(strip.background = ggh4x::element_part_rect(side = "b", colour = "black", fill = "transparent")) +
+  theme(axis.text.y = element_text(face = "italic")) +
+  labs(x = NULL, y = NULL, size = "Proportion", color = "Expression")
+
+biomarker_dot.plt
+```
+
+## Gene expression analysis between PRMT5/TCL1 and TCL1 cells
+
+```{r, fig.height=4, fig.width=8}
+# Plotc lusters by spliting the model (Eµ-hPRMT5/hTCL1 and Eµ-hTCL1)
+cluster_split.plt <- DimPlot(seurat, reduction = "umap", group.by = "RNA_snn_res.0.3", split.by = "model", label = TRUE) +
+  NoLegend()
+cluster_split.plt 
+```
+
+From the clustering results, cluster 6 of tumour cells predominates in the PRMT5/TCL1 model, similar to cluster 5.6 in the original study.
+
+```{r, eval=FALSE}
+# Biomarker identification
+Idents(seurat) <- "RNA_snn_res.0.3"
+seurat.markers <- FindAllMarkers(seurat, only.pos = TRUE)
+```
+
+```{r, eval=FALSE}
+# Save the marker result
+saveRDS(seurat.markers, path_to_save_markers)
+```
+
+## Heatmap for top 5000 markers
+
+```{r}
+# Take top 5000 per cluster
+seurat.markers <- readRDS(path_to_save_markers)
+top_n_genes <- seurat.markers %>%
+  group_by(cluster) %>%
+  top_n(n = 5000, wt = avg_log2FC)
+
+# Filter to specific clusters of interest 
+top_markers <- top_n_genes %>%
+  filter(cluster %in% c("6", "5", "11")) %>%  
+  pull(gene) %>%
+  unique()
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Extract scaled expression matrix
+Bcell_seurat <- subset(seurat, subset = RNA_snn_res.0.3 %in% c(0, 3, 4, 5, 6, 8, 11))
+avg_expr <- AverageExpression(
+  Bcell_seurat,
+  features = top_markers,
+  assays = "RNA",     
+  slot = "data"       
+)$RNA
+
+# Scale genes 
+expr_mat <- t(scale(t(avg_expr)))
+colnames(expr_mat) <- c("C0", "C3", "C4", "C5", "C6", "C8", "C11")
+```
+
+```{r}
+# Set up colours and annotation
+colfun <- circlize::colorRamp2(
+  breaks = c(min(expr_mat), 0, max(expr_mat)),
+  colors = c("#2166AC", "white", "#B2182B")
+)
+
+# highlight genes (as in your example)
+highlights <-
+  c(
+    "Tubb5",
+    "Tuba1b",
+    "Npm1",
+    "Marcksl1",
+    "Actb",
+    "Gapdh",
+    "Napsa",
+    "Cd37",
+    "Ldha",
+    "Cd19",
+    "Coro1a",
+    "Klf2",
+    "Eif5a",
+    "Hnrnpk",
+    "Rac2",
+    "Ms4a1",
+    "Rpl3"
+  )
+
+fig_anno <- rowAnnotation(
+  link = anno_mark(
+    at = which(rownames(expr_mat) %in% highlights),
+    labels = rownames(expr_mat)[rownames(expr_mat) %in% highlights],
+    labels_gp = gpar(fontsize = 5),
+    padding = 1.2
+  )
+)
+```
+
+```{r, fig.height=6, fig.width=5}
+# Draw heatmap
+heatmap.plt <- ComplexHeatmap::Heatmap(
+  expr_mat,
+  col = colfun,
+  name = "Expression",
+  show_row_names = FALSE,
+  right_annotation = fig_anno,
+  row_dend_width = unit(3, "mm"),
+  column_dend_height = unit(3, "mm"),
+  heatmap_legend_param = list(
+    legend_direction = "vertical",
+    title_position = "lefttop-rot",
+    title_gp = gpar(fontsize = 6)
+  )
+)
+
+draw(heatmap.plt)
+```
+
+## Enrichment analysis
+
+We also performed gene list-based enrichment analysis based on the top 5000 markers identified from cluster 6.
+
+```{r, message=FALSE, warning=FALSE}
+# Extract top 5000 gene name from cluster 6
+top_markers_6 <- top_n_genes %>%
+  filter(cluster == "6") %>%  
+  pull(gene)
+
+# Convert symbols to Entrez IDs
+gene_df <- bitr(top_markers_5, fromType = "SYMBOL",
+                toType = "ENTREZID",
+                OrgDb = org.Mm.eg.db)
+
+entrez_genes <- gene_df$ENTREZID
+```
+
+```{r, message=FALSE, warning=FALSE}
+# GO:BP
+gobp_enrich <- enrichGO(
+  gene = entrez_genes,
+  OrgDb = org.Mm.eg.db,
+  keyType = "ENTREZID",
+  ont = "BP",          
+  pAdjustMethod = "BH",
+  pvalueCutoff = 0.05,
+  qvalueCutoff = 0.2,
+  readable = TRUE       
+)
+
+# View results
+gobb_df <- as.data.frame(gobp_enrich)
+DT::datatable(gobb_df, options = list(scrollX = TRUE))
+```
+
+```{r, fig.height=9, fig.width=7}
+# Dotplot of top GO terms
+dotplot(gobp_enrich, showCategory = 20) + ggtitle("GO Biological Process")
+```
+
+## Visulaise other genes of interest
+
+```{r, message=FALSE, warning=FALSE, fig.height=12, fig.width=15}
+# Visualise feature expression according to the original study
+
+# 1. Define genes of interest
+features <- c("Myc", "Mki67", "Egr1", "Cxcr5", "Ccr7", "Il10", "Ctla4", "Cd274")
+
+# 2. Compute global min and max expression across all selected genes
+expr_matrix <- GetAssayData(seurat, assay = "RNA", layer = "data")
+expr_min <- min(expr_matrix)
+expr_max <- max(expr_matrix)
+
+# 3. Generate plots
+feature_plots <- lapply(features, function(gene) {
+  
+  # Return individual ggplots for each split
+  plt_list <- FeaturePlot(
+    seurat,
+    features = gene,
+    reduction = "umap",
+    pt.size = 1,
+    split.by = "model",
+    combine = FALSE,         # IMPORTANT: return list of ggplots
+    keep.scale = "feature"
+  )
+  
+  # Apply the same global colour scale and labels to each split
+  plt_list <- lapply(plt_list, function(x) {
+    x + 
+      scale_color_viridis_c(
+        option = "viridis",
+        limits = c(expr_min, expr_max)  # same scale for all
+      ) +
+      labs(y = "UMAP 2", x = "UMAP 1", title = gene)
+  })
+  
+  # Combine splits for the same gene
+  wrap_plots(plt_list)
+})
+
+# 4. Combine all genes and keep only one legend
+combined_plot <- wrap_plots(feature_plots, ncol = 2, guides = "collect")
+
+# 5. Make legend appear once, at the bottom
+combined_plot & theme(legend.position = "bottom")
+```
+
+# Comparison between Eµ-hPRMT5/hTCL1 and Eµ-hTCL1 in lymph nodes
+
+We will reanalyse the results according to Supplemental Figure 5 in the original article.
+
+```{r}
+# Select samples of interest
+selected_metadata <- sample_metadata %>%
+  filter(tissue == "LN" & Model %in% c("Eµ-hPRMT5/hTCL1", "Eµ-hTCL1"))
+selected_metadata
+```
+
+```{r}
+# Define path to save and load
+path_to_save_merged_obj <- here::here("scRNAseq/Hing_2023_GSE183426/R_objects/Hing_2023_GSE183426_rt_cll_ln_merged_seu.rds")
+path_to_save_integrated_obj <- here::here("scRNAseq/Hing_2023_GSE183426/R_objects/Hing_2023_GSE183426_rt_cll_ln_integrated_seu.rds")
+path_to_save_markers <- here::here("scRNAseq/Hing_2023_GSE183426/R_objects/Hing_2023_GSE183426_rt_cll_ln_seu_marker.rds")
+```
+
+## Merge and integrate the data
+
+```{r, eval=FALSE}
+# Merge the objects
+interested_lst <- seurat.lst[selected_metadata$GSM_ID]
+seurat <- interested_lst[[1]]
+for (i in 2:length(interested_lst)) {
+  seurat <- merge(x = seurat, y = interested_lst[[i]])
+  interested_lst[[i]] <- NA
+}
+rm(interested_lst)
+```
+
+```{r, eval=FALSE}
+# Save the merged object
+saveRDS(seurat, path_to_save_merged_obj)
+```
+
+We used Harmony package for data integration and batch correction, and annotated the cell types using SingleR package.
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Reanalysis after merging and data integration 
+DefaultAssay(seurat) <- "RNA"
+seurat <- JoinLayers(seurat)
+seurat <- NormalizeData(seurat)
+seurat <- FindVariableFeatures(seurat)
+seurat <- ScaleData(seurat)
+seurat <- RunPCA(seurat)
+seurat <- RunHarmony(seurat, group.by.vars = "case_id", dims = 1:30) 
+seurat <- RunUMAP(seurat, dims = 1:30, reduction = "harmony")
+seurat <- FindNeighbors(seurat, dims = 1:30, reduction = "harmony")              
+seurat <- FindClusters(
+    seurat,
+    random.seed = 12345,
+    verbose = FALSE,
+    resolution = seq(0.1, 0.9, by = 0.1)
+  )
+seurat <- singleR_cell_annotation(seurat, ref=ref) 
+```
+
+```{r, eval=FALSE}
+# Save the integrated object
+saveRDS(seurat, path_to_save_integrated_obj)
+```
+
+## Visualisation after data integration
+
+```{r}
+# Define path
+path_to_obj <- path_to_save_integrated_obj
+
+# Load the data
+seurat <- readRDS(path_to_obj)
+```
+
+```{r, message=FALSE, warning=FALSE, fig.height=4, fig.width=17}
+# Plot based on case_id, conditions, cell types, and clusters
+case_id.plt <- DimPlot(seurat, reduction = "umap", group.by = "case_id") + 
+  labs(y= "UMAP 2", x = "UMAP 1")
+
+model.plt <- DimPlot(seurat, reduction = "umap", group.by = "model") + 
+  labs(y= "UMAP 2", x = "UMAP 1")
+
+cell.plt <- DimPlot(seurat, reduction = "umap", group.by = "singleR.labels_main") +
+  labs(y= "UMAP 2", x = "UMAP 1")
+
+case_id.plt + model.plt + cell.plt
+```
+
+```{r, fig.height=7, fig.width=9, warning=FALSE, message=FALSE}
+# Plot based on gene expression
+FeaturePlot(seurat, 
+            features = c("Hbb-bt", "Hba-a1", "Cd3d", "Cd8a", "Cd4", "Cd19", "Cd79a", "Cd14", "Nkg7"),
+            reduction = "umap") 
+```
+
+```{r, fig.height=4, fig.width=8.5}
+# Plot by spliting the model (Eµ-hPRMT5/hTCL1 and Eµ-hTCL1)
+cell_split.plt <- DimPlot(seurat, reduction = "umap", group.by = "singleR.labels_main", split.by = "model")
+cell_split.plt 
+```
+
+```{r, fig.height=10, fig.width=10, warning=FALSE, message=FALSE}
+# Visualise the varied clusters
+varied_clusters.plt <- plot_varying_cluster_resolution(seurat, assay_to_use = "RNA")
+varied_clusters.plt
+```
+
+We used seurat cluster at resolution = 0.3 for further analysis.
+
+```{r, fig.height=4, fig.width=4.5}
+# Plot clusters at resolution = 0.3
+
+# Reorder and relabel clusters numerically
+seurat$RNA_snn_res.0.3 <- factor(
+  seurat$RNA_snn_res.0.3,
+  levels = as.character(sort(as.numeric(levels(seurat$RNA_snn_res.0.3))))
+)
+
+cluster.plt <- DimPlot(seurat, reduction = "umap", group.by = "RNA_snn_res.0.3", label = TRUE) + 
+  labs(y= "UMAP 2", x = "UMAP 1")
+
+cluster.plt
+```
+
+## Cell type annotation
+
+As automatic SingleR annotation labelled cells in more detail, we will manually annotated them.
+
+```{r}
+# Define new cluster labels
+new.cluster.ids <- c("Cd8+ T", "B", "B", "Cd4+ T", "Cd8+ T", "B", "B", 
+                     "B", "B", "Cd8+ T", "B", "Monocyte", "B", "NK")
+
+# Map these to the cluster identities (i.e., Idents of the Seurat object)
+Idents(seurat) <- "RNA_snn_res.0.3"
+names(new.cluster.ids) <- levels(seurat)
+
+# Now map cluster IDs to the manual labels
+seurat$manually_annotated <- plyr::mapvalues(
+  x = as.character(Idents(seurat)),
+  from = names(new.cluster.ids),
+  to = new.cluster.ids
+)
+```
+
+```{r, fig.height=4, fig.width=10}
+# Plot clusters and cell types
+cell.plt <- DimPlot(seurat, reduction = "umap", group.by = "manually_annotated") +
+  labs(y= "UMAP 2", x = "UMAP 1") 
+
+cluster.plt + cell.plt
+```
+
+```{r, fig.height=3, fig.width=12}
+# Dot plot for biomarker expression in each cell type
+
+# 1. Create meta-data to concatenate clusters and cell types
+seurat$cluster_celltype <- paste0("C", seurat$RNA_snn_res.0.3, " - ", seurat$manually_annotated)
+
+# 2. Extract a data frame from Seurat dot plot
+features = c("Cd3d", "Cd8a", "Cd4", "Ncr1", "Pdcd1", "Foxp3", "Cd19", "Itgam", "Cd177", "Cd14", "Hbb-bt")
+dotdata <- DotPlot(
+  seurat,
+  features = features,
+  group.by = "cluster_celltype"  
+)$data
+
+# 3. Preprocess the data frame compatible with ggplot
+dotdata <- dotdata %>% 
+  tidyr::separate(col = id, into = c("cluster", "celltype"), sep = " - ") %>%
+  dplyr::mutate(proportion=pct.exp/100) %>%
+  dplyr::rename(
+    gene_name = features.plot,
+    expression = avg.exp.scaled
+  )
+
+# 4. Factor levels
+dotdata$cluster <- factor(dotdata$cluster, levels = unique(dotdata$cluster))
+dotdata$gene_name <- factor(dotdata$gene_name, levels = rev(features))
+celltype_order <- c("Cd8+ T", "B", "Cd4+ T", "NK", "Neutrophil", "Monocyte", "Erythrocyte", "Unassigned")
+dotdata$celltype <- factor(dotdata$celltype, levels = celltype_order)
+
+# 5. ggplot for the dot plot
+biomarker_dot.plt <- ggplot(dotdata, aes(x = cluster, 
+                                         y = gene_name, 
+                                         color = expression,
+                                         size = proportion)) +
+  geom_point() +
+  scale_size_area() +
+  scale_color_viridis_c() +
+  facet_wrap(~celltype, scales = "free_x", nrow=1) +
+  theme_minimal(base_size = 8) +
+  theme(strip.background = ggh4x::element_part_rect(side = "b", colour = "black", fill = "transparent")) +
+  theme(axis.text.y = element_text(face = "italic")) +
+  labs(x = NULL, y = NULL, size = "Proportion", color = "Expression")
+
+biomarker_dot.plt
+```
+
+## Gene expression analysis between PRMT5/TCL1 and TCL1 cells
+
+```{r, fig.height=4, fig.width=7.5}
+# Plotc lusters by spliting the model (Eµ-hPRMT5/hTCL1 and Eµ-hTCL1)
+cluster_split.plt <- DimPlot(seurat, reduction = "umap", group.by = "RNA_snn_res.0.3", split.by = "model", label = TRUE) +
+  NoLegend()
+cluster_split.plt 
+```
+
+From the clustering results, we can see that cluster 2, 6 and 7 of tumour cells predominated in PRMT5/TCL1 model (similar to cluster LN2 and LN7 in the original article in Supplemental Figure 5e) while cluster 5 predominated in TCL1 model (similar to cluster LN4 in the original study).
+
+```{r, eval=FALSE}
+# Biomarker identification
+Idents(seurat) <- "RNA_snn_res.0.3"
+seurat.markers <- FindAllMarkers(seurat, only.pos = TRUE)
+```
+
+```{r, eval=FALSE}
+# Save the marker result
+saveRDS(seurat.markers, path_to_save_markers)
+```
+
+## Heatmap for top 5000 markers
+
+```{r}
+# Take top 5000 per cluster
+seurat.markers <- readRDS(path_to_save_markers)
+top_n_genes <- seurat.markers %>%
+  group_by(cluster) %>%
+  slice_max(order_by = avg_log2FC, n = 5000)
+
+# Filter to specific clusters of interest 
+top_markers <- top_n_genes %>%
+  filter(cluster %in% c("2", "5", "6", "7")) %>%  
+  pull(gene) %>%
+  unique()
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Extract scaled expression matrix
+Bcell_seurat <- subset(seurat, subset = RNA_snn_res.0.3 %in% c(1, 2, 5, 6, 7, 8, 10, 12))
+avg_expr <- AverageExpression(
+  Bcell_seurat,
+  features = top_markers,
+  assays = "RNA",     
+  slot = "data"       
+)$RNA
+
+# Scale genes 
+expr_mat <- t(scale(t(avg_expr)))
+colnames(expr_mat) <- c("C1", "C2", "C5", "C6", "C7", "C8", "C10", "C12")
+```
+
+```{r}
+# Set up colours and annotation
+colfun <- circlize::colorRamp2(
+  breaks = c(min(expr_mat), 0, max(expr_mat)),
+  colors = c("#2166AC", "white", "#B2182B")
+)
+
+# highlight genes (as in your example)
+highlights <-
+  c(
+    "Rac2",
+    "Coro1a",
+    "Ms4a1",
+    "Cd37",
+    "Actb",
+    "Cd83",
+    "Cd79b",
+    "Napsa",
+    "Cks1b",
+    "Cenpm",
+    "Mki67",
+    "Ube2c",
+    "Cdk1",
+    "Birc5",
+    "Hmgb1",
+    "Tubb5",
+    "Smc2",
+    "Aurkb",
+    "Stmn1",
+    "Top2a",
+    "Hmgb2",
+    "Tk1",
+    "Tyms",
+    "Tuba1b"
+  )
+
+fig_anno <- rowAnnotation(
+  link = anno_mark(
+    at = which(rownames(expr_mat) %in% highlights),
+    labels = rownames(expr_mat)[rownames(expr_mat) %in% highlights],
+    labels_gp = gpar(fontsize = 5),
+    padding = 1.2
+  )
+)
+```
+
+```{r, fig.height=6, fig.width=5}
+# Draw heatmap
+heatmap.plt <- ComplexHeatmap::Heatmap(
+  expr_mat,
+  col = colfun,
+  name = "Expression",
+  show_row_names = FALSE,
+  right_annotation = fig_anno,
+  row_dend_width = unit(3, "mm"),
+  column_dend_height = unit(3, "mm"),
+  heatmap_legend_param = list(
+    legend_direction = "vertical",
+    title_position = "lefttop-rot",
+    title_gp = gpar(fontsize = 6)
+  )
+)
+
+draw(heatmap.plt)
+```
+
+## Enrichment analysis
+
+We also performed gene list-based enrichment analysis based on the top 5000 markers identified from cluster 2, 5, 6, and 7.
+
+### TCL1 cells
+
+```{r, message=FALSE, warning=FALSE}
+# Extract top 5000 gene name from cluster 5
+top_markers_5 <- top_n_genes %>%
+  filter(cluster == "5") %>%  
+  pull(gene)
+
+# Convert symbols to Entrez IDs
+gene_df <- bitr(top_markers_5, fromType = "SYMBOL",
+                toType = "ENTREZID",
+                OrgDb = org.Mm.eg.db)
+
+entrez_genes <- gene_df$ENTREZID
+```
+
+```{r, message=FALSE, warning=FALSE}
+# GO:BP
+gobp_enrich <- enrichGO(
+  gene = entrez_genes,
+  OrgDb = org.Mm.eg.db,
+  keyType = "ENTREZID",
+  ont = "BP",          
+  pAdjustMethod = "BH",
+  pvalueCutoff = 0.05,
+  qvalueCutoff = 0.2,
+  readable = TRUE       
+)
+
+# View results
+gobb_df <- as.data.frame(gobp_enrich)
+DT::datatable(gobb_df, options = list(scrollX = TRUE))
+```
+
+```{r, fig.height=9, fig.width=7}
+# Dotplot of top GO terms
+dotplot(gobp_enrich, showCategory = 20) + ggtitle("GO Biological Process")
+```
+
+### PRMT5/TCL1 cells
+
+#### Cluster 2
+
+```{r, message=FALSE, warning=FALSE}
+# Extract top 5000 gene name from cluster 2
+top_markers_2 <- top_n_genes %>%
+  filter(cluster == "2") %>%  
+  pull(gene)
+
+# Convert symbols to Entrez IDs
+gene_df <- bitr(top_markers_2, fromType = "SYMBOL",
+                toType = "ENTREZID",
+                OrgDb = org.Mm.eg.db)
+
+entrez_genes <- gene_df$ENTREZID
+```
+
+```{r, message=FALSE, warning=FALSE}
+# GO:BP
+gobp_enrich <- enrichGO(
+  gene = entrez_genes,
+  OrgDb = org.Mm.eg.db,
+  keyType = "ENTREZID",
+  ont = "BP",          
+  pAdjustMethod = "BH",
+  pvalueCutoff = 0.05,
+  qvalueCutoff = 0.2,
+  readable = TRUE       
+)
+
+# View results
+gobb_df <- as.data.frame(gobp_enrich)
+DT::datatable(gobb_df, options = list(scrollX = TRUE))
+```
+
+```{r, fig.height=13, fig.width=7}
+# Dotplot of top GO terms
+dotplot(gobp_enrich, showCategory = 20) + ggtitle("GO Biological Process")
+```
+
+#### Cluster 6
+
+```{r, message=FALSE, warning=FALSE}
+# Extract top 5000 gene name from cluster 6
+top_markers_6 <- top_n_genes %>%
+  filter(cluster == "6") %>%  
+  pull(gene)
+
+# Convert symbols to Entrez IDs
+gene_df <- bitr(top_markers_6, fromType = "SYMBOL",
+                toType = "ENTREZID",
+                OrgDb = org.Mm.eg.db)
+
+entrez_genes <- gene_df$ENTREZID
+```
+
+```{r, message=FALSE, warning=FALSE}
+# GO:BP
+gobp_enrich <- enrichGO(
+  gene = entrez_genes,
+  OrgDb = org.Mm.eg.db,
+  keyType = "ENTREZID",
+  ont = "BP",          
+  pAdjustMethod = "BH",
+  pvalueCutoff = 0.05,
+  qvalueCutoff = 0.2,
+  readable = TRUE       
+)
+
+# View results
+gobb_df <- as.data.frame(gobp_enrich)
+DT::datatable(gobb_df, options = list(scrollX = TRUE))
+```
+
+```{r, fig.height=13, fig.width=7}
+# Dotplot of top GO terms
+dotplot(gobp_enrich, showCategory = 20) + ggtitle("GO Biological Process")
+```
+
+#### Cluster 7
+
+```{r, message=FALSE, warning=FALSE}
+# Extract top 5000 gene name from cluster 7
+top_markers_7 <- top_n_genes %>%
+  filter(cluster == "7") %>%  
+  pull(gene)
+
+# Convert symbols to Entrez IDs
+gene_df <- bitr(top_markers_7, fromType = "SYMBOL",
+                toType = "ENTREZID",
+                OrgDb = org.Mm.eg.db)
+
+entrez_genes <- gene_df$ENTREZID
+```
+
+```{r, message=FALSE, warning=FALSE}
+# GO:BP
+gobp_enrich <- enrichGO(
+  gene = entrez_genes,
+  OrgDb = org.Mm.eg.db,
+  keyType = "ENTREZID",
+  ont = "BP",          
+  pAdjustMethod = "BH",
+  pvalueCutoff = 0.05,
+  qvalueCutoff = 0.2,
+  readable = TRUE       
+)
+
+# View results
+gobb_df <- as.data.frame(gobp_enrich)
+DT::datatable(gobb_df, options = list(scrollX = TRUE))
+```
+
+```{r, fig.height=13, fig.width=7}
+# Dotplot of top GO terms
+dotplot(gobp_enrich, showCategory = 20) + ggtitle("GO Biological Process")
+```
+
+## Visulaise other genes of interest
+
+```{r, message=FALSE, warning=FALSE, fig.height=20, fig.width=20}
+# Visualise feature expression according to the original study
+
+# 1. Define genes of interest
+features <- c("Myc", "Ly6a", "Mki67", "Ccr7", "Cxcr5", "Il10", "Ctla4", "Egr1", "Cd274", "Cd93")
+
+# 2. Compute global min and max expression across all selected genes
+expr_matrix <- GetAssayData(seurat, assay = "RNA", layer = "data")
+expr_min <- min(expr_matrix)
+expr_max <- max(expr_matrix)
+
+# 3. Generate plots
+feature_plots <- lapply(features, function(gene) {
+  
+  # Return individual ggplots for each split
+  plt_list <- FeaturePlot(
+    seurat,
+    features = gene,
+    reduction = "umap",
+    pt.size = 1,
+    split.by = "model",
+    combine = FALSE,         # IMPORTANT: return list of ggplots
+    keep.scale = "feature"
+  )
+  
+  # Apply the same global colour scale and labels to each split
+  plt_list <- lapply(plt_list, function(x) {
+    x + 
+      scale_color_viridis_c(
+        option = "viridis",
+        limits = c(0, 2)  # same scale for all
+      ) +
+      labs(y = "UMAP 2", x = "UMAP 1", title = gene)
+  })
+  
+  # Combine splits for the same gene
+  wrap_plots(plt_list)
+})
+
+# 4. Combine all genes and keep only one legend
+combined_plot <- wrap_plots(feature_plots, ncol = 2, guides = "collect")
+
+# 5. Make legend appear once, at the bottom
+combined_plot & theme(legend.position = "bottom")
+```
+
+# Session Information
+
+```{r}
+sessionInfo()
+```
+
+

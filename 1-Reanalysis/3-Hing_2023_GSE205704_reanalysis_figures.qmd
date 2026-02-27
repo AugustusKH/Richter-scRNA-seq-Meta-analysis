@@ -1,0 +1,824 @@
+---
+title: "GSE205704_reanalysis_figures"
+author: "Pakorn Sagulkoo"
+format:
+  html:
+    embed-resources: true
+editor: visual
+---
+
+## Import the relevant packages and set working path directory
+
+```{r, setup, message=FALSE, warning=FALSE}
+# Attach the packages you will need for the analysis.
+library(blaseRtools)
+library(blaseRdata)
+library(monocle3)
+library(Seurat)
+library(SeuratDisk)
+library(patchwork)
+library(tidyverse)
+library(cowplot)
+library(fastSave)
+library(conflicted)
+library(blaseRtemplates)
+library(circlize)
+library(ComplexHeatmap)
+library(lazyData)
+library(RColorBrewer)
+library(ggrepel)
+library(ggpubr)
+library(rstatix)
+library(knitr)
+library(pander)
+library(SingleCellExperiment)
+library(gridExtra)
+library(ggtext)
+conflicts_prefer(base::setdiff)
+```
+
+```{r}
+# Load module pigz from bash to R
+Sys.setenv(PATH = paste("/software/apps/pigz/2.8/bin", Sys.getenv("PATH"), sep = ":"))
+system("which pigz")
+```
+
+```{r}
+the_font_size <- 10
+theme_set(theme_cowplot(font_size = the_font_size))
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Resolve conflicting function names 
+conflict_prefer("filter", "dplyr")
+conflict_prefer("lag", "dplyr")
+conflict_prefer("select", "dplyr")
+conflict_prefer("rename", "dplyr")
+conflict_prefer("count", "dplyr")
+conflict_prefer("rowRanges", "MatrixGenerics")
+conflict_prefer("reduce", "purrr")
+```
+
+```{r}
+# Set working path
+setwd("/mnt/hp-storage/users/pakorns/scRNAseq/GSE205704/")
+getwd()
+```
+
+```{r}
+# Graphical parameters 
+heatmap_3_colors <- c("#313695","white","#A50026") # 3 color heatmap
+```
+
+## Load the analysed object
+
+```{r}
+# Load the object
+load.pigz("cds_main_filtered.rda")
+```
+
+```{r}
+# Create Disease_tissue column in cds
+cds_main_adapted <- cds_main_filtered
+colData(cds_main_adapted)$disease_tissue <-
+  paste0(colData(cds_main_adapted)$disease, " ", colData(cds_main_adapted)$tissue)
+
+# Reordering group factor levels - For following graphing order
+cds_main_adapted$disease_tissue <- factor(cds_main_adapted$disease_tissue,
+                                  levels = c("CLL PBMC", "RT PBMC", "RT LN"))
+
+colData(cds_main_adapted)$partition_assignment_1 <-
+  recode(
+    colData(cds_main_adapted)$partition,
+    "1" = "B",
+    "2" = "B",
+    "3" = "B",
+    "4" = "T",
+    "5" = "T",
+    "6" = "Mono",
+    "7" = "B",
+    "8" = "T",
+    "9" = "T",
+    "10" = "T",
+    "11" = "B"
+  )
+
+colData(cds_main_adapted)$f1d_lbl <- paste0(
+  colData(cds_main_adapted)$disease_tissue, "-", recode(colData(cds_main_adapted)$patient, "pt_2712" = "Pt 1", "pt_1245" = "Pt 2"))
+colData(cds_main_adapted)$patient <- recode(colData(cds_main_adapted)$patient, "pt_2712" = "Pt 1", "pt_1245" = "Pt 2")
+```
+
+## Figure 1A
+
+```{r, message=FALSE, warning=FALSE}
+F1AP1 <-
+  bb_var_umap(
+    filter_cds(cds_main_adapted, cells = bb_cellmeta(cds_main_adapted) |> filter(patient == "Pt 1")),
+    "partition_assignment_1", overwrite_labels = T,
+    facet_by = "disease_tissue"
+  ) +
+  theme(
+    axis.line.x = element_blank(),
+    axis.ticks.x = element_blank(),
+    axis.text.x = element_blank(),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank()
+  ) +
+  theme(panel.background = element_rect(color = "black")) +
+  theme(plot.margin = unit(c(0, 0, 0, 0), "cm"))
+
+F1AP2 <- bb_var_umap(filter_cds(cds_main_adapted, cells = bb_cellmeta(cds_main_adapted) |> filter(patient == "Pt 1")),
+                     "log_local_n",
+                     facet_by = "disease_tissue") +
+  theme(strip.text = element_blank()) +
+  theme(
+    axis.line.x = element_blank(),
+    axis.ticks.x = element_blank(),
+    axis.text.x = element_blank(),
+    axis.title.x = element_blank()
+  ) +
+  theme(panel.background = element_rect(color = "black")) +
+  labs(color = "Log<sub>10</sub><br>Cells") +
+  theme(legend.title=element_text(size=9))+
+  theme(legend.key.size = unit(0.4,"cm"))+
+  theme(legend.title = ggtext::element_markdown())
+
+F1AP3 <- bb_gene_umap(filter_cds(cds_main_adapted, cells = bb_cellmeta(cds_main_adapted) |> filter(patient == "Pt 1")),
+                      gene_or_genes = "PRMT5") +
+  facet_wrap( ~ disease_tissue) +
+  theme(strip.text = element_blank()) +
+  theme(
+    axis.title.y = element_blank()
+  ) +
+  theme(panel.background = element_rect(color = "black")) +
+  labs(color = "*PRMT5*") +
+  theme(legend.title=element_text(size=9))+
+  theme(legend.key.size = unit(0.4,"cm"))+
+  theme(legend.title = ggtext::element_markdown())+ 
+  theme(plot.margin = unit(c(0.2, 0, 0, 0), "cm"))
+```
+
+```{r, fig.height=6, fig.width=6.5}
+F1A <- F1AP1/F1AP2/F1AP3
+F1A
+```
+
+## Figure 1D
+
+```{r, message=FALSE, warning=FALSE}
+F1D0 <- bb_var_umap(filter_cds(cds_main_adapted, cells = bb_cellmeta(cds_main_adapted) |> filter(disease_tissue == "RT LN")),
+                    "partition_assignment_1", facet_by = "f1d_lbl", overwrite_labels = T) +
+    theme(
+    axis.line.x = element_blank(),
+    axis.ticks.x = element_blank(),
+    axis.text.x = element_blank(),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank()
+  )+
+  theme(panel.background = element_rect(color = "black"))+ 
+  theme(plot.margin = unit(c(0, 0, 0, 0), "cm"))
+
+F1D1<- bb_var_umap(filter_cds(cds_main_adapted, cells = bb_cellmeta(cds_main_adapted) |> filter(disease_tissue == "RT LN")),
+                   "density", facet_by = "f1d_lbl") + 
+  theme(strip.text = element_blank()) +
+  theme(
+    axis.line.x = element_blank(),
+    axis.ticks.x = element_blank(),
+    axis.text.x = element_blank(),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+  ) +
+  theme(panel.background = element_rect(color = "black")) +
+  labs(color = "*Density*") +
+  theme(legend.title=element_text(size=9))+
+  theme(legend.key.size = unit(0.3,"cm"))+
+  theme(legend.title = ggtext::element_markdown())+ 
+  theme(plot.margin = unit(c(0, 0, 0, 0), "cm"))
+
+F1D2<- bb_gene_umap(
+  filter_cds(cds_main_adapted, cells = bb_cellmeta(cds_main_adapted) |> filter(disease_tissue == "RT LN")), 
+  gene_or_genes = c("PRMT5") 
+) + facet_wrap(~f1d_lbl)+
+  theme(strip.text = element_blank()) +
+  theme(
+    axis.line.x = element_blank(),
+    axis.ticks.x = element_blank(),
+    axis.text.x = element_blank(),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+  ) +
+  theme(panel.background = element_rect(color = "black")) +
+  labs(color = "*PRMT5*") +
+  theme(legend.title=element_text(size=9))+
+  theme(legend.key.size = unit(0.3,"cm"))+
+  theme(legend.title = ggtext::element_markdown())+ 
+  theme(plot.margin = unit(c(0, 0, 0, 0), "cm"))
+
+F1D3<- bb_gene_umap(
+  filter_cds(cds_main_adapted, cells = bb_cellmeta(cds_main_adapted) |> filter(disease_tissue == "RT LN")), 
+  gene_or_genes = c("MYC")
+) + facet_wrap(~f1d_lbl)+
+  theme(strip.text = element_blank()) +
+  theme(
+    axis.line.x = element_blank(),
+    axis.ticks.x = element_blank(),
+    axis.text.x = element_blank(),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank()
+  ) +
+  theme(panel.background = element_rect(color = "black")) +
+  labs(color = "*MYC*") +
+  theme(legend.title=element_text(size=9))+
+  theme(legend.key.size = unit(0.3,"cm"))+
+  theme(legend.title = ggtext::element_markdown())+ 
+  theme(plot.margin = unit(c(0, 0, 0, 0), "cm"))
+
+F1D4 <- bb_gene_umap(
+  filter_cds(cds_main_adapted, cells = bb_cellmeta(cds_main_adapted) |> filter(disease_tissue == "RT LN")), 
+  gene_or_genes = c("MKI67")
+) + facet_wrap(~f1d_lbl)+
+  theme(strip.text = element_blank()) +
+  theme(
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank()
+  ) +
+  theme(panel.background = element_rect(color = "black")) +
+  labs(color = "*MKI67*") +
+  theme(legend.title=element_text(size=8)) +
+  theme(legend.key.size = unit(0.3,"cm"))+
+  theme(legend.title = ggtext::element_markdown())+ 
+  theme(plot.margin = unit(c(0, 0, 0, 0), "cm"))
+
+F1D <-
+  as_ggplot(grid.arrange(
+    patchworkGrob(F1D0 / F1D1 / F1D2 / F1D3 / F1D4),
+    left = textGrob(F1D3$labels$y, rot=90, vjust = 1.5, hjust=0.35),
+    bottom = textGrob(F1D3$labels$x, hjust = 0.8, vjust = -0.5))
+  )
+```
+
+```{r, fig.height=8, fig.width=4.5}
+F1D
+```
+
+## Supplemental Figure 1F 
+
+```{r}
+# Make logical values for PRMT5+MYC+, PRMT5+/MKI67+, and PRMT5+/MYC+/MKI67+ cells
+mat <- monocle3::exprs(cds_main_adapted)
+
+PRMT5_tbl <- colnames(mat[ ,mat["ENSG00000100462", ] > 0]) |> as_tibble() |> mutate(prmt5_pos = TRUE) |> rename(cell_id = value)
+cds_main_adapted <- bb_tbl_to_coldata(cds_main_adapted, min_tbl = PRMT5_tbl)
+
+MYC_tbl <- colnames(mat[ ,mat["ENSG00000136997", ] > 0]) |> as_tibble() |> mutate(myc_pos = TRUE) |> rename(cell_id = value)
+cds_main_adapted <- bb_tbl_to_coldata(cds_main_adapted, min_tbl = MYC_tbl)
+
+MKI67_tbl <- colnames(mat[ ,mat["ENSG00000148773", ] > 0]) |> as_tibble() |> mutate(mki67_pos = TRUE) |> rename(cell_id = value)
+cds_main_adapted <- bb_tbl_to_coldata(cds_main_adapted, min_tbl = MKI67_tbl)
+
+colData(cds_main_adapted)$prmt5_myc_pos <- colData(cds_main_adapted)$prmt5_pos & colData(cds_main_adapted)$myc_pos
+colData(cds_main_adapted)$prmt5_mki67_pos <- colData(cds_main_adapted)$prmt5_pos & colData(cds_main_adapted)$mki67_pos  
+colData(cds_main_adapted)$prmt5_myc_mki67_pos <- colData(cds_main_adapted)$prmt5_pos & colData(cds_main_adapted)$mki67_pos & colData(cds_main_adapted)$myc_pos  
+
+cds_main_adapted <- bb_cellmeta(cds_main_adapted) |> 
+  filter(prmt5_pos) |> 
+  select(cell_id) |> 
+  mutate(prmt5_label = "PRMT5+ cells") |> 
+  bb_tbl_to_coldata(cds_main_adapted, min_tbl = _)
+cds_main_adapted <- bb_cellmeta(cds_main_adapted) |> 
+  filter(prmt5_myc_pos) |> 
+  select(cell_id) |> 
+  mutate(prmt5_myc_label = "PRMT5+/MYC+ cells") |> 
+  bb_tbl_to_coldata(cds_main_adapted, min_tbl = _)
+cds_main_adapted <- bb_cellmeta(cds_main_adapted) |> 
+  filter(prmt5_mki67_pos) |> 
+  select(cell_id) |> 
+  mutate(prmt5_mki67_label = "PRMT5+/MKI67+ cells") |> 
+  bb_tbl_to_coldata(cds_main_adapted, min_tbl = _)
+cds_main_adapted <- bb_cellmeta(cds_main_adapted) |> 
+  filter(prmt5_myc_mki67_pos) |> 
+  select(cell_id) |> 
+  mutate(prmt5_myc_mki67_label = "PRMT5+/MYC+/MKI67+ cells") |> 
+  bb_tbl_to_coldata(cds_main_adapted, min_tbl = _)
+```
+
+```{r}
+S1F1 <-bb_var_umap(
+  filter_cds(cds_main_adapted, cells= bb_cellmeta(cds_main_adapted) |> filter(disease_tissue == "RT LN")),
+  "prmt5_label",
+  #facet_by = "disease_tissue",
+  value_to_highlight = "PRMT5+ cells",
+  palette = "#481F70FF", 
+  legend_pos = "bottom", 
+  foreground_alpha = 0.6
+) +
+  #theme(axis.text = element_blank()) +
+  #theme(axis.ticks = element_blank()) +
+  #labs(x = "UMAP 1", y= "UMAP 2") + 
+  labs(y=NULL,x=NULL) +theme(legend.position = "right") + 
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+  theme(panel.background = element_rect(color = "black", fill = "white"))
+
+S1F2<- bb_var_umap(
+  filter_cds(cds_main_adapted, cells= bb_cellmeta(cds_main_adapted) |> filter(disease_tissue == "RT LN")),
+  "prmt5_myc_label",
+  #facet_by = "disease_tissue",
+  value_to_highlight = "PRMT5+/MYC+ cells",
+  palette = "#365D8DFF", 
+  legend_pos = "bottom", 
+  foreground_alpha = 0.6
+) +
+  #theme(axis.text = element_blank()) +
+  #theme(axis.ticks = element_blank()) +
+  labs(x = "UMAP 1", y= "UMAP 2") + labs(y=NULL,x=NULL) +theme(legend.position = "right")+ 
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+  theme(panel.background = element_rect(color = "black", fill = "white"))
+
+S1F3<-bb_var_umap(
+  filter_cds(cds_main_adapted, cells= bb_cellmeta(cds_main_adapted) |> filter(disease_tissue == "RT LN")),
+  "prmt5_mki67_label",
+  #facet_by = "disease_tissue",
+  value_to_highlight = "PRMT5+/MKI67+ cells",
+  palette = "#21908CFF", 
+  legend_pos = "bottom", 
+  foreground_alpha = 0.6
+) +
+  #theme(axis.text = element_blank()) +
+  #theme(axis.ticks = element_blank()) +
+  labs(x = "UMAP 1", y= "UMAP 2") + labs(y=NULL,x=NULL) +theme(legend.position = "right")+ 
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+  theme(panel.background = element_rect(color = "black", fill = "white"))
+
+S1F4<-bb_var_umap(
+  filter_cds(cds_main_adapted, cells= bb_cellmeta(cds_main_adapted) |> filter(disease_tissue == "RT LN")),
+  "prmt5_myc_mki67_label",
+  #facet_by = "disease_tissue",
+  value_to_highlight = "PRMT5+/MYC+/MKI67+ cells",
+  palette = "#47C16EFF", 
+  legend_pos = "bottom", 
+  foreground_alpha = 0.6
+) +
+  #theme(axis.text = element_blank()) +
+  #theme(axis.ticks = element_blank()) +
+  labs(x = "UMAP 1", y= "UMAP 2") + labs(y=NULL,x=NULL) +theme(legend.position = "right")+ 
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+  theme(panel.background = element_rect(color = "black", fill = "white"))
+```
+
+```{r, fig.height=8, fig.width=4.5}
+S1F1/S1F2/S1F3/S1F4
+```
+
+## Figure 1E
+
+```{r, message=FALSE, warning=FALSE}
+# Compare to Lit data - Nadeu et al
+nadeu_11b <-
+  readxl::read_excel(
+    "41591_2022_1927_MOESM3_ESM.xlsx",
+    sheet = "Supplementary Table 11b",
+    skip = 5,
+    col_names = c(
+      "feature_id",
+      "gene_short_name",
+      "mean",
+      "l2fc",
+      "se",
+      "p",
+      "padj",
+      "direction"
+    )
+  )
+
+cds_main_adapted <- nadeu_11b |> 
+  filter(direction == "Up") |> 
+  filter(padj < 0.05) |> 
+  mutate(feature_id = str_remove(feature_id, "\\..*")) |> 
+  mutate(nadeu_RT_gene = TRUE) |> 
+  bb_tbl_to_rowdata(obj = cds_main_adapted, min_tbl = _)
+
+cds_main_adapted <- nadeu_11b |>
+ filter(direction == "Down") |>
+ filter(padj < 0.05) |>
+ mutate(feature_id = str_remove(feature_id, "\\..*")) |>
+ mutate(nadeu_CLL_gene = TRUE) |>
+ bb_tbl_to_rowdata(obj = cds_main_adapted, min_tbl = _)
+```
+
+```{r, message=FALSE, warning=FALSE}
+F1E1 <- bb_gene_umap(
+  filter_cds(cds_main_adapted, cells = bb_cellmeta(cds_main_adapted) |> filter(patient == "Pt 1")),
+  gene_or_genes = bb_rowmeta(cds_main_adapted) |> select(feature_id, nadeu_RT_gene)
+) +
+  facet_wrap( ~ disease_tissue) +
+  theme(
+    axis.line.x = element_blank(),
+    axis.ticks.x = element_blank(),
+    axis.text.x = element_blank(),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank()
+  ) +
+  theme(panel.background = element_rect(color = "black")) +
+  labs(color = "*RT Gene*<br>Expression") +
+  theme(legend.title = ggtext::element_markdown())
+
+F1E2 <- bb_gene_umap(
+  filter_cds(cds_main_adapted, cells = bb_cellmeta(cds_main_adapted) |> filter(patient == "Pt 1")),
+  gene_or_genes = bb_rowmeta(cds_main_adapted) |> select(feature_id, nadeu_CLL_gene)
+) +
+  facet_wrap( ~ disease_tissue) +
+  theme(strip.text = element_blank()) +
+  theme(axis.title.x = element_blank(),
+        axis.title.y = element_blank()) +
+  theme(panel.background = element_rect(color = "black")) +
+  labs(color = "*CLL Gene*<br>Expression") +
+  theme(legend.title = ggtext::element_markdown())
+
+F1E <-
+  as_ggplot(grid.arrange(
+    patchworkGrob(F1E1 / F1E2),
+    left = F1E1$labels$y,
+    bottom = textGrob(F1E1$labels$x, hjust = 0.85, vjust = -1)
+  ))
+```
+
+```{r}
+F1E
+```
+
+## Figure 1F
+
+```{r, message=FALSE, fig.height=4, fig.width=5}
+F1F <- bb_var_umap(filter_cds(cds_main_adapted,
+                               cells = bb_cellmeta(cds_main_adapted) |>
+                                 filter(disease_tissue == "RT LN")), "leiden", overwrite_labels = T
+  ) + labs(title = "Combined RT LN")
+
+F1F
+```
+
+## Figure 1G
+
+```{r, message=FALSE, warning=FALSE, results='hide'}
+# Top markers
+LN_B_leiden_Top50_tm <- monocle3::top_markers(
+  filter_cds(
+    cds_main_adapted,
+    cells = bb_cellmeta(cds_main_adapted) |>
+      filter(disease_tissue == "RT LN") |>
+      filter(partition_assignment_1 == "B")),
+    group_cells_by = "leiden",
+    genes_to_test_per_group = 50,
+    cores = 12)
+
+markers <- LN_B_leiden_Top50_tm |> filter(cell_group %in% c("5","10")) |> pull(gene_short_name)
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Subsetting
+ln_cds<-cds_main_adapted[,colData(cds_main_adapted)$disease_tissue == "RT LN" &
+                   colData(cds_main_adapted)$partition_assignment_1 == "B"]
+
+f1_mat <- bb_aggregate(obj = filter_cds(ln_cds,
+                                        cells = bb_cellmeta(ln_cds) |>
+                                          filter(leiden %in% c('5','10','3','4','9','1','2')),
+                                        genes = bb_rowmeta(ln_cds) |>
+                                          filter(gene_short_name %in% markers)),
+                       cell_group_df = bb_cellmeta(ln_cds) |>
+                         select(cell_id, leiden)) |>
+  t() |>
+  scale() |>
+  t()
+
+rownames(f1_mat) <- tibble(feature_id = rownames(f1_mat)) |>
+  left_join(bb_rowmeta(ln_cds) |>
+              select(feature_id, gene_short_name)) |>
+  pull(gene_short_name)
+```
+
+```{r}
+f1_colfun = circlize::colorRamp2(breaks = c(min(f1_mat),
+                                            0,
+                                            max(f1_mat)),
+                                 colors = heatmap_3_colors)
+
+F1_highlights <- c("CCNA2", "HMGB2", "NPM1", "TUBB", "CDK1", "MKI67", "TUBA1B", "TUBA1C", "TCL1A", "TOP2A", "BIRC5", "JUNB", "UBE2S", "UBE2C", "STMN1", "CKS1B", "MS4A1", "GAPDH", "PFDN5", "BTG1", "UBC", "CD19", "AURKB", "CCR7", "KLF2", "ZFP36", "CD37", "XBP1", "RAC2", "GAS5", "BUB1", "HMMR", "CDKN2A", "ANP32B", "IGHG3", "PLK1", "TPX2", "AURKA")
+
+# Transpose the matrix
+f1_mat_t <- t(f1_mat)
+
+# Create new annotation for column (now genes are columns)
+f1_col_anno <- ComplexHeatmap::HeatmapAnnotation(
+  link = anno_mark(
+    at = which(colnames(f1_mat_t) %in% F1_highlights),
+    labels = colnames(f1_mat_t)[colnames(f1_mat_t) %in% F1_highlights],
+    labels_gp = gpar(fontsize = 6),
+    padding = unit(4.5, "mm")
+  )
+)
+
+# Draw the heatmap (now clusters are rows, genes are columns)
+F1G <- grid.grabExpr(draw(
+  ComplexHeatmap::Heatmap(f1_mat_t,
+    col = f1_colfun,
+    name = "Expression", 
+    show_column_names = FALSE,
+    top_annotation = f1_col_anno,
+    row_dend_side = "left",           # cluster dendrogram on the left
+    column_dend_side = "bottom",      # gene dendrogram at the bottom
+    column_dend_height = unit(2, "mm"),
+    row_dend_width = unit(4, "mm"),
+    heatmap_legend_param = list(
+      legend_direction = "vertical",
+      title_position = "topleft", 
+      title_gp = gpar(fontsize = 6)
+    )
+  ),
+  heatmap_legend_side = "left"  # << Move legend to the left
+))
+```
+
+```{r, fig.height=4, fig.width=12}
+F1FG <- (F1F | F1G) +
+  plot_layout(widths = c(1, 2.5))
+F1FG
+```
+
+## Supplemental Figure 1B
+
+```{r, message=FALSE, fig.height=4, fig.width=5}
+# Cell type annotation (all)
+bb_var_umap(cds_main_adapted, "partition_assignment_1", overwrite_labels = T) +
+  labs(title = "All cell type annotation")
+```
+
+```{r, message=FALSE, fig.height=4, fig.width=5}
+# Leiden clustering
+bb_var_umap(cds_main_adapted, "leiden", overwrite_labels = T) +
+  labs(title = "Leiden clustering")
+```
+
+```{r, message=FALSE, warning=FALSE}
+S1B <- bb_genebubbles(
+  cds_main_adapted,
+  genes = c("CD14","CD4","CD8A", "CD3E", "CD79A", "MS4A1", "CD19"
+  ),
+  cell_grouping = c("leiden", "partition_assignment_1"),
+  return_value = "data"
+) |> 
+  ggplot(mapping = aes(x = leiden, 
+                       y = gene_short_name, 
+                       color = expression,
+                       size = proportion)) +
+  geom_point() +
+  scale_size_area() +
+  scale_color_viridis_c() +
+  facet_wrap(~partition_assignment_1, scales = "free_x", ) +
+  theme_minimal_grid(font_size = 8) +
+  theme(strip.background = ggh4x::element_part_rect(side = "b", colour = "black", fill = "transparent")) +
+  theme(axis.text.y = element_text(face = "italic")) +
+  labs(x = NULL, y = NULL, size = "Proportion", color = "Expression")
+```
+
+```{r, fig.height=4, fig.width=10}
+S1B
+```
+
+## Supplemental Figure 1G
+
+```{r, message=FALSE, fig.height=4, fig.width=12}
+S1G <- bb_var_umap(cds_main_adapted, "leiden", overwrite_labels = T, facet_by= "disease_tissue")
+S1G
+```
+
+## Figure 1H: Pseudobulk Volcano
+
+```{r}
+# Leiden_assignment_2 assigned w/S1E & F1E1
+colData(cds_main_adapted)$leiden_assignment_2 <-
+  recode(
+    colData(cds_main_adapted)$leiden,
+    "1" = "CLL_B",
+    "2" = "CLL_B",
+    "3" = "Int_PBMC_B",
+    "4" = "Int_LN_B",
+    "5" = "RT_B",
+    "6" = "T",
+    "7" = "T",
+    "8" = "T",
+    "9" = "Int_LN_B",
+    "10" = "RT_B",
+    "11" = "T",
+    "12" = "T",
+    "13" = "T",
+    "14" = "Mono",
+    "15" = "RT_B",
+    "16" = "CLL_B",
+    "17" = "T",
+    "18" = "T",
+    "19" = "B",
+    "20" = "T",
+    "21" = "T",
+    "22" = "B",
+    "23" = "T",
+    "24" = "B"
+  )
+```
+
+```{r, message=FALSE, warning=FALSE}
+exp_design <- 
+  bb_cellmeta(cds_main_adapted) |>
+  group_by(disease_tissue, leiden_assignment_2) |>
+  summarise()
+#exp_design
+
+pseudobulk_res <-
+  bb_pseudobulk_mf(cds = cds_main_adapted,
+                   pseudosample_table = exp_design, 
+                   design_formula = "~ leiden_assignment_2",
+                   result_recipe = c("leiden_assignment_2", "RT_B", "CLL_B"))
+```
+
+```{r}
+# Differential expression results.
+genes_to_highlight <- unique(c("FOSB", "PRMT5","FOXM1", F1_highlights))
+genes_to_highlight <- genes_to_highlight[genes_to_highlight %in% (filter(pseudobulk_res$Result, padj < 0.1 & abs(log2FoldChange) >= 0.58)|>pull(gene_short_name))]
+
+volcano_data_RTvCLL <- pseudobulk_res$Result %>%
+  mutate(threshold = padj < 0.1 & abs(log2FoldChange) >= 0.58) %>%
+  mutate(text_label = ifelse(gene_short_name %in% genes_to_highlight, gene_short_name, ""))
+```
+
+```{r}
+F1H <-
+  ggplot(
+    volcano_data_RTvCLL,
+    aes(
+      x = log2FoldChange,
+      y = -log10(padj),
+      colour = threshold,
+      fill = threshold,
+      label = text_label
+    )
+  ) +
+  geom_point(shape = 21,
+             size = 0.5,
+             alpha = 0.4) +
+  geom_text_repel(color = "black",
+                  fontface = "italic",
+                  box.padding = 0.22, #0.5
+                  point.padding = 0.1, #0.25
+                  min.segment.length = 0,
+                  max.overlaps = 20000,
+                  size = 3,
+                  segment.size = 0.25,
+                  force = 2,
+                  seed = 1234,
+                  segment.curvature = -0.1,
+                  segment.square = TRUE,
+                  segment.inflect = TRUE) +
+  xlab("log<sub>2</sub> fold change") +
+  ylab("-log<sub>10</sub> adjusted p-value") +
+  theme(axis.title.x =  element_markdown()) +
+  theme(axis.title.y = element_markdown()) +
+  theme(legend.position = "none") +
+  scale_color_manual(values = c("grey80", "#DC0000")) +
+  scale_fill_manual(values = c("transparent", "#DC0000")) +
+  labs(caption = "\U21D0 Up in CLL\nUp in RT \U21D2",title = "Pseudobulk:RT clusters 5 & 10 vs CLL clusters 1, 2 & 16")+
+  theme(plot.caption.position = "panel") +
+  theme(plot.caption = element_text(hjust = 0.5)) +
+  theme(plot.title = element_text(hjust = 0.5)) +
+    coord_cartesian(xlim = c(-1.0*max(abs(range(volcano_data_RTvCLL %>% dplyr::filter(!is.na(padj)) %>% pull(log2FoldChange)))), 1.0*max(abs(range(volcano_data_RTvCLL %>% filter(!is.na(padj)) %>% pull(log2FoldChange))))))
+```
+
+```{r, warning=FALSE}
+F1H
+```
+
+## GSEA functional enrichment analysis
+
+```{r, message=FALSE, warning=FALSE}
+# Import the related libraries in functional enrichment analysis
+library(clusterProfiler)
+library(org.Hs.eg.db)
+library(enrichplot)
+library(msigdbr)
+```
+
+```{r}
+# Hallmark set
+hs_hm_sets <- read.csv("/mnt/hp-storage/users/pakorns/scRNAseq/GSE201704/GSM6069857/hs_hm_sets.csv")
+
+# GO:BP set
+hs_go_sets <- read.csv("/mnt/hp-storage/users/pakorns/scRNAseq/GSE201704/GSM6069857/hs_go_sets.csv")
+```
+
+```{r}
+# Manipulate the expression data
+res <- pseudobulk_res[["Result"]]
+lfc_vector <- res$log2FoldChange # Create a named vector ranked based on the log2 fold change
+names(lfc_vector) <- res$id
+lfc_vector <- na.omit(lfc_vector) # Omit any NA values
+lfc_vector <- sort(lfc_vector, decreasing = TRUE) # Sort the log2 fold change in descending order
+```
+
+### Hallmark
+
+```{r, message=FALSE, warning=FALSE}
+# Run GSEA (Hallmarks)
+set.seed(2020)
+HM_gse <- GSEA(
+  geneList = lfc_vector, # Ordered ranked gene list
+  minGSSize = 25, # Minimum gene set size
+  maxGSSize = 500, # Maximum gene set set
+  pvalueCutoff = 0.05, # p-value cutoff
+  eps = 0, # Boundary for calculating the p value
+  seed = TRUE, # Set seed to make results reproducible
+  pAdjustMethod = "BH", # Benjamini-Hochberg correction
+  TERM2GENE = dplyr::select(
+    hs_hm_sets,
+    gs_name,
+    ensembl_gene
+  )
+)
+```
+
+```{r}
+# Collect the GSEA result
+HM_GSEA.result <- HM_gse@result
+HM_GSEA.result
+```
+
+```{r, fig.height=4, fig.width=18}
+# GSEA plot for HALLMARK_E2F_TARGETS, HALLMARK_MYC_TARGETS_V1, and HALLMARK_INTERFERON_GAMMA_RESPONSE
+
+E2F_gsea.plt <- gseaplot(HM_gse, 
+                          by = "runningScore", 
+                          title = "HALLMARK_E2F_TARGETS", 
+                          geneSetID = "HALLMARK_E2F_TARGETS",
+                          base_size = 10) +
+  theme(axis.text.x = element_text(angle = 0, hjust = 1))
+
+Myc_gsea.plt <- gseaplot(HM_gse, 
+                          by = "runningScore", 
+                          title = "HALLMARK_MYC_TARGETS_V1", 
+                          geneSetID = "HALLMARK_MYC_TARGETS_V1",
+                          base_size = 10) +
+  theme(axis.text.x = element_text(angle = 0, hjust = 1))
+
+InterferonGamma_response_gsea.plt <- gseaplot(HM_gse, 
+                          by = "runningScore", 
+                          title = "HALLMARK_INTERFERON_GAMMA_RESPONSE", 
+                          geneSetID = "HALLMARK_INTERFERON_GAMMA_RESPONSE",
+                          base_size = 10) +
+  theme(axis.text.x = element_text(angle = 0, hjust = 1))
+
+E2F_gsea.plt + Myc_gsea.plt + InterferonGamma_response_gsea.plt
+```
+
+### GO:BP
+
+```{r, message=FALSE, warning=FALSE}
+# GSEA in GO-BP term
+set.seed(2020)
+GOBP_gsea <- GSEA(
+  geneList = lfc_vector, # Ordered ranked gene list
+  minGSSize = 25, # Minimum gene set size
+  maxGSSize = 500, # Maximum gene set set
+  pvalueCutoff = 0.05, # p-value cutoff
+  eps = 0, # Boundary for calculating the p value
+  seed = TRUE, # Set seed to make results reproducible
+  pAdjustMethod = "BH", # Benjamini-Hochberg correction
+  TERM2GENE = dplyr::select(
+    hs_go_sets,
+    gs_name,
+    ensembl_gene
+  )
+)
+```
+
+```{r}
+# Collect the GSEA result
+GOBP_GSEA.result <- GOBP_gsea@result
+GOBP_GSEA.result %>%
+  as_tibble() %>%
+  select(c(Description, NES, pvalue, p.adjust))
+```
+
+```{r, fig.height=3, fig.width=6}
+# GSEA plot for GOBP_CELLULAR_RESPONSE_TO_BIOTIC_STIMULUS
+
+cellular_to_biotic_gsea.plt <- gseaplot(GOBP_gsea, 
+                          by = "runningScore", 
+                          title = "GOBP_CELLULAR_RESPONSE_TO_BIOTIC_STIMULUS", 
+                          geneSetID = "GOBP_CELLULAR_RESPONSE_TO_BIOTIC_STIMULUS",
+                          base_size = 10) +
+  theme(axis.text.x = element_text(angle = 0, hjust = 1))
+
+cellular_to_biotic_gsea.plt 
+```
+
+
+
+
+

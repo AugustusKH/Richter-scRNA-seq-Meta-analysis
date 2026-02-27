@@ -1,0 +1,180 @@
+---
+title: "Parry_2023b_all_joint_clusters"
+author: "Pakorn Sagulkoo"
+format:
+  html:
+    toc: true
+    toc-location: left
+    embed-resources: true
+editor: visual
+---
+
+# Import the relevant packages and set working path directory
+
+```{r, setup, message=FALSE, warning=FALSE}
+# Attach the packages you will need for the analysis.
+library(Matrix)
+library(igraph)
+library(pagoda2)
+library(dplyr)
+library(ggplot2)
+library(ggrepel)
+library(patchwork)
+library(conos)
+library(stringr)
+```
+
+```{r}
+# Check root path
+here::here()
+```
+
+# Define paths
+
+```{r}
+path_to_sample_metadata <- here::here("scRNAseq/phs002458.v2.p1/metadata/metadata.csv")
+path_to_obj <- here::here("scRNAseq/phs002458.v2.p1/reanalysis/R_objects/pagoda2_objects/")
+path_to_cell_metadata <- here::here("scRNAseq/phs002458.v2.p1/reanalysis/metadata/pagoda2_cell_metadata/")
+path_to_save_obj <- here::here("scRNAseq/phs002458.v2.p1/reanalysis/R_objects/1-all_joint_clusters_conos.rds")
+path_to_save_cell_metadata <- here::here("scRNAseq/phs002458.v2.p1/reanalysis/metadata/1-all_joint_clusters_cell_metadata.rds")
+```
+
+# Load data
+
+```{r}
+# List the file names
+obj_files_to_load <- list.files(path_to_obj) # list object file names
+cell_meta_files_to_load <- list.files(path_to_cell_metadata) # list cell metadata file names
+```
+
+```{r}
+# Load the objects and collect in a list
+gem_ids <- obj_files_to_load %>%
+  str_remove("pagoda2_") %>%
+  str_remove(".rds")
+obj_files_to_load2 <- str_c(path_to_obj , obj_files_to_load, sep = "")
+panel.preprocessed <- purrr::map(obj_files_to_load2, function(path) {
+  pagoda2_obj <- readRDS(path)
+  pagoda2_obj
+})
+names(panel.preprocessed) <- gem_ids
+```
+
+```{r}
+# Load the cell metadata from all pagoda2 objects
+gem_ids2 <- cell_meta_files_to_load %>%
+  str_remove("cellmetadata_") %>%
+  str_remove(".rds")
+cell_meta_files_to_load2 <- str_c(path_to_cell_metadata , cell_meta_files_to_load, sep = "")
+cell_metada.list <- purrr::map(cell_meta_files_to_load2, function(path) {
+  pagoda2_cell_metadata <- readRDS(path)
+  pagoda2_cell_metadata
+})
+names(cell_metada.list) <- gem_ids2
+```
+
+```{r}
+# Combine all cell metadata together
+cell_metadata_combined <- bind_rows(cell_metada.list) # rbind
+```
+
+# Integrate data with conos
+
+```{r}
+# Check barcode names for the first object in the list
+head(rownames(panel.preprocessed[[1]]$counts))
+```
+
+```{r}
+# Check duplicated barcode names
+any(duplicated(unlist(lapply(panel.preprocessed, function(obj) rownames(obj$counts)))))
+```
+
+```{r, eval=FALSE}
+# Create a Conos object
+con <- Conos$new(panel.preprocessed, n.cores=1)
+```
+
+## Build the joint graph
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Build the joint graph
+con$buildGraph(k=30, k.self=5, space='PCA', ncomps=30, n.odgenes=2000, matching.method='mNN', metric='angular', score.component.variance=TRUE, verbose=TRUE)
+```
+
+## Graph-based clustering
+
+```{r, eval=FALSE}
+# Clustering
+set.seed(1234)
+con$findCommunities(method=leiden.community, resolution=0.5)
+```
+
+```{r, eval=FALSE}
+# Add clustering results to the cell metadata
+cell_metadata_combined$leiden_cluster <- con$clusters$leiden$groups[rownames(cell_metadata_combined)] 
+
+# Rename in some columns
+colnames(cell_metadata_combined)[colnames(cell_metadata_combined) == "sra_id_col"] <- "sra_id"
+colnames(cell_metadata_combined)[colnames(cell_metadata_combined) == "subject_id_col"] <- "subject_id"
+colnames(cell_metadata_combined)[colnames(cell_metadata_combined) == "histologic_type_col"] <- "histologic_type"
+```
+
+## Generate embedding
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Embedding
+con$embedGraph(method='UMAP')
+```
+
+# Visualisation
+
+```{r}
+# Load the object
+con <- readRDS(path_to_save_obj)
+```
+
+## Clustering
+
+```{r}
+# Clustering
+con$plotGraph(alpha=0.1, title="Leiden clusters")
+```
+
+## Subjects
+
+```{r}
+# Plot based on subjects
+subject_id.vec <- setNames(cell_metadata_combined$subject_id, row.names(cell_metadata_combined))
+con$plotGraph(alpha=0.1, 
+              groups=subject_id.vec, 
+              title="Subject IDs",
+              show.legend = TRUE, 
+              mark.groups=FALSE) 
+```
+
+## Histological types
+
+```{r}
+# Plot based on histologic origin
+histo.vec <- setNames(cell_metadata_combined$histologic_type, row.names(cell_metadata_combined))
+con$plotGraph(alpha=0.1, 
+              groups=histo.vec, 
+              title="Histological types",
+              show.legend = TRUE) 
+```
+
+# Save the results
+
+```{r, eval=FALSE}
+saveRDS(con, path_to_save_obj)
+saveRDS(cell_metadata_combined, path_to_save_cell_metadata)
+```
+
+# Session Information
+
+```{r}
+sessionInfo()
+```
+
+

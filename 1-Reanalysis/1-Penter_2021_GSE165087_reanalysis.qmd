@@ -1,0 +1,611 @@
+---
+title: "Penter_2021_GSE165087_reanalysis"
+author: "Pakorn Sagulkoo"
+format:
+  html:
+    toc: true
+    toc-location: left
+    embed-resources: true
+editor: visual
+---
+
+# Import relevant packages
+
+```{r}
+library(Seurat)
+library(dplyr)
+library(ggplot2)
+library(ggrepel)
+library(patchwork)
+library(pheatmap)
+library(RColorBrewer)
+```
+
+# Set a working path directory
+
+```{r}
+# Check root path
+here::here()
+```
+
+# Import the merged object
+
+```{r}
+# Load the data
+merged.seu <- readRDS(here::here("scRNAseq/GSE165087/merged_annotated.rds"))
+```
+
+# Visualise cell annotation
+
+## Primary cell annotation
+
+```{r fig.height=4.5, fig.width=6}
+primary_annotation_umap <- DimPlot(merged.seu, reduction = 'umap', group.by = 'singleR.labels_main', raster=FALSE) +
+  labs(y= "UMAP 2", x = "UMAP 1")
+primary_annotation_umap
+```
+
+## Secondary cell annotation
+
+```{r}
+secondary_annotation_umap <- DimPlot(merged.seu, reduction = 'umap', group.by = 'singleR.labels_fine', raster=FALSE) +
+  labs(y= "UMAP 2", x = "UMAP 1")
+secondary_annotation_umap
+```
+
+# Other visualisation
+
+## UMAP based on case origins
+
+```{r fig.height=4.5, fig.width=5}
+case_origin_umap <- DimPlot(merged.seu, reduction = 'umap', group.by = 'case', raster=FALSE, pt.size = 0.5) +
+  labs(y= "UMAP 2", x = "UMAP 1")
+case_origin_umap
+```
+
+## UMAP based on conditions
+
+```{r fig.height=4.5, fig.width=5}
+cond_origin_umap <- DimPlot(merged.seu, reduction = 'umap', group.by = 'cond', raster=FALSE) +
+  labs(y= "UMAP 2", x = "UMAP 1")
+cond_origin_umap
+```
+
+## UMAP based on tissue origins
+
+```{r fig.height=4.5, fig.width=5}
+tissue_origin_umap <- DimPlot(merged.seu, reduction = 'umap', group.by = 'tissue', raster=FALSE) +
+  labs(y= "UMAP 2", x = "UMAP 1")
+tissue_origin_umap
+```
+
+# Proof for reproducibility
+
+## Select Patient 1 to 6 with B cells, and pre- and post-treatment stage
+
+```{r}
+# Explore categorical data in time column
+unique(merged.seu@meta.data$time)
+```
+
+```{r}
+# Select patient 1-6 with B cells, and pre- and post-treatment stage
+selected.seu <- subset(
+  merged.seu, 
+  subset = singleR.labels_main == "B cells" & 
+    case %in% c(1, 2, 3, 4, 5, 6) &
+    time %in% c("Pretreatment_FCR", "Relapse_post_FCR", "Relapse_post_RIC")
+)
+```
+
+```{r}
+# Create a new column which is case-time
+selected.seu$case_time <- paste0("CLL", selected.seu$case, "_", selected.seu$time)
+```
+
+```{r}
+# Count B cells in each case-time condition
+table(selected.seu$case_time)  # replace 'condition' with your actual column name
+```
+
+```{r}
+# Change colour manually
+my_colors <- c(
+  "CLL1_Pretreatment_FCR" = "#a6cee3",   # Pale Blue
+  "CLL1_Relapse_post_FCR" = "#1f78b4",  # Dark Blue
+  "CLL2_Pretreatment_FCR" = "#b2df8a",   # Pale Green
+  "CLL2_Relapse_post_FCR" = "#33a02c",  # Dark Green
+  "CLL3_Pretreatment_FCR" = "#fb9a99",   # Pale Red
+  "CLL3_Relapse_post_FCR" = "#e31a1c",  # Dark Red
+  "CLL4_Pretreatment_FCR" = "#fdbf6f",   # Pale Orange
+  "CLL4_Relapse_post_RIC" = "#ff7f00",  # Dark Orange
+  "CLL5_Pretreatment_FCR" = "#cab2d6",   # Pale Purple
+  "CLL5_Relapse_post_RIC" = "#6a3d9a",  # Dark Purple
+  "CLL6_Pretreatment_FCR" = "#ffff99",   # Pale Yellow
+  "CLL6_Relapse_post_RIC" = "#b15928"   # Dark Brown
+)
+```
+
+```{r fig.height=4.5, fig.width=7}
+# UMAP plot based on case_time
+DimPlot(selected.seu, 
+        reduction = "umap", 
+        group.by = "case_time",
+        raster = FALSE) +
+  scale_color_manual(values = my_colors) +
+  labs(y= "UMAP 2", x = "UMAP 1")
+```
+
+```{r}
+# Find markers
+Idents(selected.seu) <- "case_time" # change the default identity
+seu.markers <- FindAllMarkers(selected.seu, only.pos = TRUE)
+```
+
+```{r}
+# Plot some gene expressions (CD24, MEF2C, CXCR4, RGS1, RGS2)
+CD24_vinplot <- VlnPlot(selected.seu, features = c("CD24"), pt.size = 0, raster = FALSE) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1), legend.position = "none") +
+  scale_fill_manual(values = my_colors)
+MEF2C_vinplot <- VlnPlot(selected.seu, features = c("MEF2C"), pt.size = 0, raster = FALSE) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1), legend.position = "none") +
+  scale_fill_manual(values = my_colors)
+CXCR4_vinplot <- VlnPlot(selected.seu, features = c("CXCR4"), pt.size = 0, raster = FALSE) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1), legend.position = "none") +
+  scale_fill_manual(values = my_colors)
+RGS1_vinplot <- VlnPlot(selected.seu, features = c("RGS1"), pt.size = 0, raster = FALSE) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1), legend.position = "none") +
+  scale_fill_manual(values = my_colors)
+RGS2_vinplot <- VlnPlot(selected.seu, features = c("RGS2"), pt.size = 0, raster = FALSE) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1), legend.position = "none") +
+  scale_fill_manual(values = my_colors)
+```
+
+```{r}
+# Show some gene expressions (CD24, MEF2C) downregulated at relapse phase
+CD24_vinplot + MEF2C_vinplot + patchwork::plot_layout(ncol = 2)
+```
+
+```{r fig.height=4, fig.width=9}
+# Show some gene expressions (CXCR4, RGS1, RGS2) upregulated at relapse phase
+CXCR4_vinplot + RGS1_vinplot + RGS2_vinplot + patchwork::plot_layout(ncol = 3)
+```
+
+```{r}
+# Measure gene expression between pre- and post-treatment
+selected.seu$pre_post <- with(
+  selected.seu@meta.data,
+  ifelse(grepl("pre", time, ignore.case = TRUE), "pre",
+         ifelse(grepl("post", time, ignore.case = TRUE), "post", NA))
+)
+```
+
+```{r}
+# Find markers between pre- and post-treatment  
+Idents(selected.seu) <- "pre_post" # change the default identity
+pre_post.ge <- FindMarkers(selected.seu, ident.1 = 'post', ident.2 = 'pre')
+```
+
+```{r}
+# Show some expression results
+pre_post.ge$gene <- rownames(pre_post.ge)
+pre_post.ge$neg_log_p <- -log10(pre_post.ge$p_val_adj)
+pre_post.ge <- pre_post.ge %>%
+  mutate(adapt_log = ifelse(is.infinite(neg_log_p), 302, neg_log_p))
+head(pre_post.ge)
+```
+
+```{r}
+# Find second maximum negative log p-value (apart from infinity)
+second_max_unique <- sort(unique(pre_post.ge$neg_log_p), decreasing = TRUE)[2]
+second_max_unique
+```
+
+```{r}
+# Plot a volcano plot
+genes_of_interest <- c("CD24", "MEF2C", "RGS1", "RGS2", "ID3", "CXCR4", "ZFP36L2", "ZFP36")
+ggplot(pre_post.ge, aes(x = avg_log2FC, y = adapt_log)) +
+  geom_point(aes(color = p_val_adj < 0.05 & abs(avg_log2FC) > 0.25), size = 0.5) +
+  scale_color_manual(values = c("grey", "orange")) +
+  geom_text_repel(data = subset(pre_post.ge, gene %in% genes_of_interest),
+                  aes(label = gene),
+                  max.overlaps = Inf, size = 4) +
+  labs(x = "Log2 Fold Change", y = "-log10 Adjusted P-value") +
+  scale_y_continuous(limits = c(0, 310)) +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+## Select Patient 6 to 8 with B cells, and pre- and ibrutinib stage
+
+```{r}
+# Subset B cells from case 6 to 8
+ibrutinib.seu <- subset(
+  merged.seu,
+  subset = singleR.labels_main == 'B cells' &
+    case %in% c(6, 7, 8))
+```
+
+```{r}
+# Explore categorical data in time column
+unique(ibrutinib.seu@meta.data$time)
+```
+
+```{r}
+# Create a new column which is ibrutinib_course
+ibrutinib.seu$ibrutinib_course <- ifelse(grepl('Pre', ibrutinib.seu$time), 'Baseline', 
+                                         ifelse(grepl('Relapse', ibrutinib.seu$time), 'Baseline', 'Ibrutinib'))
+```
+
+```{r}
+# Find markers
+Idents(ibrutinib.seu) <- "ibrutinib_course" # change the default identity
+ibrutinib_course.ge <- FindAllMarkers(ibrutinib.seu, only.pos = TRUE)
+```
+
+```{r}
+# Create a metadata column to identify Baseline vs Ibrutinib
+ibrutinib.seu$patient_phase <- paste0(
+  "CLL", ibrutinib.seu$case, "_", ibrutinib.seu$ibrutinib_course
+)
+Idents(ibrutinib.seu) <- "patient_phase"
+
+# Genes to plot
+genes_to_plot <- c("RAC2", "TPM3", "DBI", "CD99", "LINC01857", 
+                   "DUSP1", "FOS", "TMSB4X", "CD52", "TXNIP", 
+                   "BTG2", "MS4A1", "CCDC88A", "RGS10", "PLPP5", 
+                   "IGFLR1", "FMOD", "LINC01480", "MIR155HG", "PIGR")
+
+# Calculate average expression
+avg_exp <- AverageExpression(ibrutinib.seu, features = genes_to_plot, group.by = "patient_phase")
+mat <- avg_exp$RNA
+mat_scaled <- t(scale(t(mat)))
+mat_raw <- as.matrix(mat)
+```
+
+```{r}
+# Identify NA and inf before visualisation
+summary(as.vector(mat_scaled))
+any(is.na(mat_scaled))
+any(is.infinite(mat_scaled))
+```
+
+```{r}
+# Remove rows with NA/Inf
+mat_scaled <- mat_scaled[complete.cases(mat_scaled) & apply(mat_scaled, 1, function(x) all(is.finite(x))), ]
+mat_raw <- mat_raw[complete.cases(mat_raw) & apply(mat_raw, 1, function(x) all(is.finite(x))), ]
+```
+
+```{r}
+# Extract treatment phase from colnames (e.g., CLL1_Baseline → Baseline)
+treatment_phase <- sub(".*-(Baseline|Ibrutinib)$", "\\1", colnames(mat_scaled))
+
+# Annotation dataframe
+annotation_col <- data.frame(Treatment = treatment_phase)
+rownames(annotation_col) <- colnames(mat_scaled)
+
+# Ensure correct labels and factors
+annotation_col$Treatment <- factor(annotation_col$Treatment, levels = c("Baseline", "Ibrutinib"))
+
+# Order so Baseline samples come first, then Ibrutinib
+order_cols <- order(annotation_col$Treatment)
+mat_scaled_ordered <- mat_scaled[, order_cols]
+annotation_col_ordered <- annotation_col[order_cols, , drop = FALSE]
+
+# Colour settings
+ann_colors <- list(Treatment = c("Baseline" = "#1f78b4", "Ibrutinib" = "#33a02c"))
+
+# Plot
+pheatmap(
+  mat_scaled_ordered,
+  cluster_rows = TRUE,
+  cluster_cols = FALSE,
+  color = colorRampPalette(rev(brewer.pal(11, "RdYlBu")))(100),
+  annotation_col = annotation_col_ordered,
+  annotation_colors = ann_colors,
+  fontsize_row = 8,
+  fontsize_col = 8
+)
+```
+
+```{r fig.height=4, fig.width=4}
+# Heatmap based on the scaled expression
+
+# Extract patient and treatment info from column names
+patient_id <- sub("^(CLL\\d+)-.*", "\\1", colnames(mat_scaled))
+treatment_phase <- sub(".*-(Baseline|Ibrutinib)$", "\\1", colnames(mat_scaled))
+
+# Create annotation dataframe
+annotation_col <- data.frame(
+  Patient = factor(patient_id, levels = c("CLL6", "CLL7", "CLL8")),
+  Treatment = factor(treatment_phase, levels = c("Baseline", "Ibrutinib"))
+)
+rownames(annotation_col) <- colnames(mat_scaled)
+
+# Order by patient ID and then by treatment phase
+order_cols <- order(annotation_col$Treatment, annotation_col$Patient)
+mat_scaled_ordered <- mat_scaled[, order_cols]
+annotation_col_ordered <- annotation_col[order_cols, , drop = FALSE]
+
+# Colour settings
+ann_colors <- list(
+  Treatment = c("Baseline" = "#1f78b4", "Ibrutinib" = "#de2d26"),
+  Patient = c("CLL6" = "#d95f0e", "CLL7" = "#2ca25f", "CLL8" = "#fec44f") 
+)
+
+# Plot
+pheatmap(
+  mat_scaled_ordered,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  show_rownames = TRUE,
+  color = colorRampPalette(rev(brewer.pal(11, "RdYlBu")))(100),
+  annotation_col = annotation_col_ordered,
+  annotation_colors = ann_colors,
+  fontsize = 8,
+  fontsize_row = 7,
+  fontsize_col = 7,
+  gaps_col = which(diff(as.numeric(factor(annotation_col_ordered$Treatment))) != 0)
+)
+```
+
+```{r fig.height=4, fig.width=4}
+# Heatmap based on the raw expression
+
+# Extract patient and treatment info from column names
+patient_id <- sub("^(CLL\\d+)-.*", "\\1", colnames(mat_scaled))
+treatment_phase <- sub(".*-(Baseline|Ibrutinib)$", "\\1", colnames(mat_scaled))
+
+# Create annotation dataframe
+annotation_col <- data.frame(
+  Patient = factor(patient_id, levels = c("CLL6", "CLL7", "CLL8")),
+  Treatment = factor(treatment_phase, levels = c("Baseline", "Ibrutinib"))
+)
+rownames(annotation_col) <- colnames(mat_raw)
+
+# Order by patient ID and then by treatment phase
+order_cols <- order(annotation_col$Treatment, annotation_col$Patient)
+mat_raw_ordered <- mat_raw[, order_cols]
+annotation_col_ordered <- annotation_col[order_cols, , drop = FALSE]
+
+# Colour settings
+ann_colors <- list(
+  Treatment = c("Baseline" = "#1f78b4", "Ibrutinib" = "#de2d26"),
+  Patient = c("CLL6" = "#d95f0e", "CLL7" = "#2ca25f", "CLL8" = "#fec44f") 
+)
+
+# Plot
+pheatmap(
+  mat_raw_ordered,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  show_rownames = TRUE,
+  color = colorRampPalette(rev(brewer.pal(11, "RdYlBu")))(100),
+  annotation_col = annotation_col_ordered,
+  annotation_colors = ann_colors,
+  fontsize = 8,
+  fontsize_row = 7,
+  fontsize_col = 7,
+  gaps_col = which(diff(as.numeric(factor(annotation_col_ordered$Treatment))) != 0)
+)
+```
+
+```{r fig.height=4, fig.width=4}
+# Extract patient and treatment info from column names
+patient_id <- sub("^(CLL\\d+)-.*", "\\1", colnames(mat_scaled))
+treatment_phase <- sub(".*-(Baseline|Ibrutinib)$", "\\1", colnames(mat_scaled))
+
+# Create annotation dataframe
+annotation_col <- data.frame(
+  Patient = factor(patient_id, levels = c("CLL6", "CLL7", "CLL8")),
+  Treatment = factor(treatment_phase, levels = c("Baseline", "Ibrutinib"))
+)
+rownames(annotation_col) <- colnames(mat_scaled)
+
+# Order by patient ID and then by treatment phase
+order_cols <- order(annotation_col$Treatment, annotation_col$Patient)
+mat_scaled_ordered <- mat_scaled[, order_cols]
+annotation_col_ordered <- annotation_col[order_cols, , drop = FALSE]
+
+# Colour settings
+ann_colors <- list(
+  Treatment = c("Baseline" = "#1f78b4", "Ibrutinib" = "#de2d26"),
+  Patient = c("CLL6" = "#d95f0e", "CLL7" = "#2ca25f", "CLL8" = "#fec44f") 
+)
+
+# Get min and max of matrix for breaks and labels
+min_val <- round(min(mat_scaled_ordered), 2)
+max_val <- round(max(mat_scaled_ordered), 2)
+
+# Plot
+pheatmap(
+  mat_scaled_ordered,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  show_rownames = TRUE,
+  color = colorRampPalette(rev(brewer.pal(11, "RdYlBu")))(100),
+  annotation_col = annotation_col_ordered,
+  annotation_colors = ann_colors,
+  fontsize = 8,
+  fontsize_row = 7,
+  fontsize_col = 7,
+  gaps_col = which(diff(as.numeric(factor(annotation_col_ordered$Treatment))) != 0),
+  legend_breaks = c(min_val, max_val),
+  legend_labels = c("min", "max"),
+  legend = TRUE
+)
+```
+
+## Select Patient 6
+
+```{r}
+# Subset B cells from case 6 to 8
+Case6.seu <- subset(
+  merged.seu,
+  subset = singleR.labels_main == 'B cells' &
+    case == 6)
+```
+
+```{r}
+# Explore categorical data in time column
+unique(Case6.seu$time)
+```
+
+```{r}
+# Create a new column which is course for ibrutinib treatment
+Case6.seu$course <- ifelse(Case6.seu$time %in% c("Pretreatment_FCR", "Relapse_post_RIC"), "Baseline",
+                    ifelse(Case6.seu$time == "Ibrutinib_1_month", "Ibrutinib",
+                    ifelse(Case6.seu$time == "Ibrutinib_21_month", "Relapse", NA)))
+```
+
+```{r}
+# Find markers
+Idents(Case6.seu) <- "course" # change the default identity
+Case6_course.ge <- FindAllMarkers(Case6.seu, only.pos = TRUE)
+```
+
+```{r}
+# Plot some gene expressions (MS4A1, MIR155HG)
+Case6_colors <- c(
+  "Baseline" = "#e31a1c",   # Dark Red
+  "Ibrutinib" = "#33a02c",  # Dark Green
+  "Relapse" = "#1f78b4"     # Dark Blue
+)
+
+MS4A1_vinplot <- VlnPlot(Case6.seu, features = c("MS4A1"), pt.size = 0, raster = FALSE) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "none") +
+  scale_fill_manual(values = Case6_colors)
+MIR155HG_vinplot <- VlnPlot(Case6.seu, features = c("MIR155HG"), pt.size = 0, raster = FALSE) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "none") +
+  scale_fill_manual(values = Case6_colors)
+
+MS4A1_vinplot + MIR155HG_vinplot + patchwork::plot_layout(ncol = 2)
+```
+
+```{r}
+# Genes to plot
+genes_to_plot <- c("RAC2", "TPM3", "DBI", "CD99", "LINC01857", 
+                   "DUSP1", "FOS", "TMSB4X", "CD52", "TXNIP", 
+                   "BTG2", "MS4A1", "CCDC88A", "RGS10", "PLPP5", 
+                   "IGFLR1", "FMOD", "LINC01480", "MIR155HG", "PIGR")
+
+Case6.seu <- ScaleData(Case6.seu, features = genes_to_plot)
+
+DoHeatmap(Case6.seu, features = genes_to_plot) + 
+  scale_fill_distiller(palette = "RdYlBu", direction = 1) + 
+  NoLegend()
+```
+
+```{r fig.height=5, fig.width=5}
+# Gene expression plot (make columns in each categories equally)
+
+set.seed(123)  # for reproducibility
+
+# Extract metadata and add cell names as a column
+meta <- Case6.seu@meta.data %>%
+  tibble::rownames_to_column(var = "cell")  # make cell names a column
+
+# Sample equal number of cells per group
+min_cells <- min(table(Case6.seu$course))
+
+subset_cells <- meta %>%
+  dplyr::group_by(course) %>%
+  dplyr::sample_n(min_cells) %>%
+  dplyr::pull(cell)
+
+Case6.seu.down <- subset(Case6.seu, cells = subset_cells)
+
+DoHeatmap(Case6.seu.down, 
+          features = genes_to_plot, 
+          group.by = "course", 
+          angle = 30,
+          ) +
+  NoLegend() +
+  scale_fill_distiller(palette = "RdYlBu", direction = 1)
+```
+
+## Select Patient 9 with B cells, and CLL and RT stage
+
+```{r}
+# Subset B cells from case 9
+Case9.seu <- subset(
+  merged.seu,
+  subset = singleR.labels_main == 'B cells' &
+    case == 9)
+```
+
+```{r}
+# Create a new column which is cond_tissue
+Case9.seu$cond_tissue <- paste0(Case9.seu$cond, "_", Case9.seu$tissue)
+```
+
+```{r}
+# Explore categorical data in cond_tissue column
+unique(Case9.seu$cond_tissue)
+```
+
+```{r}
+# Change colour manually
+case9_colors <- c(
+  "CLL_PB" = "#fff700",   # Lemon Yellow
+  "RT_PB" = "#e31a1c",  # Dark Red
+  "RT_BM" = "#b15928"   # Dark Brown
+)
+```
+
+```{r fig.height=4.5, fig.width=6}
+# UMAP plot based on cond_tissue
+
+DimPlot(Case9.seu, 
+        reduction = "umap", 
+        group.by = "cond_tissue",
+        raster = FALSE) +
+  scale_color_manual(values = case9_colors) +
+  labs(y= "UMAP 2", x = "UMAP 1")
+```
+
+```{r}
+# Find gene expression between RT and CLL
+Idents(Case9.seu) <- "cond" # change the default identity
+RT.ge <- FindMarkers(Case9.seu, ident.1 = 'RT', ident.2 = 'CLL')
+```
+
+```{r}
+# Show some results
+RT.ge$gene <- rownames(RT.ge)
+RT.ge$neg_log_p <- -log10(RT.ge$p_val_adj)
+RT.ge <- RT.ge %>%
+  mutate(adapt_log = ifelse(is.infinite(neg_log_p), 302, neg_log_p))
+head(RT.ge)
+```
+
+```{r}
+# Find second maximum negative log p-value (apart from infinity)
+second_max_unique <- sort(unique(RT.ge$neg_log_p), decreasing = TRUE)[2]
+second_max_unique
+```
+
+```{r}
+# Plot a volcano plot
+genes_of_interest <- c("IGHV3-7", "NFKBIA", "FOS", "FOSB", "JUN", "JUNB", "IGLC7", "CD99", "CD83", "CD24", "LTB", "CD70")
+ggplot(RT.ge, aes(x = avg_log2FC, y = adapt_log)) +
+  geom_point(aes(color = p_val_adj < 0.05 & abs(avg_log2FC) > 0.25), size = 0.5) +
+  scale_color_manual(values = c("grey", "orange")) +
+  geom_text_repel(data = subset(RT.ge, gene %in% genes_of_interest),
+                  aes(label = gene),
+                  max.overlaps = Inf, size = 4) +
+  labs(x = "Log2 Fold Change", y = "-log10 Adjusted P-value") +
+  scale_y_continuous(limits = c(0, 400)) +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+# Session Information
+
+```{r}
+sessionInfo()
+```
+
+
+
+

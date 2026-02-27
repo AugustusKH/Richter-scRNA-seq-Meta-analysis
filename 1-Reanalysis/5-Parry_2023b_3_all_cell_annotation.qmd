@@ -1,0 +1,201 @@
+---
+title: "Parry_2023b_all_cell_annotation"
+author: "Pakorn Sagulkoo"
+format:
+  html:
+    toc: true
+    toc-location: left
+    embed-resources: true
+editor: visual
+---
+
+# Import the relevant packages and set working path directory
+
+```{r, setup, message=FALSE, warning=FALSE}
+# Attach the packages you will need for the analysis.
+library(Matrix)
+library(igraph)
+library(pagoda2)
+library(dplyr)
+library(ggplot2)
+library(ggrepel)
+library(patchwork)
+library(conos)
+library(stringr)
+```
+
+```{r}
+# Check root path
+here::here()
+```
+
+# Define paths
+
+```{r}
+path_to_obj <- here::here("scRNAseq/phs002458.v2.p1/reanalysis/R_objects/1-all_joint_clusters_conos.rds")
+path_to_cell_metadata <- here::here("scRNAseq/phs002458.v2.p1/reanalysis/metadata/1-all_joint_clusters_cell_metadata.rds")
+path_to_save_obj <- here::here("scRNAseq/phs002458.v2.p1/reanalysis/R_objects/2-all_annotate_conos.rds")
+path_to_save_cell_metadata <- here::here("scRNAseq/phs002458.v2.p1/reanalysis/metadata/2-all_annotate_cell_metadata.rds")
+```
+
+# Load data
+
+```{r}
+con <- readRDS(path_to_obj)
+cell_metadata <- readRDS(path_to_cell_metadata)
+```
+
+# General visualisation
+
+```{r, fig.height=5, fig.width=15}
+# Plots for clusters, subject_id, and histological types
+cluster.plt <- con$plotGraph(alpha=0.1, title="Leiden clusters", show.legend = TRUE) 
+
+subject_id.vec <- setNames(cell_metadata$subject_id, row.names(cell_metadata))
+subject_id.plt <- con$plotGraph(alpha=0.1, 
+                                groups=subject_id.vec, 
+                                title="Subject IDs",
+                                show.legend = TRUE, 
+                                mark.groups=FALSE) 
+
+histo.vec <- setNames(cell_metadata$histologic_type, row.names(cell_metadata))
+histo.plt <- con$plotGraph(alpha=0.1, 
+                           groups=histo.vec, 
+                           title="Histological types",
+                           show.legend = TRUE) 
+
+umap.plt <- cluster.plt + subject_id.plt + histo.plt
+umap.plt
+```
+
+# Gene expression
+
+## B cell biomerkers
+
+```{r, fig.height=5, fig.width=12}
+# B cell biomerkers
+CD19.plt <- con$plotGraph(gene="CD19", title="CD19")
+CD5.plt <- con$plotGraph(gene="CD5", title="CD5")
+CD79A.plt <- con$plotGraph(gene="CD79A", title="CD79A")
+
+CD19.plt + CD5.plt + CD79A.plt
+```
+
+## Erythroid biomarkers
+
+```{r, fig.height=5, fig.width=12}
+# Erythroid biomarkers
+HBM.plt <- con$plotGraph(gene="HBM", title="HBM")
+HBB.plt <- con$plotGraph(gene="HBB", title="HBB")
+HBA1.plt <- con$plotGraph(gene="HBA1", title="HBA1")
+
+HBM.plt + HBB.plt + HBA1.plt
+```
+
+## T cell biomarkers
+
+```{r, fig.height=5, fig.width=15}
+# All T cells
+CD3D.plt <- con$plotGraph(gene="CD3D", title="CD3D")
+
+# CD8 T cells
+CD8A.plt <- con$plotGraph(gene="CD8A", title="CD8A")
+
+# CD4 T cells
+CD4.plt <- con$plotGraph(gene="CD4", title="CD4")
+IL7R.plt <- con$plotGraph(gene="IL7R", title="IL7R")
+
+(CD3D.plt + CD8A.plt) | (CD4.plt + IL7R.plt)
+```
+
+## NK cell biomarkers
+
+```{r, fig.height=5, fig.width=12}
+# NK cell biomarkers
+NKG7.plt <- con$plotGraph(gene="NKG7", title="NKG7")
+NCAM1.plt <- con$plotGraph(gene="NCAM1", title="NCAM1 (CD56)")
+FCGR3A.plt <- con$plotGraph(gene="FCGR3A", title="FCGR3A (CD16)")
+
+NKG7.plt + NCAM1.plt + FCGR3A.plt
+```
+
+## Myeloid and monocyte biomarkers
+
+Biomarkers for myeloid cells, such as CD11c (ITGAX), CD13 (ANPEP), CD14, CD15 (FUT4), CD64(FCGR1A), can be used to identify myeloid cells in the plot.
+
+```{r, fig.height=5, fig.width=12}
+# Myeloid and monocyte biomarkers
+CD14.plt <- con$plotGraph(gene="CD14", title="CD14")
+ITGAX.plt <- con$plotGraph(gene="ITGAX", title="ITGAX (CD11c)")
+FCGR1A.plt <- con$plotGraph(gene="FCGR1A", title="FCGR1A (CD64)")
+
+CD14.plt + ITGAX.plt + FCGR1A.plt
+```
+
+```{r}
+# Use for find gene name of interest
+grep("CD15", colnames(con$samples[[1]]$counts), value = TRUE)
+```
+
+```{r}
+# Create plots
+gene.list <- c("CD19", "CD5", "CD79A", "HBM", "HBB", "HBA1", "CD3D", "CD8A", "CD4", "IL7R", "NKG7", "NCAM1", "FCGR3A", "CD14",
+               "ITGAX", "FCGR1A")
+
+plot.list <- purrr::map(gene.list, function(gene){
+  plt <- con$plotGraph(gene=gene, title=gene)
+  plt
+})
+
+names(plot.list) <- str_c(gene.list, ".plt", sep="")
+```
+
+```{r, fig.height=15, fig.width=12}
+# Feature plots
+feature.plt <- wrap_plots(plot.list, ncol = 4, nrow = 4)
+feature.plt
+```
+
+# Cell type annotation
+
+```{r}
+# Add cell types to the cell metadata
+cell_metadata <- cell_metadata %>%
+  mutate(cell_type = case_when(
+    leiden_cluster == "1" ~ "B cell",
+    leiden_cluster == "2" ~ "CD8 T cell",
+    leiden_cluster == "3" ~ "CD4 T cell",
+    leiden_cluster == "4" ~ "Mixed B and T cell",
+    leiden_cluster == "5" ~ "Erythoid cell",
+    leiden_cluster == "6" ~ "Myeloid cell",
+    leiden_cluster == "7" ~ "NK cell"
+  ))
+```
+
+```{r, fig.height=10, fig.width=10}
+# Visualise the annotation
+cell_anno.vec <- setNames(cell_metadata$cell_type, row.names(cell_metadata))
+cell.plt <- con$plotGraph(alpha=0.1, 
+              groups=cell_anno.vec, 
+              title="Cell annotation",
+              show.legend = TRUE) 
+
+umap.plt <- cluster.plt + subject_id.plt + histo.plt + cell.plt
+umap.plt
+```
+
+# Save the results
+
+```{r, eval=FALSE}
+saveRDS(con, path_to_save_obj)
+saveRDS(cell_metadata, path_to_save_cell_metadata)
+```
+
+# Session Information
+
+```{r}
+sessionInfo()
+```
+
+
+
