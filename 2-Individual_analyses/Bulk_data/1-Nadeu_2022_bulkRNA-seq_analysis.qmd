@@ -1,0 +1,565 @@
+---
+title: "Nadeu_2022_bulkRNA-seq_analysis"
+author: "Pakorn Sagulkoo"
+format:
+  html:
+    toc: true
+    toc-location: left
+    embed-resources: true
+editor: visual
+---
+
+In this code we will analyse bulk RNA-seq between Richter's transformation (RT) and chronic lymphocytic leukaemia (CLL) patients. The data comes from [Nadeu et al. (2022)](https://www.nature.com/articles/s41591-022-01927-8#data-availability). The original article performed kallisto to preprocess raw files to pseudocount files. We downloaded the original kallisto pseudocount files from this [GitHub](https://github.com/ferrannadeu/RichterTransformation/tree/main).
+
+# Import the relevant packages and set working path directory
+
+```{r, setup, message=FALSE, warning=FALSE}
+# Import the relavant packages
+library(tximport)
+library(ensembldb)
+library(dplyr)
+library(stringr)
+library(ggplot2)
+library(ggrepel)
+library(DESeq2)
+```
+
+```{r}
+# Check root path
+here::here()
+```
+
+# Define paths
+
+```{r}
+# Define paths to load and save files
+path_to_samples <- here::here("RNAseq/Nadeu_2022/kallisto")
+path_to_sample_metadata <- here::here("RNAseq/systematic_review/1-Nadeu_2022/sample_metadata.tsv")
+path_to_ref_transcriptome <- "/home/pakorns/hc-storage/fastq_files/RNAseq/transcriptome_ref"
+path_to_save_txi <- here::here("RNAseq/systematic_review/1-Nadeu_2022/count_matrices/Nadeu_txi.rds")
+path_to_save_dea <- here::here("RNAseq/systematic_review/1-Nadeu_2022/expression_data/Nadeu_dea.rds")
+path_to_save_hm_gsea <- here::here("RNAseq/systematic_review/1-Nadeu_2022/enrichment_data/Nadeu_hm_gsea.rds")
+path_to_save_go_gsea <- here::here("RNAseq/systematic_review/1-Nadeu_2022/enrichment_data/Nadeu_go_gsea.rds")
+path_to_save_kegg_gsea <- here::here("RNAseq/systematic_review/1-Nadeu_2022/enrichment_data/Nadeu_kegg_gsea.rds")
+path_to_save_reactome_gsea <- here::here("RNAseq/systematic_review/1-Nadeu_2022/enrichment_data/Nadeu_reactome_gsea.rds")
+path_to_save_wikipath_gsea <- here::here("RNAseq/systematic_review/1-Nadeu_2022/enrichment_data/Nadeu_wikipath_gsea.rds")
+```
+
+# Load data and functions
+
+```{r, message=FALSE, warning=FALSE}
+# Source functions
+source(here::here("bin/utils.R"))
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Load sample metadata
+sample_metadata <- read.delim(path_to_sample_metadata, header = TRUE, stringsAsFactors = FALSE) 
+DT::datatable(sample_metadata, options = list(scrollX = TRUE))
+```
+
+```{r}
+# Create a vector collecting kallisto results in each sample
+path_to_download <- str_c(path_to_samples, "/", sample_metadata$Sample, "_abundance.tsv")
+names(path_to_download) <- sample_metadata$Sample
+path_to_download
+```
+
+# Convert kallisto results to an expression matrix
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Load the ensembl hg38 gtf file
+path_to_hg38_transcriptome <- str_c(path_to_ref_transcriptome, "/Homo_sapiens.GRCh38.115.gtf.gz")
+edb <- ensDbFromGtf(path_to_hg38_transcriptome) # Return edb = "./Homo_sapiens.GRCh38.115.sqlite"
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Make the transcript-to-gene map (tx2gene)
+edb <- here::here("RNAseq/systematic_review/1-Nadeu_2022/Homo_sapiens.GRCh38.115.sqlite")
+edb_obj <- EnsDb(edb)
+tx2gene <- transcripts(edb_obj,
+                       columns = c("tx_id","gene_id","gene_name"),
+                       return.type="DataFrame")
+
+# convert to a plain data.frame for tximport
+tx2gene <- as.data.frame(tx2gene)
+head(tx2gene)
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Load pseudocount files
+txi <- tximport(path_to_download, 
+                type = "kallisto", 
+                tx2gene = tx2gene, 
+                ignoreTxVersion = TRUE 
+               )
+
+# This gives you txi$counts, txi$abundance (TPM), txi$length
+head(txi$counts)
+```
+
+```{r, eval=FALSE}
+# Save the expression file
+saveRDS(txi, path_to_save_txi)
+```
+
+# Transcriptomics analysis using DESeq2
+
+```{r, message=FALSE, warning=FALSE}
+# Import the relevant package
+library(DESeq2)
+library(limma)
+```
+
+## Create a DESeq2 object
+
+```{r}
+# Create metadata for DESeq2 object
+colData <- sample_metadata[, c("Sample", "Diagnosis", "Case")] %>%
+  rename(
+    samples = "Sample",
+    condition = "Diagnosis",
+    case = "Case"
+  ) %>%
+  mutate(
+    batch = ifelse(case == "63", 1, 
+                   ifelse(case == "365", 2, 
+                          ifelse(case == "3299", 3, 
+                                 ifelse(case == "19", 4, 
+                                        ifelse(case == "12", 5, 6)))))
+  )
+
+rownames(colData) <- colData$samples
+colData$condition <- factor(colData$condition)
+colData$batch <- factor(colData$batch)
+colData
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Create the object
+dds <- DESeqDataSetFromTximport(txi, colData, ~ batch + condition)
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Keep genes with at least 10 counts across all samples
+keep <- rowSums(counts(dds)) >= 10
+dds <- dds[keep,]
+  
+# Run DESeq2
+dds$condition <- relevel(dds$condition, ref = "CLL")
+dds <- DESeq(dds)
+```
+
+## Plot the PCA based on the expression data
+
+```{r, message=FALSE, warning=FALSE, fig.height=4.5, fig.width=6}
+# Variance stabilised transformation
+vsdata <- vst(dds, blind = FALSE)
+
+# Extract matrix
+vs_mat <- assay(vsdata)
+
+# Adjust for batch (assume batch info is in colData(dds)$batch)
+vs_mat_corrected <- removeBatchEffect(vs_mat, batch = colData(dds)$batch)
+
+# PCA on corrected data
+pca <- prcomp(t(vs_mat_corrected))
+
+# Calculate % variance explained
+pca_var <- pca$sdev^2               # variance of each PC
+pca_var_percent <- pca_var / sum(pca_var) * 100
+
+# Create case name
+case <- sub("^0*", "", sub("-.*$", "", rownames(colData(dds))))
+
+# Make a dataframe for ggplot
+pca_df <- data.frame(pca$x,
+                     condition = colData(dds)$condition,
+                     sample = case)
+
+# Plot
+pca.plt <- ggplot(pca_df, aes(PC1, PC2, color=condition, label=sample)) +
+  geom_point(size = 3) +
+  geom_text_repel(size=3.25, color = "black") +
+  xlab(paste0("PC1 (", round(pca_var_percent[1], 1), "%)")) +
+  ylab(paste0("PC2 (", round(pca_var_percent[2], 1), "%)")) +
+  theme_bw()
+
+pca.plt
+```
+
+After batch correction using `limma()`, we can see that the samples were grouped based on the conditions rather than the case origin.
+
+## Differential gene expression analysis
+
+```{r, message=FALSE, warning=FALSE}
+# Generate a table for gene expression
+res <- lfcShrink(dds, 
+                 contrast = c("condition", "RT", "CLL"), 
+                 type = 'normal')
+head(res)
+```
+
+```{r}
+# Add gene names to a column in expression result
+dea.df <- res
+gene_map <- unique(tx2gene[, c("gene_id", "gene_name")])
+dea.df$gene_id <- rownames(dea.df)
+dea.df$gene_name <- gene_map$gene_name[match(rownames(dea.df), gene_map$gene_id)]
+head(dea.df)
+```
+
+```{r, eval=FALSE}
+# Save the expression result
+saveRDS(dea.df, path_to_save_dea)
+```
+
+## Plot heatmap of gene expression
+
+```{r, message=FALSE, warning=FALSE}
+# Import the relevant package
+library(pheatmap)
+library(RColorBrewer)
+```
+
+```{r}
+# Data transformation
+vsd <- vst(dds, blind=FALSE)       # Variance-stabilizing transformation
+#rld <- rlog(dds_filtered, blind=FALSE)      # Regularized log transformation
+
+# Extract transformed expression matrix
+expr_mat <- assay(vsd)
+
+# Calculate z-scores
+zscore_mat <- t(scale(t(expr_mat)))
+```
+
+```{r}
+# Extract main and sub- clusters info from column names
+RT_sample <- sample_metadata[sample_metadata$Diagnosis == "RT", "Sample"] 
+conditions <-  ifelse(colnames(zscore_mat) %in% RT_sample, "RT", "CLL")
+patient_id <- sub("^0*", "", sub("-.*$", "", colnames(zscore_mat)))
+
+# Create annotation dataframe
+annotation_col <- data.frame(
+  Condition = factor(conditions, levels = c("CLL", "RT")),
+  Case = factor(patient_id, levels = c("63","365","3299","19","12", "816"))
+)
+annotation_col <- annotation_col[, c("Case", "Condition")] 
+rownames(annotation_col) <- colnames(zscore_mat)
+
+# Order by Condition and then Case 
+order_cols <- order(annotation_col$Condition, annotation_col$Case)
+zscore_mat_ordered <- zscore_mat[, order_cols]
+annotation_col_ordered <- annotation_col[order_cols, , drop = FALSE]
+```
+
+```{r, fig.height=8, fig.width=4}
+# Filter for significant DE genes
+sig_genes <- dea.df[!is.na(dea.df$padj) & dea.df$padj < 0.05, ]
+
+# Order genes by log2FoldChange (descending: up -> down)
+gene_order <- sig_genes$gene_id[order(sig_genes$log2FoldChange, decreasing = TRUE)]
+
+# Subset zscore matrix
+zscore_mat_sig <- zscore_mat_ordered[gene_order, ]
+
+# Plot heatmap
+pheatmap(
+  zscore_mat_sig,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  show_rownames = FALSE,
+  color = colorRampPalette(rev(brewer.pal(11, "RdYlBu")))(100),
+  annotation_col = annotation_col_ordered,
+  fontsize = 8,
+  fontsize_row = 7,
+  fontsize_col = 7,
+  gaps_col = which(diff(as.numeric(factor(annotation_col_ordered$Condition))) != 0)
+)
+```
+
+## Volcano plot
+
+```{r, message=FALSE, warning=FALSE}
+# Import the package
+library(EnhancedVolcano)
+```
+
+```{r, message=FALSE, warning=FALSE, fig.height=8, fig.width=10}
+# Plot volcano 
+genes <- c("MKI67", "CDK1", "CDK4","CDK5","CDK6","CDKN3","CDK17",
+           "WNT3", "WNT5A", "WNT6", "WNT16", "TLR8", "TLR9", "TLR10", 
+           "AICDA", "POLH", "MYC", "MYCBP", "CCND2", "CCND3")
+
+dea_plt <- as.data.frame(dea.df)
+idx <- match(genes, dea_plt$gene_name)
+rownames(dea_plt)[idx] <- dea_plt$gene_name[idx]
+
+volcano.plt <- volcano_plot(dea_plt, 
+                            xlim=c(-7,7), 
+                            ylim=c(-0.1,21), 
+                            genes_of_interest = genes,
+                            boxedLabels = TRUE) 
+  
+volcano.plt
+```
+
+# Gene Set Enrichment Analysis (GSEA)
+
+```{r, message=FALSE, warning=FALSE}
+# Import the related libraries in functional enrichment analysis
+library(clusterProfiler)
+library(enrichplot)
+library(msigdbr)
+library(org.Hs.eg.db)
+```
+
+```{r}
+# Manipulate the expression data
+lfc_vector <- dea.df$log2FoldChange # Create a named vector ranked based on the log2 fold change
+names(lfc_vector) <- rownames(dea.df)
+lfc_vector <- na.omit(lfc_vector) # Omit any NA values
+lfc_vector <- sort(lfc_vector, decreasing = TRUE) # Sort the log2 fold change in descending order
+```
+
+### Hallmark
+
+```{r, message=FALSE, warning=FALSE}
+# Hallmark
+HM_gsea <- HM_GSEA(lfc_vector, gene_ident = "ensembl_gene")
+
+# Collect the HM GSEA result
+HM_GSEA.result <- HM_gsea@result
+HM_GSEA_selected.result <- HM_GSEA.result %>%
+  as_tibble() %>%
+  dplyr::select(c(Description, NES, pvalue, p.adjust))
+
+DT::datatable(HM_GSEA_selected.result, options = list(scrollX = TRUE))
+```
+
+We will explore the trends of hallmark terms reported from other single-cell pseudobulk studies such as Nadeu et al. (2022) and Hing et al (2023). From those studies, the terms such as E2F targets, Myc targets, and oxidative phosphorylation (OXPHOS) were upregulated.
+
+```{r, message=FALSE, warning=FALSE, fig.height=4, fig.width=18}
+# GSEA plot for HALLMARK_E2F_TARGETS, HALLMARK_MYC_TARGETS_V1, and HALLMARK_OXIDATIVE_PHOSPHORYLATION
+
+E2F_gsea.plt <- gseaplot(HM_gsea, 
+                          by = "runningScore", 
+                          title = "HALLMARK_E2F_TARGETS", 
+                          geneSetID = "HALLMARK_E2F_TARGETS",
+                          base_size = 10) +
+  theme(axis.text.x = element_text(angle = 0, hjust = 1))
+
+Myc_gsea.plt <- gseaplot(HM_gsea, 
+                          by = "runningScore", 
+                          title = "HALLMARK_MYC_TARGETS_V1", 
+                          geneSetID = "HALLMARK_MYC_TARGETS_V1",
+                          base_size = 10) +
+  theme(axis.text.x = element_text(angle = 0, hjust = 1))
+
+OXPHOS_gsea.plt <- gseaplot(HM_gsea, 
+                          by = "runningScore", 
+                          title = "HALLMARK_OXIDATIVE_PHOSPHORYLATION", 
+                          geneSetID = "HALLMARK_OXIDATIVE_PHOSPHORYLATION",
+                          base_size = 10) +
+  theme(axis.text.x = element_text(angle = 0, hjust = 1))
+
+E2F_gsea.plt + Myc_gsea.plt + OXPHOS_gsea.plt
+```
+
+From the plots, terms such as E2F and Myc targets were consistent with the two single-cell studies while the OXPHOS trend was not clear.
+
+### GO:BP
+
+```{r, message=FALSE, warning=FALSE}
+# GO:BP
+GOBP_gsea <- GO_GSEA(lfc_vector, gene_ident = "ensembl_gene")
+
+# Collect the GSEA result
+GOBP_GSEA.result <- GOBP_gsea@result
+GOBP_GSEA_selected.result <- GOBP_GSEA.result %>%
+  as_tibble() %>%
+  dplyr::select(c(Description, NES, pvalue, p.adjust))
+
+DT::datatable(GOBP_GSEA_selected.result, options = list(scrollX = TRUE))
+```
+
+We will also explore the trends of GO:BP terms reported from other single-cell studies such as Nadeu et al. (2022) and Hing et al (2023). From those studies, the terms such as OXPHOS and mitochondrial translation were upregulated while BCR signalling was downregulated.
+
+```{r, message=FALSE, warning=FALSE, fig.height=4, fig.width=18}
+# GSEA plot for GOBP_OXIDATIVE_PHOSPHORYLATION, GOBP_B_CELL_RECEPTOR_SIGNALING_PATHWAY, and GOBP_MITOCHONDRIAL_TRANSLATION
+
+OXPHOS_GO_gsea.plt <- gseaplot(GOBP_gsea, 
+                          by = "runningScore", 
+                          title = "GOBP_OXIDATIVE_PHOSPHORYLATION", 
+                          geneSetID = "GOBP_OXIDATIVE_PHOSPHORYLATION",
+                          base_size = 10) +
+  theme(axis.text.x = element_text(angle = 0, hjust = 1))
+
+BCR_GO_gsea.plt <- gseaplot(GOBP_gsea, 
+                          by = "runningScore", 
+                          title = "GOBP_B_CELL_RECEPTOR_SIGNALING_PATHWAY", 
+                          geneSetID = "GOBP_B_CELL_RECEPTOR_SIGNALING_PATHWAY",
+                          base_size = 10) +
+  theme(axis.text.x = element_text(angle = 0, hjust = 1))
+
+mitochondrial_GO_gsea.plt <- gseaplot(GOBP_gsea, 
+                          by = "runningScore", 
+                          title = "GOBP_MITOCHONDRIAL_TRANSLATION", 
+                          geneSetID = "GOBP_MITOCHONDRIAL_TRANSLATION",
+                          base_size = 10) +
+  theme(axis.text.x = element_text(angle = 0, hjust = 1))
+
+OXPHOS_GO_gsea.plt + BCR_GO_gsea.plt + mitochondrial_GO_gsea.plt
+```
+
+We also performed GSEA with additional enrichment systems such as KEGG pathways, Reactome, and WikiPath.
+
+### KEGG pathway
+
+```{r, message=FALSE, warning=FALSE}
+# KEGG pathway
+KEGG_gsea <- KEGG_GSEA(lfc_vector, gene_ident = "ensembl_gene")
+
+# Collect the HM GSEA result
+KEGG_GSEA.result <- KEGG_gsea@result
+KEGG_GSEA_selected.result <- KEGG_GSEA.result %>%
+  as_tibble() %>%
+  dplyr::select(c(Description, NES, pvalue, p.adjust))
+
+DT::datatable(KEGG_GSEA_selected.result, options = list(scrollX = TRUE))
+```
+
+### Reactome
+
+```{r, message=FALSE, warning=FALSE}
+# REACTOME
+REACTOME_gsea <- REACTOME_GSEA(lfc_vector, gene_ident = "ensembl_gene")
+
+# Collect the HM GSEA result
+REACTOME_GSEA.result <- REACTOME_gsea@result
+REACTOME_GSEA_selected.result <- REACTOME_GSEA.result %>%
+  as_tibble() %>%
+  dplyr::select(c(Description, NES, pvalue, p.adjust))
+
+DT::datatable(REACTOME_GSEA_selected.result, options = list(scrollX = TRUE))
+```
+
+### WikiPath
+
+```{r, message=FALSE, warning=FALSE}
+# WikiPath
+WIKIPATH_gsea <- WIKIPATH_GSEA(lfc_vector, gene_ident = "ensembl_gene")
+
+# Collect the HM GSEA result
+WIKIPATH_GSEA.result <- WIKIPATH_gsea@result
+WIKIPATH_GSEA_selected.result <- WIKIPATH_GSEA.result %>%
+  as_tibble() %>%
+  dplyr::select(c(Description, NES, pvalue, p.adjust))
+
+DT::datatable(WIKIPATH_GSEA_selected.result, options = list(scrollX = TRUE))
+```
+
+```{r, eval=FALSE}
+# Save gene expression and GSEA data
+saveRDS(HM_gsea, path_to_save_hm_gsea)
+saveRDS(GOBP_gsea, path_to_save_go_gsea)
+saveRDS(KEGG_gsea, path_to_save_kegg_gsea)
+saveRDS(REACTOME_gsea, path_to_save_reactome_gsea)
+saveRDS(WIKIPATH_gsea, path_to_save_wikipath_gsea)
+```
+
+## Bar plot summary
+
+```{r}
+# Bar plot of GSEA 
+gsea_bp <- rbind(HM_GSEA_selected.result[HM_GSEA_selected.result$Description == "HALLMARK_OXIDATIVE_PHOSPHORYLATION",],
+                 HM_GSEA_selected.result[HM_GSEA_selected.result$Description == "HALLMARK_REACTIVE_OXYGEN_SPECIES_PATHWAY",],
+                 HM_GSEA_selected.result[HM_GSEA_selected.result$Description == "HALLMARK_FATTY_ACID_METABOLISM",],
+                 REACTOME_GSEA_selected.result[REACTOME_GSEA_selected.result$Description == "REACTOME_DNA_REPAIR",],
+                 GOBP_GSEA_selected.result[GOBP_GSEA_selected.result$Description == "GOBP_MITOCHONDRIAL_TRANSLATION",],
+                 GOBP_GSEA_selected.result[GOBP_GSEA_selected.result$Description == "GOBP_CELL_CYCLE_PHASE_TRANSITION",],
+                 WIKIPATH_GSEA_selected.result[WIKIPATH_GSEA_selected.result$Description == "WP_GLYCOLYSIS_AND_GLUCONEOGENESIS",],
+                 HM_GSEA_selected.result[HM_GSEA_selected.result$Description == "HALLMARK_MTORC1_SIGNALING",],
+                 HM_GSEA_selected.result[HM_GSEA_selected.result$Description == "HALLMARK_MYC_TARGETS_V1",],
+                 HM_GSEA_selected.result[HM_GSEA_selected.result$Description == "HALLMARK_E2F_TARGETS",],
+                 HM_GSEA_selected.result[HM_GSEA_selected.result$Description == "HALLMARK_G2M_CHECKPOINT",],
+                 KEGG_GSEA_selected.result[KEGG_GSEA_selected.result$Description == "KEGG_B_CELL_RECEPTOR_SIGNALING_PATHWAY",],
+                 HM_GSEA_selected.result[HM_GSEA_selected.result$Description == "HALLMARK_INFLAMMATORY_RESPONSE",]
+)
+
+gsea_bp$Description <- gsub("HALLMARK_", "", gsea_bp$Description)
+gsea_bp$Description <- gsub("GOBP_", "", gsea_bp$Description)
+gsea_bp$Description <- gsub("KEGG_", "", gsea_bp$Description)
+gsea_bp$Description <- gsub("REACTOME_", "", gsea_bp$Description)
+gsea_bp$Description <- gsub("WP_", "", gsea_bp$Description)
+gsea_bp$Description <- gsub("_V1", "", gsea_bp$Description)
+gsea_bp$Description <- gsub("OXIDATIVE_PHOSPHORYLATION", "OXPHOS", gsea_bp$Description)
+gsea_bp$Description <- gsub("REACTIVE_OXYGEN_SPECIES_PATHWAY", "ROS_PATHWAY", gsea_bp$Description)
+gsea_bp$Description <- gsub("B_CELL_RECEPTOR_SIGNALING_PATHWAY", "BCR_PATHWAY", gsea_bp$Description)
+gsea_bp$Description <- gsub("_", " ", gsea_bp$Description)
+
+gsea_bp$Description <- factor(gsea_bp$Description, levels = gsea_bp$Description)
+gsea_bp$Direction <- "Up"
+gsea_bp$Direction[gsea_bp$NES<0] <- "Down"
+
+gsea_bar.plt <- ggplot(gsea_bp, aes(x=Description, y=NES, fill=Direction)) +
+  geom_bar(stat = "identity", color="black", width = 0.75) +  
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  geom_hline(yintercept = 0) + 
+  ylab("NES") + xlab(NULL) + 
+  scale_fill_manual(values=c("#8882BA", "#EF7F6A")) + theme(legend.position = "none")
+
+gsea_bar.plt
+```
+
+## GSEA plot summary
+
+```{r, message=FALSE, warning=FALSE, fig.height=6, fig.width=9}
+# GSEA plot for HALLMARK_E2F_TARGETS, HALLMARK_MYC_TARGETS_V1, and HALLMARK_OXIDATIVE_PHOSPHORYLATION
+
+OXPHOS_gsea.plt <- gseaplot(HM_gsea, 
+                          by = "runningScore", 
+                          title = "OXPHOS", 
+                          geneSetID = "HALLMARK_OXIDATIVE_PHOSPHORYLATION",
+                          base_size = 10) +
+  theme(axis.text.x = element_text(angle = 0, hjust = 1))
+
+E2F_gsea.plt <- gseaplot(HM_gsea, 
+                          by = "runningScore", 
+                          title = "E2F targets", 
+                          geneSetID = "HALLMARK_E2F_TARGETS",
+                          base_size = 10) +
+  theme(axis.text.x = element_text(angle = 0, hjust = 1))
+
+Myc_gsea.plt <- gseaplot(HM_gsea, 
+                          by = "runningScore", 
+                          title = "MYC targets", 
+                          geneSetID = "HALLMARK_MYC_TARGETS_V1",
+                          base_size = 10) +
+  theme(axis.text.x = element_text(angle = 0, hjust = 1))
+
+BCR_gsea.plt <- gseaplot(KEGG_gsea, 
+                          by = "runningScore", 
+                          title = "BCR pathway", 
+                          geneSetID = "KEGG_B_CELL_RECEPTOR_SIGNALING_PATHWAY",
+                          base_size = 10) +
+  theme(axis.text.x = element_text(angle = 0, hjust = 1))
+
+gsea.plt <- OXPHOS_gsea.plt + E2F_gsea.plt + Myc_gsea.plt + BCR_gsea.plt +
+  plot_layout(ncol = 2)
+
+gsea.plt
+```
+
+# Session Information
+
+```{r}
+sessionInfo()
+```
+
+
+
+
+

@@ -1,0 +1,703 @@
+---
+title: "Iyer_2024_GSE263238_bulkRNA-seq_analysis"
+author: "Pakorn Sagulkoo"
+format:
+  html:
+    toc: true
+    toc-location: left
+    embed-resources: true
+editor: visual
+---
+
+In this code, we will analyse mouse bulk RNA-seq from [Iyer et al. (2024)](https://pubmed.ncbi.nlm.nih.gov/39083585/). This study employed a mouse experimental model in which a CLL- and RT-like condition was induced using *CD19^cre/+^ Mdr^fl/+^ Sf3b1^fl/+^ Cas9^fl/+^* mice engrafted with LSK cells transduced with sgRNA-expressing lentivirus. After we performed Salmon converting FASTQ files to pseudocount data in each sample, we will convert them to a count matrix before we use the matrix for DESeq2 for further gene expression analysis.
+
+# Import the relevant packages and set working path directory
+
+```{r, setup, message=FALSE, warning=FALSE}
+# Import the relavant packages
+library(tximport)
+library(ensembldb)
+library(biomaRt)
+library(dplyr)
+library(tibble)
+library(stringr)
+library(ggplot2)
+library(ggrepel)
+library(DESeq2)
+```
+
+```{r}
+# Check root path
+here::here()
+```
+
+# Define paths
+
+```{r}
+# Define paths to load and save files
+path_to_samples <- here::here("RNAseq/Iyer_2024_GSE263238")
+path_to_sample_metadata <- here::here("RNAseq/systematic_review/2-Iyer_2024_GSE263238/sample_metadata.csv")
+path_to_ref_transcriptome <- "/home/pakorns/hc-storage/fastq_files/RNAseq/transcriptome_ref"
+path_to_save_txi <- here::here("RNAseq/systematic_review/2-Iyer_2024_GSE263238/count_matrices/Iyer_txi.rds")
+path_to_save_RT_vs_CRTL_dea <- here::here("RNAseq/systematic_review/2-Iyer_2024_GSE263238/expression_data/Iyer_RT_vs_CRTL_dea.rds")
+path_to_save_CLL_vs_CRTL_dea <- here::here("RNAseq/systematic_review/2-Iyer_2024_GSE263238/expression_data/Iyer_CLL_vs_CRTL_dea.rds")
+path_to_save_RT_vs_CLL_dea <- here::here("RNAseq/systematic_review/2-Iyer_2024_GSE263238/expression_data/Iyer_RT_vs_CLL_dea.rds")
+path_to_save_hm_gsea <- here::here("RNAseq/systematic_review/2-Iyer_2024_GSE263238/enrichment_data/Iyer_hm_gsea.rds")
+path_to_save_go_gsea <- here::here("RNAseq/systematic_review/2-Iyer_2024_GSE263238/enrichment_data/Iyer_go_gsea.rds")
+path_to_save_kegg_gsea <- here::here("RNAseq/systematic_review/2-Iyer_2024_GSE263238/enrichment_data/Iyer_kegg_gsea.rds")
+path_to_save_reactome_gsea <- here::here("RNAseq/systematic_review/2-Iyer_2024_GSE263238/enrichment_data/Iyer_reactome_gsea.rds")
+path_to_save_wikipath_gsea <- here::here("RNAseq/systematic_review/2-Iyer_2024_GSE263238/enrichment_data/Iyer_wikipath_gsea.rds")
+```
+
+# Load data and functions
+
+```{r, message=FALSE, warning=FALSE}
+# Source functions
+source(here::here("bin/utils.R"))
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Load sample metadata
+sample_metadata <- read.csv(path_to_sample_metadata) 
+DT::datatable(sample_metadata, options = list(scrollX = TRUE))
+```
+
+As the original study did not analyse in control with no sgRNA, we will remove it from the further analysis.
+
+```{r}
+# Select samples without control with no sgRNA
+metadata_no_sgRNA <- sample_metadata[sample_metadata$condition != "CTRL_no_sgRNA", ] 
+```
+
+```{r}
+# Create a vector collecting Salmon quant.sf path in each sample
+path_to_download <- str_c(path_to_samples, "/", metadata_no_sgRNA$SRA_RUN, "/quant.sf")
+names(path_to_download) <- metadata_no_sgRNA$SRA_RUN
+path_to_download
+```
+
+# Convert salmon pseudocounts to an expression matrix
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Load the ensembl mm39 gtf file
+path_to_mm39_transcriptome <- str_c(path_to_ref_transcriptome, "/Mus_musculus.GRCm39.115.gtf.gz")
+edb <- ensDbFromGtf(path_to_mm39_transcriptome) # Return edb = "./Mus_musculus.GRCm39.115.sqlite"
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Make the transcript-to-gene map (tx2gene)
+edb <- here::here("RNAseq/systematic_review/2-Iyer_2024_GSE263238/Mus_musculus.GRCm39.115.sqlite")
+edb_obj <- EnsDb(edb)
+tx2gene <- transcripts(edb_obj,
+                       columns = c("tx_id","gene_id","gene_name"),
+                       return.type="DataFrame")
+
+# convert to a plain data.frame for tximport
+tx2gene <- as.data.frame(tx2gene)
+head(tx2gene)
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Load pseudocount files
+txi <- tximport(path_to_download, 
+                type = "salmon", 
+                tx2gene = tx2gene, 
+                ignoreTxVersion = TRUE 
+               )
+
+# This gives you txi$counts, txi$abundance (TPM), txi$length
+head(txi$counts)
+```
+
+```{r, eval=FALSE}
+# Save the expression file
+saveRDS(txi, path_to_save_txi)
+```
+
+# Transcriptomics analysis using DESeq2
+
+```{r, message=FALSE, warning=FALSE}
+# Import the relevant package
+library(DESeq2)
+library(sva)
+library(limma)
+```
+
+## Create a DESeq2 object
+
+```{r}
+# Create metadata for DESeq2 object
+colData <- metadata_no_sgRNA[, c("SRA_RUN", "condition")] %>%
+  rename(samples = "SRA_RUN") 
+rownames(colData) <- colData$samples
+colData$condition <- factor(colData$condition)
+colData
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Create the object
+dds <- DESeqDataSetFromTximport(txi, colData, ~ condition)
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Keep genes with at least 10 counts across all samples
+keep <- rowSums(counts(dds)) >= 10
+dds <- dds[keep,]
+  
+# Run DESeq2
+dds$condition <- relevel(dds$condition, ref = "CTRL")
+dds <- DESeq(dds)
+```
+
+## Plot the PCA based on the expression data
+
+```{r, message=FALSE, warning=FALSE, fig.height=4.5, fig.width=6}
+# Variance stabilised transformation
+vsdata <- vst(dds, blind = FALSE)
+
+# Extract matrix
+vs_mat <- assay(vsdata)
+
+# Adjust for batch (assume batch info is in colData(dds)$batch)
+vs_mat_corrected <- removeBatchEffect(vs_mat, batch = colData(dds)$batch)
+
+# PCA on corrected data
+pca <- prcomp(t(vs_mat_corrected))
+
+# Calculate % variance explained
+pca_var <- pca$sdev^2               # variance of each PC
+pca_var_percent <- pca_var / sum(pca_var) * 100
+
+# Make a dataframe for ggplot
+pca_df <- data.frame(pca$x,
+                     condition = colData(dds)$condition,
+                     sample = rownames(colData(dds)))
+
+# Plot
+pca.plt <- ggplot(pca_df, aes(PC1, PC2, color = condition)) +
+  geom_point(size = 3) +
+  xlab(paste0("PC1 (", round(pca_var_percent[1], 1), "%)")) +
+  ylab(paste0("PC2 (", round(pca_var_percent[2], 1), "%)")) +
+  theme_bw()
+
+pca.plt
+```
+
+After batch correction using `limma()`, we can see that the samples were quite grouped based on the conditions although one CLL is closed to the control group.
+
+## Differential gene expression analysis
+
+```{r, message=FALSE, warning=FALSE}
+# Generate a table for gene expression
+
+# RT vs CTRL
+res_RT_vs_CTRL <- lfcShrink(dds, contrast = c("condition", "RT", "CTRL"), type = "normal")
+
+# CLL vs CTRL
+res_CLL_vs_CTRL <- lfcShrink(dds, contrast = c("condition", "CLL", "CTRL"), type = "normal")
+
+# RT vs CLL
+res_RT_vs_CLL <- lfcShrink(dds, contrast = c("condition", "RT", "CLL"), type = "normal")
+```
+
+```{r}
+# See the results
+head(res_RT_vs_CLL)
+```
+
+## Convert mouse to human ensemble ids
+
+```{r}
+# Get orthologs
+path_to_ortholog <- str_c(path_to_ref_transcriptome, "/mouse_human_ortholog.txt")
+orthologs <- read.csv(path_to_ortholog)
+head(orthologs)
+```
+
+```{r}
+# Use left_join to convert mouse to human ensembl ids
+human_res_RT_vs_CTRL <- as.data.frame(res_RT_vs_CTRL) %>%
+  rownames_to_column("Mouse_Ensembl_ID") %>%
+  left_join(orthologs, by = c("Mouse_Ensembl_ID" = "Mouse.gene.stable.ID"))
+
+human_res_CLL_vs_CTRL <- as.data.frame(res_CLL_vs_CTRL) %>%
+  rownames_to_column("Mouse_Ensembl_ID") %>%
+  left_join(orthologs, by = c("Mouse_Ensembl_ID" = "Mouse.gene.stable.ID"))
+
+human_res_RT_vs_CLL <- as.data.frame(res_RT_vs_CLL) %>%
+  rownames_to_column("Mouse_Ensembl_ID") %>%
+  left_join(orthologs, by = c("Mouse_Ensembl_ID" = "Mouse.gene.stable.ID"))
+```
+
+```{r, eval=FALSE}
+# Save the expression result
+saveRDS(human_res_RT_vs_CTRL, path_to_save_RT_vs_CRTL_dea)
+saveRDS(human_res_CLL_vs_CTRL, path_to_save_CLL_vs_CRTL_dea)
+saveRDS(human_res_RT_vs_CLL, path_to_save_RT_vs_CLL_dea)
+```
+
+## Plot heatmap of gene expression
+
+```{r, message=FALSE, warning=FALSE}
+# Import the relevant package
+library(pheatmap)
+library(RColorBrewer)
+```
+
+```{r}
+# Data transformation
+vsd <- vst(dds, blind=FALSE)       # Variance-stabilizing transformation
+#rld <- rlog(dds_filtered, blind=FALSE)      # Regularized log transformation
+
+# Extract transformed expression matrix
+expr_mat <- assay(vsd)
+
+# Calculate z-scores
+zscore_mat <- t(scale(t(expr_mat)))
+```
+
+```{r}
+# Define samples in each condition
+CTRL_sample <- colData$samples[colData$condition == "CTRL"]
+CLL_sample <- colData$samples[colData$condition == "CLL"]
+RT_sample <- colData$samples[colData$condition == "RT"]
+```
+
+### CLL vs CTRL
+
+```{r}
+# Select only CLL vs CTRL
+zscore_mat_CLL_vs_CTRL <- zscore_mat[, match(union(CTRL_sample, CLL_sample), colnames(zscore_mat))]
+```
+
+```{r}
+# Change column names of the matrix
+new_col_names <- str_c(
+  colData$samples[match(colnames(zscore_mat_CLL_vs_CTRL), colData$samples)], 
+  "_", 
+  colData$condition[match(colnames(zscore_mat_CLL_vs_CTRL), colData$samples)]
+  ) 
+colnames(zscore_mat_CLL_vs_CTRL) <- new_col_names
+```
+
+```{r}
+# Extract main and sub- clusters info from column names
+conditions <-  ifelse(grepl("CTRL", colnames(zscore_mat_CLL_vs_CTRL)), "CTRL", "CLL")
+
+# Create annotation dataframe
+annotation_col <- data.frame(
+  Condition = factor(conditions, levels = c("CTRL", "CLL"))
+)
+annotation_col <- annotation_col[, "Condition", drop = FALSE]  # keep as data frame
+rownames(annotation_col) <- colnames(zscore_mat_CLL_vs_CTRL)
+
+# Order by Condition and then Case 
+order_cols <- order(annotation_col$Condition)
+zscore_mat_ordered <- zscore_mat_CLL_vs_CTRL[, order_cols]
+annotation_col_ordered <- annotation_col[order_cols, , drop = FALSE]
+```
+
+```{r, fig.height=8, fig.width=4}
+# Filter for significant DE genes
+sig_genes <- human_res_CLL_vs_CTRL[!is.na(human_res_CLL_vs_CTRL$padj) & human_res_CLL_vs_CTRL$padj < 0.05 & abs(human_res_CLL_vs_CTRL$log2FoldChange) > 1.5, ]
+
+# Order genes by log2FoldChange (descending: up -> down)
+gene_order <- sig_genes$Mouse_Ensembl_ID[order(sig_genes$log2FoldChange, decreasing = FALSE)]
+
+# Subset zscore matrix
+zscore_mat_sig <- zscore_mat_ordered[gene_order, ]
+
+# Plot heatmap
+pheatmap(
+  zscore_mat_sig,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  show_rownames = FALSE,
+  color = colorRampPalette(rev(brewer.pal(11, "RdYlBu")))(100),
+  annotation_col = annotation_col_ordered,
+  fontsize = 8,
+  fontsize_row = 7,
+  fontsize_col = 7,
+  gaps_col = which(diff(as.numeric(factor(annotation_col_ordered$Condition))) != 0)
+)
+```
+
+### RT vs CTRL
+
+```{r}
+# Select only CLL vs CTRL
+zscore_mat_RT_vs_CTRL <- zscore_mat[, match(union(CTRL_sample, RT_sample), colnames(zscore_mat))]
+```
+
+```{r}
+# Change column names of the matrix
+new_col_names <- str_c(
+  colData$samples[match(colnames(zscore_mat_RT_vs_CTRL), colData$samples)], 
+  "_", 
+  colData$condition[match(colnames(zscore_mat_RT_vs_CTRL), colData$samples)]
+  ) 
+colnames(zscore_mat_RT_vs_CTRL) <- new_col_names
+```
+
+```{r}
+# Extract main and sub- clusters info from column names
+conditions <-  ifelse(grepl("CTRL", colnames(zscore_mat_RT_vs_CTRL)), "CTRL", "RT")
+
+# Create annotation dataframe
+annotation_col <- data.frame(
+  Condition = factor(conditions, levels = c("CTRL", "RT"))
+)
+annotation_col <- annotation_col[, "Condition", drop = FALSE]  # keep as data frame
+rownames(annotation_col) <- colnames(zscore_mat_RT_vs_CTRL)
+
+# Order by Condition and then Case 
+order_cols <- order(annotation_col$Condition)
+zscore_mat_ordered <- zscore_mat_RT_vs_CTRL[, order_cols]
+annotation_col_ordered <- annotation_col[order_cols, , drop = FALSE]
+```
+
+```{r, fig.height=8, fig.width=4}
+# Filter for significant DE genes
+sig_genes <- human_res_RT_vs_CTRL[!is.na(human_res_RT_vs_CTRL$padj) & human_res_RT_vs_CTRL$padj < 0.05 & abs(human_res_RT_vs_CTRL$log2FoldChange) > 1.5, ]
+
+# Order genes by log2FoldChange (descending: up -> down)
+gene_order <- sig_genes$Mouse_Ensembl_ID[order(sig_genes$log2FoldChange, decreasing = FALSE)]
+
+# Subset zscore matrix
+zscore_mat_sig <- zscore_mat_ordered[gene_order, ]
+
+# Plot heatmap
+pheatmap(
+  zscore_mat_sig,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  show_rownames = FALSE,
+  color = colorRampPalette(rev(brewer.pal(11, "RdYlBu")))(100),
+  annotation_col = annotation_col_ordered,
+  fontsize = 8,
+  fontsize_row = 7,
+  fontsize_col = 7,
+  gaps_col = which(diff(as.numeric(factor(annotation_col_ordered$Condition))) != 0)
+)
+```
+
+# Gene Set Enrichment Analysis (GSEA)
+
+```{r, message=FALSE, warning=FALSE}
+# Import the related libraries in functional enrichment analysis
+library(clusterProfiler)
+library(enrichplot)
+library(msigdbr)
+library(org.Hs.eg.db)
+```
+
+## CLL vs CTRL
+
+```{r}
+# Manipulate the expression data
+dea <- human_res_CLL_vs_CTRL[!is.na(human_res_CLL_vs_CTRL$Gene.stable.ID), ]
+lfc_vector <- dea$log2FoldChange # Create a named vector ranked based on the log2 fold change
+names(lfc_vector) <- dea$Gene.stable.ID
+lfc_vector <- na.omit(lfc_vector) # Omit any NA values
+lfc_vector <- sort(lfc_vector, decreasing = TRUE) # Sort the log2 fold change in descending order
+lfc_vector <- lfc_vector[!duplicated(names(lfc_vector))]
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Hallmark
+HM_gsea <- HM_GSEA(lfc_vector, gene_ident = "ensembl_gene")
+
+# Collect the HM GSEA result
+HM_GSEA.result <- HM_gsea@result
+HM_GSEA_selected.result <- HM_GSEA.result %>%
+  as_tibble() %>%
+  dplyr::select(c(Description, NES, pvalue, p.adjust))
+
+DT::datatable(HM_GSEA_selected.result, options = list(scrollX = TRUE))
+```
+
+```{r}
+# Bar plot of GSEA 
+gsea_bp <- rbind(HM_GSEA_selected.result[HM_GSEA_selected.result$Description == "HALLMARK_MYC_TARGETS_V1",],
+                 HM_GSEA_selected.result[HM_GSEA_selected.result$Description == "HALLMARK_MYC_TARGETS_V2",],
+                 HM_GSEA_selected.result[HM_GSEA_selected.result$Description == "HALLMARK_E2F_TARGETS",],
+                 HM_GSEA_selected.result[HM_GSEA_selected.result$Description == "HALLMARK_DNA_REPAIR",],
+                 HM_GSEA_selected.result[HM_GSEA_selected.result$Description == "HALLMARK_INFLAMMATORY_RESPONSE",],
+                 HM_GSEA_selected.result[HM_GSEA_selected.result$Description == "HALLMARK_TNFA_SIGNALING_VIA_NFKB",],
+                 HM_GSEA_selected.result[HM_GSEA_selected.result$Description == "HALLMARK_IL6_JAK_STAT3_SIGNALING",],
+                 HM_GSEA_selected.result[HM_GSEA_selected.result$Description == "HALLMARK_INTERFERON_GAMMA_RESPONSE",],
+                 HM_GSEA_selected.result[HM_GSEA_selected.result$Description == "HALLMARK_IL2_STAT5_SIGNALING",]
+)
+
+gsea_bp$Description <- gsub("HALLMARK_", "", gsea_bp$Description)
+gsea_bp$Description <- gsub("_", " ", gsea_bp$Description)
+
+gsea_bp$Description <- factor(gsea_bp$Description, levels = gsea_bp$Description)
+gsea_bp$Direction <- "Up"
+gsea_bp$Direction[gsea_bp$NES<0] <- "Down"
+
+gsea_bar.plt <- ggplot(gsea_bp, aes(x=Description, y=NES, fill=Direction)) +
+  geom_bar(stat = "identity", color="black", width = 0.75) +  
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  geom_hline(yintercept = 0) + 
+  ylab("NES") + xlab(NULL) + 
+  scale_fill_manual(values=c("#8882BA", "#EF7F6A")) + theme(legend.position = "none")
+
+gsea_bar.plt
+```
+
+## RT vs CTRL
+
+```{r}
+# Manipulate the expression data
+dea <- human_res_RT_vs_CTRL[!is.na(human_res_RT_vs_CTRL$Gene.stable.ID), ]
+lfc_vector <- dea$log2FoldChange # Create a named vector ranked based on the log2 fold change
+names(lfc_vector) <- dea$Gene.stable.ID
+lfc_vector <- na.omit(lfc_vector) # Omit any NA values
+lfc_vector <- sort(lfc_vector, decreasing = TRUE) # Sort the log2 fold change in descending order
+lfc_vector <- lfc_vector[!duplicated(names(lfc_vector))]
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Hallmark
+HM_gsea <- HM_GSEA(lfc_vector, gene_ident = "ensembl_gene")
+
+# Collect the HM GSEA result
+HM_GSEA.result <- HM_gsea@result
+HM_GSEA_selected.result <- HM_GSEA.result %>%
+  as_tibble() %>%
+  dplyr::select(c(Description, NES, pvalue, p.adjust))
+
+DT::datatable(HM_GSEA_selected.result, options = list(scrollX = TRUE))
+```
+
+```{r}
+# Bar plot of GSEA 
+gsea_bp <- rbind(HM_GSEA_selected.result[HM_GSEA_selected.result$Description == "HALLMARK_MYC_TARGETS_V2",],
+                 HM_GSEA_selected.result[HM_GSEA_selected.result$Description == "HALLMARK_INFLAMMATORY_RESPONSE",],
+                 HM_GSEA_selected.result[HM_GSEA_selected.result$Description == "HALLMARK_TNFA_SIGNALING_VIA_NFKB",],
+                 HM_GSEA_selected.result[HM_GSEA_selected.result$Description == "HALLMARK_IL6_JAK_STAT3_SIGNALING",],
+                 HM_GSEA_selected.result[HM_GSEA_selected.result$Description == "HALLMARK_INTERFERON_GAMMA_RESPONSE",],
+                 HM_GSEA_selected.result[HM_GSEA_selected.result$Description == "HALLMARK_IL2_STAT5_SIGNALING",],
+                 HM_GSEA_selected.result[HM_GSEA_selected.result$Description == "HALLMARK_APOPTOSIS",]
+)
+
+gsea_bp$Description <- gsub("HALLMARK_", "", gsea_bp$Description)
+gsea_bp$Description <- gsub("_", " ", gsea_bp$Description)
+
+gsea_bp$Description <- factor(gsea_bp$Description, levels = gsea_bp$Description)
+gsea_bp$Direction <- "Up"
+gsea_bp$Direction[gsea_bp$NES<0] <- "Down"
+
+gsea_bar.plt <- ggplot(gsea_bp, aes(x=Description, y=NES, fill=Direction)) +
+  geom_bar(stat = "identity", color="black", width = 0.75) +  
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  geom_hline(yintercept = 0) + 
+  ylab("NES") + xlab(NULL) + 
+  scale_fill_manual(values=c("#8882BA", "#EF7F6A")) + theme(legend.position = "none")
+
+gsea_bar.plt
+```
+
+Our results for both CLL vs CTRL and RT vs CRTL were consistent with the original article in Figure 2B.
+
+## RT vs CLL
+
+```{r}
+# Manipulate the expression data
+dea <- human_res_RT_vs_CLL[!is.na(human_res_RT_vs_CLL$Gene.stable.ID), ]
+lfc_vector <- dea$log2FoldChange # Create a named vector ranked based on the log2 fold change
+names(lfc_vector) <- dea$Gene.stable.ID
+lfc_vector <- na.omit(lfc_vector) # Omit any NA values
+lfc_vector <- sort(lfc_vector, decreasing = TRUE) # Sort the log2 fold change in descending order
+lfc_vector <- lfc_vector[!duplicated(names(lfc_vector))]
+```
+
+### Hallmark
+
+```{r, message=FALSE, warning=FALSE}
+# Hallmark
+HM_gsea <- HM_GSEA(lfc_vector, gene_ident = "ensembl_gene")
+
+# Collect the HM GSEA result
+HM_GSEA.result <- HM_gsea@result
+HM_GSEA_selected.result <- HM_GSEA.result %>%
+  as_tibble() %>%
+  dplyr::select(c(Description, NES, pvalue, p.adjust))
+
+DT::datatable(HM_GSEA_selected.result, options = list(scrollX = TRUE))
+```
+
+```{r}
+# Bar plot of GSEA 
+gsea_bp <- rbind(HM_GSEA_selected.result[HM_GSEA_selected.result$Description == "HALLMARK_OXIDATIVE_PHOSPHORYLATION",],
+                 HM_GSEA_selected.result[HM_GSEA_selected.result$Description == "HALLMARK_MYC_TARGETS_V1",],
+                 HM_GSEA_selected.result[HM_GSEA_selected.result$Description == "HALLMARK_MYC_TARGETS_V2",],
+                 HM_GSEA_selected.result[HM_GSEA_selected.result$Description == "HALLMARK_E2F_TARGETS",],
+                 HM_GSEA_selected.result[HM_GSEA_selected.result$Description == "HALLMARK_G2M_CHECKPOINT",],
+                 HM_GSEA_selected.result[HM_GSEA_selected.result$Description == "HALLMARK_DNA_REPAIR",],
+                 HM_GSEA_selected.result[HM_GSEA_selected.result$Description == "HALLMARK_INFLAMMATORY_RESPONSE",],
+                 HM_GSEA_selected.result[HM_GSEA_selected.result$Description == "HALLMARK_TNFA_SIGNALING_VIA_NFKB",],
+                 HM_GSEA_selected.result[HM_GSEA_selected.result$Description == "HALLMARK_IL6_JAK_STAT3_SIGNALING",],
+                 HM_GSEA_selected.result[HM_GSEA_selected.result$Description == "HALLMARK_INTERFERON_GAMMA_RESPONSE",],
+                 HM_GSEA_selected.result[HM_GSEA_selected.result$Description == "HALLMARK_IL2_STAT5_SIGNALING",],
+                 HM_GSEA_selected.result[HM_GSEA_selected.result$Description == "HALLMARK_APOPTOSIS",]
+)
+
+gsea_bp$Description <- gsub("HALLMARK_", "", gsea_bp$Description)
+gsea_bp$Description <- gsub("_", " ", gsea_bp$Description)
+
+gsea_bp$Description <- factor(gsea_bp$Description, levels = gsea_bp$Description)
+gsea_bp$Direction <- "Up"
+gsea_bp$Direction[gsea_bp$NES<0] <- "Down"
+
+gsea_bar.plt <- ggplot(gsea_bp, aes(x=Description, y=NES, fill=Direction)) +
+  geom_bar(stat = "identity", color="black", width = 0.75) +  
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  geom_hline(yintercept = 0) + 
+  ylab("NES") + xlab(NULL) + 
+  scale_fill_manual(values=c("#8882BA", "#EF7F6A")) + theme(legend.position = "none")
+
+gsea_bar.plt
+```
+
+We will explore the trends of hallmark terms reported from other single-cell pseudobulk studies such as Nadeu et al. (2022) and Hing et al (2023). From those studies, the terms such as E2F targets, Myc targets, and oxidative phosphorylation (OXPHOS) were upregulated.
+
+```{r, message=FALSE, warning=FALSE, fig.height=4, fig.width=18}
+# GSEA plot for HALLMARK_E2F_TARGETS, HALLMARK_MYC_TARGETS_V1, and HALLMARK_OXIDATIVE_PHOSPHORYLATION
+
+E2F_gsea.plt <- gseaplot(HM_gsea, 
+                          by = "runningScore", 
+                          title = "HALLMARK_E2F_TARGETS", 
+                          geneSetID = "HALLMARK_E2F_TARGETS",
+                          base_size = 10) +
+  theme(axis.text.x = element_text(angle = 0, hjust = 1))
+
+Myc_gsea.plt <- gseaplot(HM_gsea, 
+                          by = "runningScore", 
+                          title = "HALLMARK_MYC_TARGETS_V1", 
+                          geneSetID = "HALLMARK_MYC_TARGETS_V1",
+                          base_size = 10) +
+  theme(axis.text.x = element_text(angle = 0, hjust = 1))
+
+OXPHOS_gsea.plt <- gseaplot(HM_gsea, 
+                          by = "runningScore", 
+                          title = "HALLMARK_OXIDATIVE_PHOSPHORYLATION", 
+                          geneSetID = "HALLMARK_OXIDATIVE_PHOSPHORYLATION",
+                          base_size = 10) +
+  theme(axis.text.x = element_text(angle = 0, hjust = 1))
+
+E2F_gsea.plt + Myc_gsea.plt + OXPHOS_gsea.plt
+```
+
+### GO:BP
+
+```{r, message=FALSE, warning=FALSE}
+# GO:BP
+GOBP_gsea <- GO_GSEA(lfc_vector, gene_ident = "ensembl_gene")
+
+# Collect the GSEA result
+GOBP_GSEA.result <- GOBP_gsea@result
+GOBP_GSEA_selected.result <- GOBP_GSEA.result %>%
+  as_tibble() %>%
+  dplyr::select(c(Description, NES, pvalue, p.adjust))
+
+DT::datatable(GOBP_GSEA_selected.result, options = list(scrollX = TRUE))
+```
+
+We will also explore the trends of GO:BP terms reported from other single-cell studies such as Nadeu et al. (2022) and Hing et al (2023). From those studies, the terms such as OXPHOS and mitochondrial translation were upregulated while BCR signalling was downregulated.
+
+```{r, message=FALSE, warning=FALSE, fig.height=4, fig.width=18}
+# GSEA plot for GOBP_OXIDATIVE_PHOSPHORYLATION, GOBP_B_CELL_RECEPTOR_SIGNALING_PATHWAY, and GOBP_MITOCHONDRIAL_TRANSLATION
+
+OXPHOS_GO_gsea.plt <- gseaplot(GOBP_gsea, 
+                          by = "runningScore", 
+                          title = "GOBP_OXIDATIVE_PHOSPHORYLATION", 
+                          geneSetID = "GOBP_OXIDATIVE_PHOSPHORYLATION",
+                          base_size = 10) +
+  theme(axis.text.x = element_text(angle = 0, hjust = 1))
+
+BCR_GO_gsea.plt <- gseaplot(GOBP_gsea, 
+                          by = "runningScore", 
+                          title = "GOBP_B_CELL_RECEPTOR_SIGNALING_PATHWAY", 
+                          geneSetID = "GOBP_B_CELL_RECEPTOR_SIGNALING_PATHWAY",
+                          base_size = 10) +
+  theme(axis.text.x = element_text(angle = 0, hjust = 1))
+
+mitochondrial_GO_gsea.plt <- gseaplot(GOBP_gsea, 
+                          by = "runningScore", 
+                          title = "GOBP_MITOCHONDRIAL_TRANSLATION", 
+                          geneSetID = "GOBP_MITOCHONDRIAL_TRANSLATION",
+                          base_size = 10) +
+  theme(axis.text.x = element_text(angle = 0, hjust = 1))
+
+OXPHOS_GO_gsea.plt + BCR_GO_gsea.plt + mitochondrial_GO_gsea.plt
+```
+
+We also performed GSEA with additional enrichment systems such as KEGG pathways, Reactome, and WikiPath.
+
+### KEGG pathway
+
+```{r, message=FALSE, warning=FALSE}
+# KEGG pathway
+KEGG_gsea <- KEGG_GSEA(lfc_vector, gene_ident = "ensembl_gene")
+
+# Collect the HM GSEA result
+KEGG_GSEA.result <- KEGG_gsea@result
+KEGG_GSEA_selected.result <- KEGG_GSEA.result %>%
+  as_tibble() %>%
+  dplyr::select(c(Description, NES, pvalue, p.adjust))
+
+DT::datatable(KEGG_GSEA_selected.result, options = list(scrollX = TRUE))
+```
+
+### Reactome
+
+```{r, message=FALSE, warning=FALSE}
+# REACTOME
+REACTOME_gsea <- REACTOME_GSEA(lfc_vector, gene_ident = "ensembl_gene")
+
+# Collect the HM GSEA result
+REACTOME_GSEA.result <- REACTOME_gsea@result
+REACTOME_GSEA_selected.result <- REACTOME_GSEA.result %>%
+  as_tibble() %>%
+  dplyr::select(c(Description, NES, pvalue, p.adjust))
+
+DT::datatable(REACTOME_GSEA_selected.result, options = list(scrollX = TRUE))
+```
+
+### WikiPath
+
+```{r, message=FALSE, warning=FALSE}
+# WikiPath
+WIKIPATH_gsea <- WIKIPATH_GSEA(lfc_vector, gene_ident = "ensembl_gene")
+
+# Collect the HM GSEA result
+WIKIPATH_GSEA.result <- WIKIPATH_gsea@result
+WIKIPATH_GSEA_selected.result <- WIKIPATH_GSEA.result %>%
+  as_tibble() %>%
+  dplyr::select(c(Description, NES, pvalue, p.adjust))
+
+DT::datatable(WIKIPATH_GSEA_selected.result, options = list(scrollX = TRUE))
+```
+
+```{r, eval=FALSE}
+# Save gene expression and GSEA data
+saveRDS(HM_gsea, path_to_save_hm_gsea)
+saveRDS(GOBP_gsea, path_to_save_go_gsea)
+saveRDS(KEGG_gsea, path_to_save_kegg_gsea)
+saveRDS(REACTOME_gsea, path_to_save_reactome_gsea)
+saveRDS(WIKIPATH_gsea, path_to_save_wikipath_gsea)
+```
+
+# Session Information
+
+```{r}
+sessionInfo()
+```
+
+
+
