@@ -1,0 +1,431 @@
+---
+title: "Overlapping_genes_DESeq2"
+author: "Pakorn Sagulkoo"
+format:
+  html:
+    toc: true
+    toc-location: left
+    embed-resources: true
+editor: visual
+---
+
+After we carried out psedobulk gene expression analysis and GSEA for several RT scRNA-seq datasets, we will evaluate the consistency of gene expression results across those studies with calculated from Pseudobulk analysis using DESeq2. We will explore overlapping genes among those studies.
+
+# Import the relevant packages and set working path directory
+
+```{r, setup, message=FALSE, warning=FALSE}
+# Import the relavant packages
+library(UpSetR)
+library(dplyr)
+library(tibble)
+library(stringr)
+library(ggplot2)
+library(ggrepel)
+```
+
+```{r}
+# Check root path
+here::here()
+```
+
+# Define paths
+
+```{r}
+# Define paths to load and save files
+path_to_single_cell_analysis <- here::here("scRNAseq/systematic_review")
+path_to_save_up_common_degs <- here::here("scRNAseq/systematic_review/6-consistency_assessment/overlapping_genes/deseq2/1.upregulated_common_degs.txt")
+path_to_save_down_common_degs <- here::here("scRNAseq/systematic_review/6-consistency_assessment/overlapping_genes/deseq2/1.downregulated_common_degs.txt")
+path_to_save_up_consist_rp <- here::here("scRNAseq/systematic_review/6-consistency_assessment/overlapping_genes/deseq2/2.upregulated_rp.rds")
+path_to_save_down_consist_rp <- here::here("scRNAseq/systematic_review/6-consistency_assessment/overlapping_genes/deseq2/2.downregulated_rp.rds")
+path_to_save_up_consist_rs <- here::here("scRNAseq/systematic_review/6-consistency_assessment/overlapping_genes/deseq2/2.upregulated_rs.rds")
+path_to_save_down_consist_rs <- here::here("scRNAseq/systematic_review/6-consistency_assessment/overlapping_genes/deseq2/2.downregulated_rs.rds")
+path_to_save_up_consist_degs <- here::here("scRNAseq/systematic_review/6-consistency_assessment/overlapping_genes/deseq2/3.upregulated_consist_degs.txt")
+path_to_save_down_consist_degs <- here::here("scRNAseq/systematic_review/6-consistency_assessment/overlapping_genes/deseq2/3.downregulated_consist_degs.txt")
+```
+
+# Load data and functions
+
+```{r, message=FALSE, warning=FALSE}
+# Source functions
+source(here::here("bin/utils.R"))
+```
+
+```{r}
+# List file names of all studies
+study.lst <- c("1-Penter_2021_GSE165087", "2-Nadeu_2022", "3-Hing_2023_GSE205704", "4-Parry_2023b", "5-Rigo_2024")
+study.lst
+```
+
+```{r}
+# Create names for list later
+names.lst <- sub(
+  "^\\d+-([A-Za-z]+)_([0-9]{4}[A-Za-z]?).*$",  # capture name and year
+  "\\1(\\2)",                         # output as Name(Year)
+  study.lst
+)
+names.lst
+```
+
+```{r}
+# Extract only name of studies
+study_names <- sub("^\\d+-([^_0-9]+).*", "\\1", study.lst)
+study_names
+```
+
+# Pseudobulk gene expression using DESeq2
+
+```{r}
+# Load expression results in each study and collect in a list
+path_to_download <- str_c(path_to_single_cell_analysis, "/", study.lst, "/pseudo_bulk_deseq2/", study_names, "_deseq2_dea.rds")
+dea.lst <- purrr::pmap(
+  list(path_to_download), 
+  function(path){
+    expr.mat <- readRDS(path)
+    return(expr.mat)
+  }
+)
+names(dea.lst) <- names.lst
+```
+
+## Upregulated genes
+
+```{r, message=FALSE, warning=FALSE, fig.height=8, fig.width=12}
+# Extract adjusted significant upregulated genes
+sig_upreg_gene.lst <- purrr::pmap(
+  list(dea.lst),
+  function(dea){
+    dea <- dea[!is.na(dea$padj), ] # remove genes with padj = NA
+    selected_gene <- rownames(dea[dea$log2FoldChange > 0.25 & dea$padj < 0.05,])
+    return(selected_gene)
+  }
+)
+
+# Reorder the list first
+sig_upreg_gene.lst <- sig_upreg_gene.lst %>%
+  purrr::discard(~ length(.x) == 0) %>%   # drop empty ones
+  rev()                                   # reverse order
+
+# Convert to UpSetR input
+upset_data <- fromList(sig_upreg_gene.lst)
+
+# Plot UpSetR
+upset.plt <- upset(
+  upset_data,
+  sets = colnames(upset_data),
+  keep.order = TRUE,
+  nintersects = NA,
+  point.size = 3.5,
+  line.size = 1,
+  text.scale = c(2, 2, 2, 2, 2.5, 2.5), # defined as c(intersection size title, intersection size tick labels, set size title, set size tick labels, set names, numbers above bars)
+  mb.ratio = c(0.55, 0.45) # Adjust margin: give more space to the bottom/left for those large labels
+)
+
+upset.plt
+```
+
+We will collect the common upregulated DEGs from Penter and Rigo study.
+
+```{r}
+# Collect common upregulated DEGs found in two studies (Penter and Rigo)
+two_common_up_degs <- Reduce(intersect, sig_upreg_gene.lst[names(sig_upreg_gene.lst) %in% c("Penter(2021)", "Rigo(2024)")])
+two_common_up_degs
+```
+
+## Downregulated genes
+
+Since no downregulated DEGs were found in Nadeu study, we will remove it from the plot.
+
+```{r, message=FALSE, warning=FALSE, fig.height=8, fig.width=12}
+# Extract adjusted significant downregulated genes
+sig_downreg_gene.lst <- purrr::pmap(
+  list(dea.lst),
+  function(dea){
+    dea <- dea[!is.na(dea$padj), ] # remove genes with padj = NA
+    selected_gene <- rownames(dea[dea$log2FoldChange < (-0.25) & dea$padj < 0.05,])
+    return(selected_gene)
+  }
+)
+
+# Reorder the list first
+sig_downreg_gene.lst <- sig_downreg_gene.lst %>%
+  purrr::discard(~ length(.x) == 0) %>%   # drop empty ones
+  rev()                                   # reverse order
+
+# Convert to UpSetR input
+upset_data <- fromList(sig_downreg_gene.lst)
+
+# Plot UpSetR
+upset.plt <- upset(
+  upset_data,
+  sets = colnames(upset_data),
+  keep.order = TRUE,
+  nintersects = NA,
+  point.size = 3.5,
+  line.size = 1,
+  text.scale = c(2, 2, 2, 2, 2.5, 2.5), # defined as c(intersection size title, intersection size tick labels, set size title, set size tick labels, set names, numbers above bars)
+  mb.ratio = c(0.55, 0.45) # Adjust margin: give more space to the bottom/left for those large labels
+)
+
+upset.plt
+```
+
+```{r}
+# Collect common downregulated DEGs found in three studies (Penter, Parry, and Rigo)
+three_common_down_degs <- Reduce(intersect, 
+                    sig_downreg_gene.lst[names(sig_downreg_gene.lst) %in% c("Penter(2021)", "Parry(2023b)", "Rigo(2024)")]
+                    )
+three_common_down_degs
+```
+
+```{r}
+# Collect common downregulated DEGs found in two studies (Penter and Rigo)
+two_common_down_degs <- Reduce(intersect, sig_downreg_gene.lst[names(sig_downreg_gene.lst) %in% c("Penter(2021)", "Rigo(2024)")])
+two_common_down_degs
+```
+
+In comparison with the pseudobulk analysis performed using Seurat, no common DEGs were detected. Moreover, the numbers of both up- and downregulated DEGs in most studies (e.g. Nadeu, Hing and Parry) were very low. This is probably due to the small numbers of cells and low read counts, which result in low mean counts and, consequently, reduced statistical power in DESeq2. By contrast, two other studies yielded high numbers of individual and common DEGs (138 upregulated and 170 downregulated). In the Penter study, the inclusion of nine cases (27 samples) increased the statistical power to detect significant genes. In the Rigo study, pseudo-cases were created by artificially splitting a case into two, which may have reduced variance across samples and limited the number of outliers, thereby reducing the occurrence of NA values in the adjusted p-values.
+
+```{r, eval=FALSE}
+# Save the common DEG results
+write.table(
+  two_common_up_degs,
+  file = path_to_save_up_common_degs,   
+  sep = "\t",        
+  quote = FALSE,     
+  row.names = FALSE,
+  col.names = FALSE
+)
+
+write.table(
+  two_common_down_degs,
+  file = path_to_save_down_common_degs,   
+  sep = "\t",        
+  quote = FALSE,     
+  row.names = FALSE,
+  col.names = FALSE
+)
+```
+
+# Evaluate gene-ranked consistency
+
+From the previous step, we got 138 and 170 for common up- and downregulated DEGs from two studies (Penter and Rigo). However, we are not sure if these DEGs are common from ranking by chance. We will evaluate thier rank based on log2FC by using RankProd package. The package evaluates the statistics of gene rank across several gene expression studies by modelling ranked genes as probability distribution for the sum of outcomes by rolling *K* dices with *N* faces, similar to measuring *N* genes in expression analysis across *K* replicates or studies.
+
+```{r, message=FALSE, warning=FALSE}
+# Import the relavant packages
+library(RankProd)
+```
+
+```{r}
+# Join dea tables from all studies but not Rigo
+common_dea.df <- dea.lst[[1]] %>%
+  rownames_to_column("gene") %>%
+  mutate(log2FC_1 = log2FoldChange) %>%
+  select(gene, log2FC_1)
+
+# Loop over the rest
+for (i in 2:length(dea.lst)) {
+  # Rename dynamically with :=
+  df_i <- dea.lst[[i]] %>%
+    rownames_to_column("gene") %>%
+    mutate(!!paste0("log2FC_", i) := log2FoldChange) %>% 
+    select(gene, !!paste0("log2FC_", i))
+  
+  # Join onto the growing table
+  common_dea.df <- full_join(common_dea.df, df_i, by = "gene")
+}
+
+# Result: one data frame with gene and log2FC_x columns
+head(common_dea.df)
+```
+
+## Rank product
+
+```{r, message=FALSE, warning=FALSE}
+# Perform Rank Product
+expr_mat <- as.matrix(common_dea.df[ , -1])   # all columns except gene
+rownames(expr_mat) <- common_dea.df$gene
+cl=rep(1, ncol(expr_mat))
+RP.out <- RankProducts(expr_mat, cl, na.rm=FALSE, logged=TRUE, rand=123)
+```
+
+```{r}
+# Summarise results of significant consistent genes
+RP_sig_results <- topGene(RP.out, cutoff=0.05, method="pfp", logged=TRUE, logbase=2, gene.names=rownames(expr_mat))
+```
+
+```{r}
+# Upregulated genes table
+RP_up_genes.df <- RP_sig_results[["Table2"]]
+DT::datatable(RP_up_genes.df, options = list(scrollX = TRUE))
+```
+
+```{r}
+# Downregulated genes table
+RP_down_genes.df <- RP_sig_results[["Table1"]]
+DT::datatable(RP_down_genes.df, options = list(scrollX = TRUE))
+```
+
+We will overlapping rank-consistent genes between results from Seurat and DESeq2.
+
+```{r}
+# Define path for seurat results
+path_to_seurat_up_consist_rp <- here::here("scRNAseq/systematic_review/6-consistency_assessment/overlapping_genes/seurat/2.upregulated_rp.rds")
+path_to_seurat_down_consist_rp <- here::here("scRNAseq/systematic_review/6-consistency_assessment/overlapping_genes/seurat/2.downregulated_rp.rds")
+
+# Import the data
+seurat_upregulated_rp_result <- readRDS(path_to_seurat_up_consist_rp)
+seurat_downregulated_rp_result <- readRDS(path_to_seurat_down_consist_rp)
+```
+
+```{r}
+# Szymkiewicz–Simpson index between Seurat and DESeq2 upregulated rank-consistent genes
+n_intersect <- length(intersect(rownames(RP_up_genes.df), rownames(seurat_upregulated_rp_result)))
+total_n <- min(nrow(RP_up_genes.df), nrow(seurat_upregulated_rp_result)) # the number for seurat < deseq2
+ss_idx <- n_intersect/total_n
+ss_idx
+```
+
+```{r}
+# Szymkiewicz–Simpson index between Seurat and DESeq2 downregulated rank-consistent genes
+n_intersect <- length(intersect(rownames(RP_down_genes.df), rownames(seurat_downregulated_rp_result)))
+total_n <- min(nrow(RP_down_genes.df), nrow(seurat_downregulated_rp_result)) # the number for seurat < deseq2
+ss_idx <- n_intersect/total_n
+ss_idx
+```
+
+We observed from the Szymkiewicz–Simpson indices for both up- and downregulated rank-consistent genes, the results obtained from Seurat and DESeq2 were comparable. This indicates that both methods are suitable for pseudobulk analysis, with DESeq2 providing a stricter statistical comparison of gene expression.
+
+```{r, eval=FALSE}
+# Save the RP results
+saveRDS(RP_up_genes.df, path_to_save_up_consist_rp)
+saveRDS(RP_down_genes.df, path_to_save_down_consist_rp)
+```
+
+## Rank sum
+
+```{r, message=FALSE, warning=FALSE}
+# Perform Rank Sum
+RS.out <- RankProducts(expr_mat, cl, na.rm=FALSE, calculateProduct=FALSE, logged=TRUE, rand=123)
+```
+
+```{r}
+# Summarise results of significant consistent genes
+RS_sig_results <- topGene(RS.out, cutoff=0.05, method="pfp", logged=TRUE, logbase=2, gene.names=rownames(expr_mat))
+```
+
+We will explore the RP results for both upregulated and downregulated genes.
+
+```{r}
+# Upregulated genes table
+RS_up_genes.df <- RS_sig_results[["Table2"]]
+DT::datatable(RS_up_genes.df, options = list(scrollX = TRUE))
+```
+
+```{r}
+# Downregulated genes table
+RS_down_genes.df <- RS_sig_results[["Table1"]]
+DT::datatable(RS_down_genes.df, options = list(scrollX = TRUE))
+```
+
+We will overlapping rank-consistent genes between results from Seurat and DESeq2.
+
+```{r}
+# Define path for seurat results
+path_to_seurat_up_consist_rs <- here::here("scRNAseq/systematic_review/6-consistency_assessment/overlapping_genes/seurat/2.upregulated_rs.rds")
+path_to_seurat_down_consist_rs <- here::here("scRNAseq/systematic_review/6-consistency_assessment/overlapping_genes/seurat/2.downregulated_rs.rds")
+
+# Import the data
+seurat_upregulated_rs_result <- readRDS(path_to_seurat_up_consist_rs)
+seurat_downregulated_rs_result <- readRDS(path_to_seurat_down_consist_rs)
+```
+
+```{r}
+# Szymkiewicz–Simpson index between Seurat and DESeq2 upregulated rank-consistent genes
+n_intersect <- length(intersect(rownames(RS_up_genes.df), rownames(seurat_upregulated_rs_result)))
+total_n <- min(nrow(RS_up_genes.df), nrow(seurat_upregulated_rs_result)) # the number for seurat < deseq2
+ss_idx <- n_intersect/total_n
+ss_idx
+```
+
+```{r}
+# Szymkiewicz–Simpson index between Seurat and DESeq2 downregulated rank-consistent genes
+n_intersect <- length(intersect(rownames(RS_down_genes.df), rownames(seurat_downregulated_rs_result)))
+total_n <- min(nrow(RS_down_genes.df), nrow(seurat_downregulated_rs_result)) # the number for seurat < deseq2
+ss_idx <- n_intersect/total_n
+ss_idx
+```
+
+```{r, eval=FALSE}
+# Save the RP results
+saveRDS(RS_up_genes.df, path_to_save_up_consist_rs)
+saveRDS(RS_down_genes.df, path_to_save_down_consist_rs)
+```
+
+# Find overlapping between common DEGs and significant consistent ranked genes
+
+```{r}
+# Collect consistent gene names from both up- and downregulated genes
+consist_up_genes <- rownames(RP_sig_results[["Table2"]])
+consist_down_genes <- rownames(RP_sig_results[["Table1"]])
+```
+
+After that, we will identify overlappping genes in both DEGs and consistent ranked genes.
+
+```{r}
+# Finding overlapping upregulated genes between DEGs and consistent ranking
+consist_rank_up_degs <- intersect(two_common_up_degs, consist_up_genes)
+consist_rank_up_degs
+```
+
+```{r}
+# Finding overlapping downregulated genes between DEGs and consistent ranking
+consist_rank_down_degs <- intersect(two_common_down_degs, consist_down_genes)
+consist_rank_down_degs
+```
+
+```{r, fig.height=10, fig.width=4}
+# Visualise the heatmap
+library(pheatmap)
+
+# Extract expression matrix with rank-consistent DEGs
+consiste_sig_genes <- c(consist_rank_up_degs, consist_rank_down_degs)
+consiste_sig_expr_mat <- expr_mat[consiste_sig_genes, ]
+colnames(consiste_sig_expr_mat) <- names.lst
+
+# Plot the heatmap
+pheatmap(consiste_sig_expr_mat, scale="none")
+```
+
+We will save these genes for further study and discussion.
+
+```{r, eval=FALSE}
+# Save the results
+write.table(
+  consist_rank_up_degs,
+  file = path_to_save_up_consist_degs,   
+  sep = "\t",        
+  quote = FALSE,     
+  row.names = FALSE,
+  col.names = FALSE
+)
+
+write.table(
+  consist_rank_down_degs,
+  file = path_to_save_down_consist_degs,   
+  sep = "\t",        
+  quote = FALSE,     
+  row.names = FALSE,
+  col.names = FALSE
+)
+```
+
+# Session Information
+
+```{r}
+sessionInfo()
+```
+
+
+
+
+
