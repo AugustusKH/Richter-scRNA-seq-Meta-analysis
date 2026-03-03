@@ -1,0 +1,839 @@
+---
+title: "Batch_method_evaluation"
+author: "Pakorn Sagulkoo"
+format:
+  html: 
+    toc: true
+    toc-location: left
+    embed-resources: true
+editor: visual
+---
+
+This source code we evaluated performance of batch removal methods in both running time, batch mixing, and biological preservation. We adapted codes and concepts from [Integrative single-cell meta-analysis reveals disease-relevant vascular cell states and markers in human atherosclerosis](https://www.cell.com/cell-reports/fulltext/S2211-1247(23)01392-X) that integrated single-cell data sets for human atherosclerosis study.
+
+# Import the relevant packages and set working path directory
+
+```{r, setup, message=FALSE, warning=FALSE}
+# Attach the packages you will need for the analysis.
+library(Seurat)
+library(harmony)
+library(SingleR)
+library(celldex)
+library(sctransform)
+library(ggsci)
+library(tidyverse)
+library(dplyr)
+library(data.table)
+```
+
+```{r}
+# Check root path
+here::here()
+```
+
+# Define paths
+
+```{r}
+# Define paths to load and save
+path_to_object <- here::here("scRNAseq/meta_analysis/R_objects")
+path_to_merged_obj <- paste0(path_to_object, "/merged_seu.rds")
+path_to_save_sample_merged_obj <- paste0(path_to_object, "/subsampled_merged_seu.rds")
+path_to_save_sample_split_lst <- paste0(path_to_object, "/subsampled_split_seu.rds")
+path_to_save_integrated_lst <- paste0(path_to_object, "/integrated_method_lst.rds")
+path_to_save_running_time_lst <- paste0(path_to_object, "/running_time_lst.rds")
+path_to_save_metric_evaluate_lst <- paste0(path_to_object, "/metric_eval_lst.rds")
+path_to_save_figure <- here::here("figures")
+```
+
+# Load data and functions
+
+```{r, message=FALSE, warning=FALSE}
+# Source functions
+source(here::here("bin/utils.R"))
+```
+
+```{r, eval=FALSE}
+# Load the integrated seurat object
+seurat <- readRDS(path_to_merged_obj)
+```
+
+# Subset some stuides to evaluate batch removal
+
+As our merged dataset contains a large number of cells, we subsampled data from selected studies, such as Nadeu (2022), Hing (2023), and Rigo (2024), to evaluate performance more efficiently in terms of both time and memory.
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Subsample the merged object and reprocessing
+DefaultAssay(seurat) <- "RNA"
+seurat <- subset(seurat, subset = ref %in% c("Nadeu_2022", "Hing_2022", "Rigo_2024"))
+seurat <- JoinLayers(seurat)
+seurat[["RNA"]] <- split(seurat[["RNA"]], f = seurat$case_id) 
+seurat <- SCTransform(seurat, vst.flavor = "v2", method = "glmGamPoi", verbose = FALSE)
+seurat <- RunPCA(seurat)
+seurat <- RunUMAP(seurat, dims = 1:30, reduction = "pca")
+seurat <- singleR_cell_annotation(seurat)
+
+# Save the object
+saveRDS(seurat, path_to_save_sample_merged_obj)
+```
+
+```{r, fig.height=7, fig.width=11}
+# Visualisation for merged results
+seurat <- readRDS(path_to_save_sample_merged_obj)
+
+# Plot based on patient, ref, cond, and cell types
+group_by <- c("patient", "ref", "cond", "singleR.labels_main")
+umap_plots <- lapply(group_by, function (group){
+  DimPlot(seurat, reduction = "umap", group.by = group, raster=TRUE) +
+    labs(y= "UMAP 2", x = "UMAP 1")
+})
+merged_umap.plt <- wrap_plots(umap_plots, ncol=2)
+merged_umap.plt
+```
+
+# Batch removals
+
+We evaluated five different batch correction methods for single-cell data integration: canonical correlation analysis (CCA) with mutual nearest neighbors (MNN), reciprocal principal component analysis (rPCA), joint PCA (jPCA), harmony, and Scanorama from Python.
+
+```{r, eval=FALSE}
+# Create lists collecting running time and integrated objects
+running_time.lst <- list()
+integrated_lst <- list()
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Read the objects used for visualisation as the all processes took a long time 
+running_time.lst <- readRDS(path_to_save_running_time_lst)
+integrated_lst <- readRDS(path_to_save_integrated_lst)
+```
+
+## CCA + MNN
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Perform the batch removal method with recording running time
+start_time <- Sys.time()
+integrated_seurat <- IntegrateLayers(object = seurat, 
+                                     method = CCAIntegration, 
+                                     normalization.method = "SCT", 
+                                     verbose = FALSE)
+end_time <- Sys.time()
+running_time <- as.numeric(difftime(end_time, start_time, units = "mins"))
+running_time.lst$cca <- running_time
+```
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Processing and downstream analysis
+integrated_seurat <- RunPCA(integrated_seurat)
+integrated_seurat <- RunUMAP(integrated_seurat, dims = 1:30, reduction = "integrated.dr")
+integrated_seurat <- FindNeighbors(integrated_seurat, dims = 1:30, reduction = "integrated.dr") 
+integrated_seurat <- FindClusters(
+  integrated_seurat,
+  random.seed = 12345,
+  verbose = FALSE,
+  resolution = seq(0.1, 0.9, by = 0.1)
+)
+
+# Collect the object in the list
+integrated_lst$cca <- integrated_seurat
+```
+
+```{r, fig.height=7, fig.width=11}
+# Visualisation for integrated results
+integrated_seurat <- integrated_lst$cca
+
+# Plot based on patient, ref, cond, and cell types
+group_by <- c("patient", "ref", "cond", "singleR.labels_main")
+umap_plots <- lapply(group_by, function (group){
+  DimPlot(integrated_seurat, reduction = "umap", group.by = group, raster=TRUE) +
+    labs(y= "UMAP 2", x = "UMAP 1")
+})
+cca_umap.plt <- wrap_plots(umap_plots, ncol=2)
+cca_umap.plt
+```
+
+## rPCA
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Perform the batch removal method with recording running time
+start_time <- Sys.time()
+integrated_seurat <- IntegrateLayers(object = seurat, 
+                                     method = RPCAIntegration, 
+                                     normalization.method = "SCT", 
+                                     verbose = FALSE)
+end_time <- Sys.time()
+running_time <- as.numeric(difftime(end_time, start_time, units = "mins"))
+running_time.lst$rpca <- running_time
+```
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Processing and downstream analysis
+integrated_seurat <- RunPCA(integrated_seurat)
+integrated_seurat <- RunUMAP(integrated_seurat, dims = 1:30, reduction = "integrated.dr")
+integrated_seurat <- FindNeighbors(integrated_seurat, dims = 1:30, reduction = "integrated.dr") 
+integrated_seurat <- FindClusters(
+  integrated_seurat,
+  random.seed = 12345,
+  verbose = FALSE,
+  resolution = seq(0.1, 0.9, by = 0.1)
+)
+
+# Collect the object in the list
+integrated_lst$rpca <- integrated_seurat
+```
+
+```{r, fig.height=7, fig.width=11}
+# Visualisation for integrated results
+integrated_seurat <- integrated_lst$rpca
+
+# Plot based on patient, ref, cond, and cell types
+group_by <- c("patient", "ref", "cond", "singleR.labels_main")
+umap_plots <- lapply(group_by, function (group){
+  DimPlot(integrated_seurat, reduction = "umap", group.by = group, raster=TRUE) +
+    labs(y= "UMAP 2", x = "UMAP 1")
+})
+rpca_umap.plt <- wrap_plots(umap_plots, ncol=2)
+rpca_umap.plt
+```
+
+## jPCA
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Perform the batch removal method with recording running time
+start_time <- Sys.time()
+integrated_seurat <- IntegrateLayers(object = seurat, 
+                                     method = JointPCAIntegration, 
+                                     normalization.method = "SCT", 
+                                     verbose = FALSE)
+end_time <- Sys.time()
+running_time <- as.numeric(difftime(end_time, start_time, units = "mins"))
+running_time.lst$jpca <- running_time
+```
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Processing and downstream analysis
+integrated_seurat <- RunPCA(integrated_seurat)
+integrated_seurat <- RunUMAP(integrated_seurat, dims = 1:30, reduction = "integrated.dr")
+integrated_seurat <- FindNeighbors(integrated_seurat, dims = 1:30, reduction = "integrated.dr") 
+integrated_seurat <- FindClusters(
+  integrated_seurat,
+  random.seed = 12345,
+  verbose = FALSE,
+  resolution = seq(0.1, 0.9, by = 0.1)
+)
+
+# Collect the object in the list
+integrated_lst$jpca <- integrated_seurat
+```
+
+```{r, fig.height=7, fig.width=11}
+# Visualisation for integrated results
+integrated_seurat <- integrated_lst$jpca
+
+# Plot based on patient, ref, cond, and cell types
+group_by <- c("patient", "ref", "cond", "singleR.labels_main")
+umap_plots <- lapply(group_by, function (group){
+  DimPlot(integrated_seurat, reduction = "umap", group.by = group, raster=TRUE) +
+    labs(y= "UMAP 2", x = "UMAP 1")
+})
+jpca_umap.plt <- wrap_plots(umap_plots, ncol=2)
+jpca_umap.plt
+```
+
+## Harmony
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Perform the batch removal method with recording running time
+start_time <- Sys.time()
+integrated_seurat <- RunHarmony(seurat, group.by.vars = "case_id", dims = 1:30)
+end_time <- Sys.time()
+running_time <- as.numeric(difftime(end_time, start_time, units = "mins"))
+running_time.lst$harmony <- running_time
+```
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Processing and downstream analysis
+integrated_seurat <- RunUMAP(integrated_seurat, dims = 1:30, reduction = "harmony")
+integrated_seurat <- FindNeighbors(integrated_seurat, dims = 1:30, reduction = "harmony") 
+integrated_seurat <- FindClusters(
+  integrated_seurat,
+  random.seed = 12345,
+  verbose = FALSE,
+  resolution = seq(0.1, 0.9, by = 0.1)
+)
+
+# Collect the object in the list
+integrated_lst$harmony <- integrated_seurat
+```
+
+```{r, fig.height=7, fig.width=11}
+# Visualisation for integrated results
+integrated_seurat <- integrated_lst$harmony
+
+# Plot based on patient, ref, cond, and cell types
+group_by <- c("patient", "ref", "cond", "singleR.labels_main")
+umap_plots <- lapply(group_by, function (group){
+  DimPlot(integrated_seurat, reduction = "umap", group.by = group, raster=TRUE) +
+    labs(y= "UMAP 2", x = "UMAP 1")
+})
+harmony_umap.plt <- wrap_plots(umap_plots, ncol=2)
+harmony_umap.plt
+```
+
+## Scanorama
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Set the environment to run python and import scanorama
+library(reticulate)
+use_condaenv("scanorama_env", required = TRUE)
+scanorama <- import("scanorama")
+```
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Prepare objects and features for integration
+seurat.lst <- SplitObject(seurat, split.by = "case_id")
+seurat.lst <- lapply(seurat.lst, function(obj){
+  obj <- SCTransform(obj, vst.flavor = "v2", method = "glmGamPoi", verbose = FALSE)
+})
+saveRDS(seurat.lst, path_to_save_sample_split_lst) # Save the list
+
+# Prepare matrices and gene lists for Scanorama
+sct_mat.lst <- list()
+gene.lst <- list()
+
+for (i in seq_along(seurat.lst)) {
+  mat <- GetAssayData(seurat.lst[[i]], assay = "SCT", slot = "data") # Extract SCT data (genes × cells)
+  sct_mat.lst[[i]] <- t(as.matrix(mat)) # Transpose to cells × genes (required by Scanorama)
+  gene.lst[[i]] <- rownames(mat) # Correct gene list
+}
+```
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Perform the batch removal method with recording running time
+start_time <- Sys.time()
+integrated.corrected.data <- scanorama$correct(sct_mat.lst, gene.lst, return_dimred=TRUE, return_dense=TRUE)
+end_time <- Sys.time()
+running_time <- as.numeric(difftime(end_time, start_time, units = "mins"))
+running_time.lst$scanor <- running_time
+```
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Add the batch corrected data to the object
+intdata <- lapply(integrated.corrected.data[[2]], t)
+panorama <- do.call(cbind, intdata)
+rownames(panorama) <- as.character(integrated.corrected.data[[3]]) # genes
+cell_names <- unlist(lapply(sct_mat.lst, rownames))
+colnames(panorama) <- cell_names
+
+# Get PCA embeddings
+intdimred <- do.call(rbind, integrated.corrected.data[[1]])
+rownames(intdimred) <- cell_names
+colnames(intdimred) <- paste0("PC_", 1:ncol(intdimred))
+stdevs <- apply(intdimred, MARGIN = 2, FUN = sd) # dd standard deviations in order to draw Elbow Plots in Seurat
+
+# Combined meta.data
+meta.data <- do.call(rbind, lapply(seurat.lst, function(obj) obj@meta.data))
+rownames(meta.data) <- sub("^[^.]+\\.", "", rownames(meta.data)) # strip rownames from the original to merge with scanor results
+meta.data <- meta.data[cell_names, ]  # reorder to match columns of panorama
+rownames(meta.data) <- cell_names
+
+# Create a seurat object
+integrated_seurat <- CreateSeuratObject(
+  counts = panorama,
+  assay = "pano",
+  project = "rt_cll_metaanalysis",
+  meta.data = meta.data
+)
+integrated_seurat[["pca"]] <- CreateDimReducObject(embeddings = intdimred, stdev = stdevs, key = "PC_", assay = "pano")
+```
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Downstream analysis
+integrated_seurat <- RunUMAP(integrated_seurat, dims = 1:30)
+integrated_seurat <- FindNeighbors(integrated_seurat, dims = 1:30) 
+integrated_seurat <- FindClusters(
+  integrated_seurat,
+  random.seed = 12345,
+  verbose = FALSE,
+  resolution = seq(0.1, 0.9, by = 0.1)
+)
+
+# Collect the object in the list
+integrated_lst$scanor <- integrated_seurat
+```
+
+```{r, fig.height=7, fig.width=11}
+# Visualisation for integrated results
+integrated_seurat <- integrated_lst$scanor
+
+# Plot based on patient, ref, cond, and cell types
+group_by <- c("patient", "ref", "cond", "singleR.labels_main")
+umap_plots <- lapply(group_by, function (group){
+  DimPlot(integrated_seurat, reduction = "umap", group.by = group, raster=TRUE) +
+    labs(y= "UMAP 2", x = "UMAP 1")
+})
+scanor_umap.plt <- wrap_plots(umap_plots, ncol=2)
+scanor_umap.plt
+```
+
+## Save the results
+
+```{r, eval=FALSE}
+# Save the running time and seurat objects
+saveRDS(running_time.lst, path_to_save_running_time_lst)
+saveRDS(integrated_lst, path_to_save_integrated_lst)
+```
+
+# Evaulation in running time
+
+```{r}
+# Set label and colour pallete
+method_map <- c(
+  "cca"     = "CCA_MNN",
+  "rpca"    = "rPCA",
+  "jpca"    = "jPCA",
+  "harmony" = "Harmony",
+  "scanor"  = "Scanorama"
+)
+
+method_cols <- c(
+  "Scanorama" = "#F05C3B",
+  "CCA_MNN"   = "#197EC0",
+  "jPCA"      = "#C80813",
+  "rPCA"      = "#FD8CC1",
+  "Harmony"   = "#46732E"
+)
+```
+
+```{r}
+# Create a dataframe collecting running time in each method
+running_time.df <- data.frame(
+  method = c("CCA_MNN", "rPCA", "jPCA", "Harmony", "Scanorama"),
+  running_time_min = c(
+    running_time.lst$cca,
+    running_time.lst$rpca,
+    running_time.lst$jpca,
+    running_time.lst$harmony,
+    running_time.lst$scanor
+  )
+)
+
+# Plot a bar graph for running time
+running_time.plt <- running_time.df %>%
+  dplyr::mutate(method = fct_reorder(method, running_time_min)) %>%
+  ggplot(aes(x=method, y=running_time_min, fill=method)) +
+  geom_col(width = 0.6) +
+  xlab("Method") +
+  ylab("Running time (mins)") +
+  scale_fill_manual(values = method_cols) +  
+  theme(aspect.ratio = 1.3,
+        axis.text.x = element_text(angle=45, hjust=1),
+        legend.position = "none")
+  
+running_time.plt  
+```
+
+```{r, eval=FALSE}
+# Save the figures
+ggsave(filename=paste0(path_to_save_figure, "/all_running_time.png"), plot=running_time.plt, dpi=500, height=3, width=4)
+```
+
+We can see from the plot that harmony provided the significantly lowest running time compared to other methods.
+
+# Batch removal and biological conservation performance
+
+We also evaluated the batch removal performance as well as biological conservation among the five techniques. We computed four metrices, such as local inverse Simpson's index (LISI), k-nearest-neighbours batch effect test (kBET), cluster average silhouette widths (aASW), and principal component regression (PCRegression), to assess the performance.
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Import the relevant packages
+library(kBET)
+library(FNN)
+library(lisi)
+library(cluster)
+library(stats)
+library(DescTools)
+
+# Create a list collecting metric results
+eval_matric.lst <-list()
+```
+
+```{r}
+# Load the existing results
+eval_matric.lst <-readRDS(path_to_save_metric_evaluate_lst)
+```
+
+## LISI
+
+LISI is employed to quantify batch diversity among neighbouring cells using a k-nearest neighbour (KNN) graph. A higher LISI score indicates superior batch mixing among adjacent cells, signifying enhanced batch-effect removal performance.
+
+We commenced by calculating batch LISI (bLISI), using references or studies as the batch variable, in order to assess the batch mixing achieved by these batch removal techniques.
+
+Furthermore, we also accounted for the deleterious effects of batch overcorrection, which could potentially disrupt biological structures. Subsequently, we evaluated biological conservation through cell LISI (cLISI) and cluster LISI (clLISI), which utilise cell annotation and clusters as batch variables. Elevated cLISI and clLISI scores reflect a high degree of mixing for these variables across their subgroups,for instance, high mixing between two different cell types or clusters, consequently leading to poorer biological conservation.
+
+```{r, eval=FALSE}
+# Define function to compute batch LISI (bLISI), cell LISIS (cLISI), and cluster LISI (clLISI)
+compute_lisi_scores <- function(seu, batch_var = "ref") {
+  pca_list <- seu@reductions$pca
+  emb <- pca_list@cell.embeddings[, 1:30]
+  cluster_candidates <- c("SCT_snn_res.0.3", "pano_snn_res.0.3")
+  cluster_var <- cluster_candidates[cluster_candidates %in% colnames(seu@meta.data)][1]
+  label_vars <- c("singleR.labels_main", cluster_var)
+  meta <- seu@meta.data[, c(batch_var, label_vars), drop = FALSE]
+  lisi_res <- compute_lisi(emb, meta, c(batch_var, label_vars))
+  df <- as.data.frame(lisi_res) # convert to data frame with clear names
+  colnames(df) <- c("bLISI", "cLISI", "clLISI")
+  return(df)
+}
+```
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Compute LISI
+lisi_results <- lapply(names(integrated_lst), function(name) {
+    obj <- integrated_lst[[name]]
+    df <- compute_lisi_scores(obj) # compute
+    df$method <- name
+    return(df)
+  })
+
+lisi_df <- rbindlist(lisi_results, use.names = TRUE, fill = TRUE)
+lisi_df <- lisi_df %>% dplyr::mutate(method_name = method_map[method])
+eval_matric.lst$lisi <- lisi_df
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Plot mean LISI scores
+lisi_df <- eval_matric.lst$lisi
+
+## bLISI score
+mean_blisi.plt <- lisi_df %>%
+  dplyr::select(c("bLISI", "method_name")) %>%
+  dplyr::group_by(method_name) %>%
+  dplyr::summarize(mean_bLISI = mean(bLISI)) %>%
+  dplyr::mutate(method_name = fct_reorder(as.factor(method_name), mean_bLISI, .desc=TRUE)) %>%
+  ggplot(aes(x=method_name, y=mean_bLISI, fill=method_name)) + 
+  geom_col(width = 0.6) + 
+  xlab("Method") + 
+  ylab("Mean bLISI") + 
+  scale_fill_manual(values = method_cols) + 
+  theme_bw() +
+  theme(aspect.ratio = 1.3,
+        legend.position = "none",
+        axis.text.x = element_text(angle=45, hjust=1))
+
+## cLISI score
+mean_clisi.plt <- lisi_df %>%
+  dplyr::select(c("cLISI", "method_name")) %>%
+  dplyr::group_by(method_name) %>%
+  dplyr::summarize(mean_cLISI = mean(cLISI)) %>%
+  dplyr::mutate(method_name = fct_reorder(as.factor(method_name), mean_cLISI, .desc=TRUE)) %>%
+  ggplot(aes(x=method_name, y=mean_cLISI, fill=method_name)) + 
+  geom_col(width = 0.6) + 
+  xlab("Method") + 
+  ylab("Mean cLISI") + 
+  scale_fill_manual(values = method_cols) + 
+  theme_bw() +
+  theme(aspect.ratio = 1.3,
+        legend.position = "none",
+        axis.text.x = element_text(angle=45, hjust=1))
+
+## clLISI score
+mean_cllisi.plt <- lisi_df %>%
+  dplyr::select(c("clLISI", "method_name")) %>%
+  dplyr::group_by(method_name) %>%
+  dplyr::summarize(mean_clLISI = mean(clLISI)) %>%
+  dplyr::mutate(method_name = fct_reorder(as.factor(method_name), mean_clLISI, .desc=TRUE)) %>%
+  ggplot(aes(x=method_name, y=mean_clLISI, fill=method_name)) + 
+  geom_col(width = 0.6) + 
+  xlab("Method") + 
+  ylab("Mean clLISI") + 
+  scale_fill_manual(values = method_cols) + 
+  theme_bw() +
+  theme(aspect.ratio = 1.3,
+        legend.position = "none",
+        axis.text.x = element_text(angle=45, hjust=1))
+
+mean_lisi.plt <- mean_blisi.plt + mean_clisi.plt + mean_cllisi.plt
+mean_lisi.plt
+```
+
+```{r, eval=FALSE}
+# Save the figures
+ggsave(filename=paste0(path_to_save_figure, "/all_blisi.png"), plot=mean_blisi.plt, dpi=500, height=3, width=4)
+ggsave(filename=paste0(path_to_save_figure, "/all_clisi.png"), plot=mean_clisi.plt, dpi=500, height=3, width=4)
+ggsave(filename=paste0(path_to_save_figure, "/all_cllisi.png"), plot=mean_cllisi.plt, dpi=500, height=3, width=4)
+```
+
+From the results we found that CCA, Harmony, rPCA, and jPCA provided the highest bLISI score (1.23) while Scanorama had the lowest score as 1.04. For cLISI, all methods provided the same score as 1.07. CCA also provided the highest clLISI (1.48), following with jPCA (1.44), rPCA (1.37), Harmony (1.35), and Scanorma (1.05).
+
+Overall when cosidering both batch removal and biological conservation with LISI metric, Harmony had the best performance.
+
+## kBET
+
+The kBET assesses how closely the label composition of a cell's k-nearest neighbourhood (KNN) aligns with the expected label composition, with the result reported as rejection rates. Lower rejection rates indicate superior batch mixing.
+
+We computed the rejection rates by varying the cell's neighbourhood size (k) and subsequently calculated the Area Under the Curve (AUC) between the rejection rates and k. A lower AUC value signifies greater batch removal efficacy.
+
+```{r, eval=FALSE}
+# Define function to compute kBET
+compute_kbet <- function(seu, batch_var = "ref", k_range) {
+  pca_list <- seu@reductions$pca
+  emb <- pca_list@cell.embeddings[, 1:30]
+  batch <- seu@meta.data[[batch_var]]
+  kbet_list <- vector("list", length(k_range))
+  
+  for (i in seq_along(k_range)) {
+    
+    batch_est <- kBET(
+      df = emb, 
+      batch = batch, 
+      k0 = k_range[i], 
+      do.pca = FALSE, 
+      plot = FALSE, 
+      heuristic = FALSE,
+      adapt = FALSE,
+      verbose = TRUE
+    )
+    
+    df <- data.frame(
+      class = rep(c("observed", "expected"),
+                  each = length(batch_est$stats$kBET.observed)),
+      data  = c(batch_est$stats$kBET.observed,
+                batch_est$stats$kBET.expected),
+      k     = paste0("k_", k_range[i])
+    )
+    
+    kbet_list[[i]] <- df
+  }
+  return(rbindlist(kbet_list, use.names = TRUE, fill = TRUE))
+}
+
+# Define a base for k range
+base_k <- c(10, 25, 50, 100, 500, 1000, 2500)
+```
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Compute kBET
+kbet_results <- lapply(names(integrated_lst), function(name) {
+    obj <- integrated_lst[[name]]
+    
+    # Set k_range
+    batch_vec <- obj@meta.data$ref
+    batch_labels <- as.factor(batch_vec)
+    k0 = floor(mean(table(batch_labels))) / 4 # set k0 as the original article suggested
+    k_range <- unique(sort(c(base_k, k0)))
+    n_cells <- ncol(obj)
+    k_range <- k_range[k_range < n_cells] # remove impossible k
+    
+    # Run kBET
+    df <- compute_kbet(obj, batch_var = "ref", k_range)
+    df$method <- name
+    return(df)
+})
+    
+kbet_df <- rbindlist(kbet_results, use.names = TRUE, fill = TRUE)
+kbet_df <- kbet_df %>% dplyr::mutate(method_name = method_map[method])
+eval_matric.lst$kbet <- kbet_df
+```
+
+```{r, message=FALSE, warning=FALSE, fig.width=10}
+# Plot kBET observed rejection rates curve
+kbet_df <- eval_matric.lst$kbet
+
+kbet_rates_curve.plt = kbet_df %>%
+  dplyr::filter(class == "observed") %>%
+  dplyr::group_by(method_name, k) %>%
+  dplyr::summarize(mean_obs_rejection_rate = mean(data)) %>%
+  ggplot(aes(x=fct_reorder(k, mean_obs_rejection_rate), 
+             mean_obs_rejection_rate, 
+             color=method_name)) + 
+  geom_line(aes(x=fct_reorder(k, mean_obs_rejection_rate),
+                y=mean_obs_rejection_rate, group=method_name), 
+            linetype="dashed") + 
+  geom_point(size=1.5) +
+  #geom_col(position = "dodge") + 
+  labs(x="Neighborhood size (k)",
+       y="Mean kBET observed rejection rate",
+       color="Method") + 
+  theme_bw() +
+  theme(aspect.ratio = 1.3,
+        legend.position = "right") + 
+  scale_color_manual(values= method_cols)
+
+kbet_rates_curve.plt
+```
+
+```{r, eval=FALSE}
+# Save the figures
+ggsave(filename=paste0(path_to_save_figure, "/all_kbet.png"), plot=kbet_rates_curve.plt, dpi=500, height=5, width=7)
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Calculate AUC in each method
+auc.lst <- list()
+methods <- c("CCA_MNN", "rPCA", "jPCA", "Harmony", "Scanorama")
+
+for (i in seq_along(methods)) { 
+  
+  # Keep only observed rejection rates and compute means
+  sorted_rej_rates <- kbet_df %>% 
+    dplyr::filter(class == "observed" & method_name == methods[i]) %>%
+    dplyr::group_by(method_name, k) %>%
+    dplyr::summarize(mean_obs_rejection_rate = mean(data), .groups = "drop") %>%
+    dplyr::arrange(mean_obs_rejection_rate) %>%
+    dplyr::mutate(k_index = seq(1, length(unique(k)), by=1))
+  
+  # Calculate AUC 
+  auc <- DescTools::AUC(x=sorted_rej_rates$k_index,
+                       y=sorted_rej_rates$mean_obs_rejection_rate,
+                       method="spline")
+  auc.lst[[i]] <- auc
+  names(auc.lst)[i] <- methods[i]
+
+}
+
+auc.lst
+```
+
+From the AUC analysis, Harmony provided the lowest score (6.857699). This was closely followed by rPCA (6.85806), then CCA (6.858154), and jPCA (6.858713). Scanorama had the highest AUC score (6.999909). Given that a lower AUC indicates greater batch removal efficacy, Harmony provided the best results for batch removal according to this metric.
+
+## cASW
+
+The Silhouette Score is typically employed to evaluate the appropriate parameter settings for clustering. We adapted this concept to assess the clustering results derived from the batch removal methods by varying the resolution parameter for the single-cell data from 0.1 to 0.9. A higher cASW indicates superior clustering, which in this context signifies improved biological conservation.
+
+```{r, eval=FALSE}
+# Define a function to compute cluster average silhouette width (clASW)
+compute_sil <- function(seu, res){
+  pca_list <- seu@reductions$pca
+  emb <- pca_list@cell.embeddings[, 1:30]
+  dist_mat <- dist(emb)
+  sil_list <- vector("list", length(res))
+  cluster_candidates <- c("SCT_snn_res.", "pano_snn_res.")
+  matches <- cluster_candidates[sapply(cluster_candidates, function(x) any(grepl(x, colnames(seu@meta.data))))]
+  cluster_var <- matches[1]
+  
+  for (i in seq_along(res)){
+    clusters <- seu[[paste0(cluster_var, res[i])]][,1]
+    sil <- silhouette(x = as.numeric(x = as.factor(x = clusters)), dist = dist_mat)
+    df <- data.frame(cluster=sil[, 1], neighbor=sil[, 2], sil_width=sil[, 3], res=res[i])
+    sil_list[[i]] <- df
+  }
+  return(rbindlist(sil_list, use.names = TRUE, fill = TRUE))
+}
+
+# Define a cluster resolution range
+res <- seq(0.1, 0.9, by = 0.1)
+```
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Compute silhouette score
+sil_results <- lapply(names(integrated_lst), function(name) {
+  obj <- integrated_lst[[name]]
+  df <- compute_sil(obj, res)
+  df$method <- name
+  return(df)
+})
+
+sil_df <- rbindlist(sil_results, use.names = TRUE, fill = TRUE)
+sil_df <- sil_df %>% dplyr::mutate(method_name = method_map[method])
+eval_matric.lst$sil <- sil_df
+```
+
+```{r, message=FALSE, warning=FALSE, fig.height=5, fig.width=5.5}
+# Plot silhouette scores
+sil_df <- eval_matric.lst$sil
+
+sil_scores.plt <- sil_df %>%
+  dplyr::group_by(res, method_name) %>%
+  dplyr::summarise(mean_sil = mean(sil_width), .groups = "drop") %>%
+  ggplot(aes(x = factor(res), y = mean_sil, fill = method_name)) +
+  geom_col(position = position_dodge(width = 0.8), width = 0.7) +
+  xlab("Clustering resolution") +
+  ylab("Mean Silhouette score") +
+  scale_fill_manual(values = method_cols) +
+  theme_bw() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "bottom"
+  ) +
+  labs(fill = "Method") 
+
+sil_scores.plt
+```
+
+```{r, eval=FALSE}
+# Save the figures
+ggsave(filename=paste0(path_to_save_figure, "/all_sil.png"), plot=sil_scores.plt, dpi=500, height=5, width=5.5)
+```
+
+When varying the resolution parameter, Scanorama demonstrated robustness in preserving biological conservation, as it yielded positive cASW scores across all resolutions tested. Harmony, conversely, exhibited the lowest positive cASW score at resolution 0.1 compared to the other methods; however, all positive scores were observed at every resolution except 0.8 and 0.9.
+
+## PCRegression
+
+This metric is an adaptation designed to calculate the Principal Component-based variance using a linear model, with the effect size of the batch attributed to the *R^2^* value. A higher *R^2^* value indicates a greater batch effect, thereby signifying poorer batch removal performance. As the observed *R^2^* values were very low, we transformed the metric using the negative logarithmic form for reporting. Consequently, higher reported values reflect superior batch removal.
+
+```{r, eval=FALSE}
+# Define a function to compute PCRegress
+compute_pcr <- function(seu, batch_var){
+  pca_list <- seu@reductions$pca
+  pca_data <- list(x = pca_list@cell.embeddings, sdev = pca_list@stdev)
+  class(pca_data) <- "prcomp"  # pcRegression expects a prcomp object
+  batch <- as.factor(seu[[batch_var, drop = TRUE]])  # use column dynamically
+  pcr <- kBET::pcRegression(pca.data=pca_data,
+                            batch=batch,
+                            n_top=30)
+  return(pcr$R2Var)
+}
+```
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Compute PCR 
+pcr_results <- lapply(names(integrated_lst), function(name) { 
+  obj <- integrated_lst[[name]]
+  R2Var <- compute_pcr(obj, batch_var = "ref")
+  df <- data.frame(R2Var = R2Var, method = name)
+  return(df)
+})
+  
+pcr_df <- rbindlist(pcr_results, use.names = TRUE, fill = TRUE)
+pcr_df <- pcr_df %>% dplyr::mutate(method_name = method_map[method])
+eval_matric.lst$pcr <- pcr_df
+```
+
+```{r}
+# Plot the -log10 values of variance explained by batch effects
+pcr_df <- eval_matric.lst$pcr
+
+r2var.plt <- pcr_df %>%
+  dplyr::mutate(method_name=fct_reorder(method_name, -log10(R2Var), .desc=TRUE)) %>%
+  ggplot(aes(x=method_name, y=-log10(R2Var), fill=method_name)) + 
+  geom_col(width = 0.6) + 
+  xlab("Method") + 
+  ylab("-Log10(R2Var)") +
+  scale_fill_manual(values = method_cols) + 
+  theme_bw() +
+  theme(aspect.ratio = 1.3,
+        legend.position = "none",
+        axis.text.x = element_text(angle = 45, hjust=1))
+
+r2var.plt
+```
+
+```{r, eval=FALSE}
+# Save the figures
+ggsave(filename=paste0(path_to_save_figure, "/all_r2var.png"), plot=r2var.plt, dpi=500, height=3, width=4)
+```
+
+From the plots, it was observed that all methods except Scanorama exhibited the highest negative *R^2^* variance.
+
+## Save the metric results
+
+```{r, eval=FALSE}
+# Save the metric results
+saveRDS(eval_matric.lst, path_to_save_metric_evaluate_lst)
+```
+
+Considering running time, batch removal efficacy, and biological conservation performance collectively, Harmony proved to be the optimal option across these metrics. We subsequently employed Harmony for all further downstream analyses.
+
+# Session Information
+
+```{r}
+sessionInfo()
+```

@@ -1,0 +1,330 @@
+---
+title: "Tumour_subtype_annotation"
+author: "Pakorn Sagulkoo"
+format:
+  html:
+    toc: true
+    toc-location: left
+    embed-resources: true
+editor: visual
+---
+
+After performing level-1 cell-type annotation using the SingleR package on the integrated dataset, level-2 annotation of tumour subtypes was carried out based on previously reported cell types and established biomarker genes from the literature.
+
+# Import the relevant packages and set working path directory
+
+```{r, setup, message=FALSE, warning=FALSE}
+# Attach the packages you will need for the analysis.
+library(Seurat)
+library(harmony)
+library(dplyr)
+library(tibble)
+library(SingleR)
+library(celldex)
+library(sctransform)
+library(cowplot)
+```
+
+```{r}
+# Check root path
+here::here()
+```
+
+# Define paths
+
+```{r}
+# Define paths to load and save 
+path_to_tumour_obj <- here::here("scRNAseq/meta_analysis/R_objects/tumour_seu.rds")
+path_to_save_markers <- here::here("scRNAseq/meta_analysis/R_objects/gene_exprs/tumour_markers.rds")
+path_to_save_annotated_tumour_obj <- here::here("scRNAseq/meta_analysis/R_objects/annotated_tumour_seu.rds")
+path_to_save_figure <- here::here("figures")
+```
+
+# Load data and functions
+
+```{r, message=FALSE, warning=FALSE}
+# Source functions
+source(here::here("bin/utils.R"))
+```
+
+```{r}
+# Load the tumour object
+tumour_seurat <- readRDS(path_to_tumour_obj)
+```
+
+# Cluster visualisation
+
+As Louvain clustering was performed on the tumour cell subset, the resulting clustering structure was visualised prior to the identification of cluster-specific marker genes.
+
+```{r, fig.height=8, fig.width=28}
+# Plot the cluster
+cluster.plt <- DimPlot(tumour_seurat, 
+                       reduction = "umap", 
+                       group.by = "SCT_snn_res.0.1", 
+                       repel=TRUE,
+                       raster=TRUE, 
+                       label=TRUE) + 
+  labs(y= "UMAP 2", x = "UMAP 1")
+
+study.plt <- DimPlot(tumour_seurat, 
+                       reduction = "umap", 
+                       group.by = "ref", 
+                       repel=TRUE,
+                       raster=TRUE, 
+                       label=TRUE) + 
+  labs(y= "UMAP 2", x = "UMAP 1")
+
+case.plt <- DimPlot(tumour_seurat, 
+                       reduction = "umap", 
+                       group.by = "patient", 
+                       repel=TRUE,
+                       raster=TRUE, 
+                       label=TRUE) + 
+  labs(y= "UMAP 2", x = "UMAP 1")
+
+cluster.plt + study.plt + case.plt
+```
+
+```{r, fig.height=8, fig.width=16, message=FALSE, warning=FALSE}
+# Plot clusters by splitting the condition
+cluster_split.plt <- DimPlot(tumour_seurat, 
+                             reduction = "umap", 
+                             group.by = "SCT_snn_res.0.1", 
+                             split.by = "group", 
+                             label = TRUE) +
+  NoLegend()
+cluster_split.plt 
+```
+
+From the plot, we used the clustering results at the resolution = 0.1 to calculate cluster-specific marker genes.
+
+# Clustering-specific marker gene identification
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Thresholds
+min_log2FC <- 0.25
+alpha <- 0.001
+
+# Calculate markers
+Idents(tumour_seurat) <- "SCT_snn_res.0.1"
+markers <- FindAllMarkers(tumour_seurat, only.pos = TRUE, logfc.threshold = min_log2FC)
+markers <- markers %>%
+  mutate(cluster = as.character(cluster)) %>%
+  filter(p_val_adj < alpha) %>%
+  arrange(cluster) %>%
+  group_by(cluster) %>%
+  arrange(desc(avg_log2FC), .by_group = TRUE)
+
+# Save the marker results
+saveRDS(markers, path_to_save_markers)
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Show the marker results
+markers <- readRDS(path_to_save_markers)
+DT::datatable(markers, options = list(scrollX = TRUE))
+```
+
+# Cell cycle scoring
+
+```{r, message=FALSE, warning=FALSE, fig.height=8, fig.width=22}
+# Consider cell cycle genes based on cell cycle upregulation is a hallmark of Richter transformation
+tumour_seurat <- CellCycleScoring(
+  tumour_seurat,
+  s.features = cc.genes$s.genes,
+  g2m.features = cc.genes$g2m.genes,
+  set.ident = FALSE
+)
+
+cell_cycle.plt <- DimPlot(tumour_seurat, group.by = "Phase", pt.size = 1) + labs(y= "UMAP 2", x = "UMAP 1")
+
+umap_s_score <- FeaturePlot(tumour_seurat, features = "S.Score", pt.size = 1) +
+  scale_color_viridis_c(option = "magma") +
+  labs(title = "S Score", y= "UMAP 2", x = "UMAP 1") 
+  
+umap_g2m_score <- FeaturePlot(tumour_seurat, features = "G2M.Score", pt.size = 1) +
+  scale_color_viridis_c(option = "magma") +
+  labs(title = "G2M Score", y= "UMAP 2", x = "UMAP 1") 
+
+cell_cycle.plt + umap_s_score + umap_g2m_score
+```
+
+# Subtype annotation
+
+We annotated tumour subtypes as literatures below:
+
+- [Detection of early seeding of Richter transformation in chronic lymphocytic leukemia](https://www.nature.com/articles/s41591-022-01927-8#code-availability)
+- [Low BACH2 Expression Predicts Adverse Outcome in Chronic Lymphocytic Leukaemia](https://www.mdpi.com/2072-6694/14/1/23)
+- [Transcriptomic clustering of chronic lymphocytic leukemia: molecular subtypes based on Bruton’s tyrosine kinase expression levels](https://www.nature.com/articles/s41408-024-01196-3)
+- [MYC target gene activation in chronic lymphocytic leukemia and richter transformation: links to aggressiveness and tumor microenvironment interactions](https://www.frontiersin.org/journals/pharmacology/articles/10.3389/fphar.2025.1642458/full)
+- [Molecular map of chronic lymphocytic leukemia and its impact on outcome](https://www.nature.com/articles/s41588-022-01140-w)
+- [Subgroup-specific gene expression profiles and mixed epistasis in chronic lymphocytic leukemia](https://haematologica.org/article/view/haematol.2022.281869)
+- [MicroRNA-155 influences B-cell receptor signaling and associates with aggressive disease in chronic lymphocytic leukemia](https://www.sciencedirect.com/science/article/pii/S0006497120399365#:~:text=CLL%20with%20high%2Dlevel%20miR,outcome%20in%20patients%20with%20CLL.)
+- [SLC22A5 (OCTN2) Carnitine Transporter—Indispensable for Cell Metabolism, a Jekyll and Hyde of Human Cancer](https://www.mdpi.com/1420-3049/25/1/14)
+- [Regulatory network of BLIMP1, IRF4, and XBP1 triad in plasmacytic differentiation and multiple myeloma pathogenesis](https://www.sciencedirect.com/science/article/abs/pii/S0008874922001198?via%3Dihub)
+- [Temporal Tracking of Plasma Cells in vivo Using J-chain CreERT2 Reporter System](https://www.biorxiv.org/content/10.1101/2023.12.02.569736v1)
+- [ELL2 Influences Transcription Elongation, Splicing, Ig Secretion and Growth](https://www.omicsonline.org/open-access/ell2-influences-transcription-elongation-splicing-ig-secretion-and-growth-109185.html)
+
+Moreover, RT cells were also annotated according to their proliferative status based on the expression levels of cell-proliferation–related genes. Quiescent RT was defined by the expression of RT-associated genes, such as members of the MYC family and PDCD1, in the absence of detectable expression of cell-proliferation–related genes.
+
+| Cluster | Markers                                                       | Annotation                             |
+|---------|---------------------------------------------------------------|----------------------------------------|
+| 0       | CD27                                                          | CXCR4loCD27hi CLL                      |  
+| 1       | TCL1A, BACH2                                                  | quiescent CLL                          |  
+| 2       | ENO1, TCL1A, PDCD1, CCND2                                     | CCND2hi RT                             |  
+| 3       | PCNA, ENO1, TCL1A                                             | quiescent_to_low-proliferative RT      |  
+| 4       | MYC, MYCBP, ENO1, BACH2, LDHA                                 | low-proliferative RT                   |  
+| 5       | MYC, MYCBP2, MIR155HG, BCAT1, CCND2                           | BCAT1hiCCND2hi RT                      | 
+| 6       | ENO1, MIR155HG, LDHA, BACH2                                   | quiescent RT                           | 
+| 7       | MYCBP2                                                        | quiescent RT                           |  
+| 8       | SLC22A5                                                       | SLC22A5hi CLL                          |
+| 9       | ELL2, IRF4                                                    | plasma cell                            | 
+| 10      | PCNA, MYCBP, ENO1, PDCD1, LDHA, CCND2                         | intermediate-proliferative RT          | 
+| 11      | TOP2A, PCNA, MYCBP, LDHA, CCND2                               | intermediate_to_high-proliferative RT  | 
+| 12      | TOP2A, PCNA, MYC, MYCBP, LDHA                                 | intermediate_to_high-proliferative RT  | 
+| 13      | ELL2, XBP1, JCHAIN                                            | plasma cell                            | 
+| 14      | TOP2A, PCNA, MKI67, MYC, MYCBP, MIR155HG, LDHA, PDCD1, CCND2  | high-proliferative RT                  | 
+| 15      | TOP2A, MKI67, MYCBP, MIR155HG, LDHA, PDCD1, CCND2             | high-proliferative RT                  | 
+| 16      | CXCR4                                                         | CXCR4hiCD27lo CLL                      | 
+| 17      | CXCR4                                                         | CXCR4hiCD27lo CLL                      | 
+| 18      | CXCR4                                                         | CXCR4hiCD27lo CLL                      | 
+| 19      | CXCR4                                                         | CXCR4hiCD27lo CLL                      | 
+| 20      | RSPH9, RSPH10B, CCDC73, DNAH11                                | ciliated cell                          | 
+| 21      | CD3D, CD3E, Nkg7                                              | non-B cell lymphocyte                  | 
+| 22      | CD3D, CD3E, Nkg7                                              | non-B cell lymphocyte                  | 
+
+```{r, message=FALSE, warning=FALSE, fig.height=8, fig.width=11}
+# Plot UMAP for tumour subtypes
+
+# 1. Map Seurat clusters and create the annotation column
+cluster_to_annotation <- c(
+  "0" = "CXCR4loCD27hi CLL", "1" = "quiescent CLL", "2" = "CCND2hi RT", "3" = "quiescent_to_low-proliferative RT", "4" = "low-proliferative RT",
+  "5" = "BCAT1hiCCND2hi RT", "6" = "quiescent RT", "7" = "quiescent RT", "8" = "SLC22A5hi CLL", "9" = "plasma cell", 
+  "10" = "intermediate-proliferative RT", "11" = "intermediate_to_high-proliferative RT", "12" = "intermediate_to_high-proliferative RT", 
+  "13" = "plasma cell", "14" = "high-proliferative RT", "15" = "high-proliferative RT", "16" = "CXCR4hiCD27lo CLL", 
+  "17" = "CXCR4hiCD27lo CLL", "18" = "CXCR4hiCD27lo CLL", "19" = "CXCR4hiCD27lo CLL", "20" = "ciliated cell", 
+  "21" = "non-B cell lymphocyte", "22" = "non-B cell lymphocyte"
+)
+
+
+
+tumour_seurat$tumour_annotate <- 
+  as.vector(cluster_to_annotation[as.character(tumour_seurat$SCT_snn_res.0.1)])
+
+# 2. Set level order
+new_levels <- c(
+  # Group1: indolent/resting CLL  
+  "CXCR4hiCD27lo CLL",      # Homing to lymph node (oldest/resting)
+  "quiescent CLL",          # Stable disease
+  "CXCR4loCD27hi CLL",      # Recently born/exiting lymph node
+  "SLC22A5hi CLL",          # Distinct metabolic subclone 
+
+  # Group2: The RT trajectory (metabolic priming -> proliferation) 
+  "quiescent RT",                          # The "seed" (non-cycling, transformed)
+  "CCND2hi RT",                            # G1 priming (cyclin D2 upregulation)
+  "BCAT1hiCCND2hi RT",                     # Metabolic switch (Warburg effect active)
+  "quiescent_to_low-proliferative RT",     # S-phase entry transition
+  "low-proliferative RT",                  # Early S-phase
+  "intermediate-proliferative RT",         # Mid S-phase
+  "intermediate_to_high-proliferative RT", # Late S/G2 phase
+  "high-proliferative RT",                 # M-phase (mitosis/explosion)
+
+  # Group3: differentiation endpoint 
+  "plasma cell",            # Terminal differentiation 
+
+  # Group4: microenvironment/contaminated cells 
+  "non-B cell lymphocyte",  # T-cells/NK cells
+  "ciliated cell"           # Normal epithelial contaminant
+)
+
+tumour_seurat$tumour_annotate <- factor(
+  tumour_seurat$tumour_annotate,
+  levels = new_levels
+)
+
+# 3. Define colours and labels
+new_colours <- c(
+  "#7AC7E2", "#0084A7", "#5489C3", "#7C8FE1", # Group 1 (4 colors)
+  "#FCFFC9", "#E8C36A", "#FFCAAE", "#FF6800", "#E25644", "#ED564E", "#d65c7a", "#BB777A", # Group 2 (8 colors)
+  "#D5ADDD", # Group 3 (1 color)
+  "#B1B1B1", "#A1A1A1" # Group 4 (2 colors)
+)
+
+custom_labels <- list(
+  bquote(CXCR4^lo~CD27^hi~"CLL"), bquote("quiescent CLL"), bquote(CXCR4^lo~CD27^hi~"CLL"), bquote(SLC22A5^hi~"CLL"), 
+  bquote("quiescent RT"), bquote(CCND2^hi~"RT"), bquote(BCAT1^hi~CCND2^hi~"RT"), bquote("quiescent_to_low-proliferative RT"), 
+  bquote("low-proliferative RT"), bquote("intermediate-proliferative RT"), bquote("intermediate_to_high-proliferative RT"), 
+  bquote("high-proliferative RT"), bquote("plasma cell"), bquote("non-B cell lymphocyte"), bquote("ciliated cell")
+)
+
+# 4. Plot UMAP
+tumour_subtype.plt <- DimPlot(tumour_seurat, 
+                              group.by = "tumour_annotate", 
+                              label = TRUE,
+                              repel = TRUE,
+                              pt.size = 0.1,
+                              alpha = 0.5,
+                              raster = FALSE
+                              ) +
+  scale_color_manual(
+    values = new_colours,
+    breaks = new_levels,
+    labels = custom_labels
+  ) +
+  labs(y = "UMAP 2", x = "UMAP 1") +
+  ggtitle("Tumour subtypes")
+
+tumour_subtype.plt
+```
+
+It is worth noting that we were unable to merge all tumour cells into a small number of clusters, even after applying batch-correction methods due to the high inter-patient heterogeneity of tumour cells.
+
+# Identify the rank-based consistent common DEG expressions
+
+Moreover, biomarkers identified through our systematic review, derived from rank-based consistently common DEGs, were used to evaluate gene expression patterns in the tumour subtypes.
+
+```{r, message=FALSE, warning=FALSE, fig.height=8, fig.width=25}
+# Dot plot for common DEGs based on annotated cells
+
+path_to_common_up_degs <- here::here("scRNAseq/systematic_review/6-consistency_assessment/overlapping_genes/seurat/3.upregulated_union_rp_rs_consist_degs.txt")
+path_to_common_down_degs <- here::here("scRNAseq/systematic_review/6-consistency_assessment/overlapping_genes/seurat/3.downregulated_union_rp_rs_consist_degs.txt")
+
+up_genes <- read.table(path_to_common_up_degs, stringsAsFactors = FALSE, header = FALSE)[, 1]
+down_genes <- read.table(path_to_common_down_degs, stringsAsFactors = FALSE, header = FALSE)[, 1]
+features <- c(up_genes, down_genes)
+colour_pal <- colorRampPalette(c("#053061", "#2171B5", "white", "#FFD92F", "#A50F15"))(100)
+
+common_degs.plt <- DotPlot(tumour_seurat, features=features, group.by = "tumour_annotate") +
+  RotatedAxis() +
+  scale_colour_gradientn(colours = colour_pal) +
+  scale_y_discrete(
+      limits = rev(new_levels),
+      labels = rev(custom_labels)
+    ) +
+  labs(
+    colour = "Average\nExpression",
+    size = "Percent\nExpressed"
+  )
+
+common_degs.plt
+```
+
+From the expression results, the tumour subtype annotation was consistent with the rank-based common DEGs from the indiviudal analyses. We saved the tumour object and subtype annotation results for further analyses.
+
+```{r, eval=FALSE}
+# Save the annotation results
+saveRDS(tumour_seurat, path_to_save_annotated_tumour_obj)
+
+# Save the figures
+ggsave(filename=paste0(path_to_save_figure, "/tumour_subtype_umap.png"), plot=tumour_subtype.plt, dpi=500, height=8, width=11)
+ggsave(filename=paste0(path_to_save_figure, "/tumour_subtype_dot.png"), plot=common_degs.plt, dpi=500, height=8, width=25)
+```
+
+# Session Information
+
+```{r}
+sessionInfo()
+```
+
+
+

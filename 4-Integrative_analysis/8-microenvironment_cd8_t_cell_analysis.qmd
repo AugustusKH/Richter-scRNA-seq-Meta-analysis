@@ -1,0 +1,1573 @@
+---
+title: "Microenvironment_CD8+_T_cell_analysis"
+author: "Pakorn Sagulkoo"
+format:
+  html:
+    toc: true
+    toc-location: left
+    embed-resources: true
+editor: visual
+---
+
+In this analysis, we focused on CD8+ T cells, from the integrated dataset by performing pseudobulk analysis between RT and CLL in this cell type. Moreover, we also annotated level-2 subtypes of these cells.
+
+# Import the relevant packages and set working path directory
+
+```{r, setup, message=FALSE, warning=FALSE}
+# Attach the packages you will need for the analysis.
+library(Seurat)
+library(harmony)
+library(dplyr)
+library(tibble)
+library(SingleR)
+library(celldex)
+library(sctransform)
+library(cowplot)
+library(DT)
+```
+
+```{r}
+# Check root path
+here::here()
+```
+
+# Define paths
+
+```{r}
+# Define paths to load and save 
+path_to_cd8_obj <- here::here("scRNAseq/meta_analysis/R_objects/cd8_seu.rds")
+path_to_save_cd8_markers <- here::here("scRNAseq/meta_analysis/R_objects/cd8_marker.rds")
+path_to_save_filtered_cd8_obj <- here::here("scRNAseq/meta_analysis/R_objects/filtered_cd8_seu.rds")
+path_to_save_filtered_cd8_markers <- here::here("scRNAseq/meta_analysis/R_objects/filtered_cd8_marker.rds")
+path_to_save_pure_cd8_obj <- here::here("scRNAseq/meta_analysis/R_objects/pure_cd8_seu.rds")
+path_to_save_pure_cd8_markers <- here::here("scRNAseq/meta_analysis/R_objects/pure_cd8_marker.rds")
+path_to_save_figure <- here::here("figures")
+```
+
+```{r}
+# Thresholds
+min_log2FC <- 0.25
+alpha <- 0.001
+```
+
+```{r}
+# Set seed for reproducibility
+set.seed(1)
+```
+
+# Load data and functions
+
+```{r, message=FALSE, warning=FALSE}
+# Source functions
+source(here::here("bin/utils.R"))
+```
+
+```{r}
+# Load the CD8+ T cell object
+cd8_seurat <- readRDS(path_to_cd8_obj)
+```
+
+# Visualisation
+
+```{r, message=FALSE, warning=FALSE, fig.height=4, fig.width=13}
+# Cluster visualisation
+group_by <- c("SCT_snn_res.0.1", "SCT_snn_res.0.2", "SCT_snn_res.0.3")
+umap_plots <- lapply(group_by, function (group){
+  DimPlot(cd8_seurat, 
+          reduction = "umap", 
+          group.by = group, 
+          pt.size = 2,
+          repel=TRUE,
+          raster=TRUE, 
+          label=TRUE) +
+    labs(y= "UMAP 2", x = "UMAP 1")
+})
+
+cd8_umap.plt <- wrap_plots(umap_plots, ncol=3)
+cd8_umap.plt
+```
+
+```{r, fig.height=7, fig.width=12, warning=FALSE, message=FALSE}
+# Plot based on cell biomarker expression
+FeaturePlot(cd8_seurat, 
+            features = c("HBM", "HBA1", "CD79A", "CD14", "CD3D", "CD3E", 
+                         "CD4", "CD8A", "CD8B", "KLRF1", "FCGR3A", "TYROBP"),
+            reduction = "umap") 
+```
+
+# CD8+ T cell purification
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Calculate markers
+Idents(cd8_seurat) <- "SCT_snn_res.1.2"
+markers <- FindAllMarkers(cd8_seurat, only.pos = TRUE, logfc.threshold = min_log2FC)
+markers <- markers %>%
+  mutate(cluster = as.character(cluster)) %>%
+  filter(p_val_adj < alpha) %>%
+  arrange(cluster) %>%
+  group_by(cluster) %>%
+  arrange(desc(avg_log2FC), .by_group = TRUE)
+
+# Save the marker results
+saveRDS(markers, path_to_save_cd8_markers)
+write.csv(markers, here::here("scRNAseq/meta_analysis/text_files/cd8_markers.csv"), row.names = FALSE)
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Show the marker results
+markers <- readRDS(path_to_save_cd8_markers)
+DT::datatable(markers, options = list(scrollX = TRUE))
+```
+
+From the marker identification we found contaminated clusters, for example, RBC for cluster 8, 13, and 14, and B cells for cluster 5, 7, 10, and 17. We then removed them.
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Keep only the CD8+ T cell clusters with reprocessing
+filtered_cd8_seurat <- subset(cd8_seurat, idents = c(5, 7, 8, 10, 13, 14, 17), invert = TRUE)
+filtered_cd8_seurat <- SCTransform(filtered_cd8_seurat, vst.flavor = "v2", method = "glmGamPoi", verbose = FALSE)
+filtered_cd8_seurat <- RunPCA(filtered_cd8_seurat)
+filtered_cd8_seurat <- RunUMAP(filtered_cd8_seurat, dims = 1:30, reduction = "harmony")
+filtered_cd8_seurat <- FindNeighbors(filtered_cd8_seurat, dims = 1:30, reduction = "harmony")        
+filtered_cd8_seurat <- FindClusters(
+  filtered_cd8_seurat,
+  random.seed = 12345,
+  verbose = FALSE,
+  resolution = seq(0.1, 2, by = 0.1)
+)
+
+# Save the object
+saveRDS(filtered_cd8_seurat, path_to_save_filtered_cd8_obj)
+```
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Calculate subclusters for cluster 1 and 2 
+filtered_cd8_seurat$seurat_subclusters <- filtered_cd8_seurat$SCT_snn_res.0.2
+
+for (cluster_id in c("1", "2")) {
+  Idents(filtered_cd8_seurat) <- "seurat_subclusters"
+  
+  filtered_cd8_seurat <- FindSubCluster(
+    object          = filtered_cd8_seurat,
+    cluster         = cluster_id,                  
+    graph.name      = "SCT_snn",            
+    subcluster.name = "seurat_subclusters", 
+    resolution      = 0.2
+  )
+}
+
+# Save the object
+saveRDS(filtered_cd8_seurat, path_to_save_filtered_cd8_obj)
+```
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Calculate markers
+Idents(filtered_cd8_seurat) <- "seurat_subclusters"
+markers <- FindAllMarkers(filtered_cd8_seurat, only.pos = TRUE, logfc.threshold = min_log2FC)
+markers <- markers %>%
+  mutate(cluster = as.character(cluster)) %>%
+  filter(p_val_adj < alpha) %>%
+  arrange(cluster) %>%
+  group_by(cluster) %>%
+  arrange(desc(avg_log2FC), .by_group = TRUE)
+
+# Save the marker results
+saveRDS(markers, path_to_save_filtered_cd8_markers)
+write.csv(markers, here::here("scRNAseq/meta_analysis/text_files/filtered_cd8_markers.csv"), row.names = FALSE)
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Show the marker results
+markers <- readRDS(path_to_save_filtered_cd8_markers)
+DT::datatable(markers, options = list(scrollX = TRUE))
+```
+
+From the biomarker results, all clustes were CD8+ T cells. We then annotated their subtypes in the next step.
+
+# Subtype annotation
+
+```{r, eval=FALSE}
+# Change the obeject and marker name
+pure_cd8_seurat <- filtered_cd8_seurat
+saveRDS(pure_cd8_seurat, path_to_save_pure_cd8_obj)
+saveRDS(markers, path_to_save_pure_cd8_markers)
+write.csv(markers, here::here("scRNAseq/meta_analysis/text_files/pure_cd8_markers.csv"), row.names = FALSE)
+```
+
+```{r, message=FALSE, warning=FALSE, fig.height=4, fig.width=13}
+# Visualise the clusters
+pure_cd8_seurat <- readRDS(path_to_save_pure_cd8_obj)
+group_by <- c("SCT_snn_res.0.2", "seurat_subclusters", "SCT_snn_res.0.3")
+umap_plots <- lapply(group_by, function (group){
+  DimPlot(pure_cd8_seurat, 
+          reduction = "umap", 
+          group.by = group, 
+          pt.size = 2,
+          repel=TRUE,
+          raster=TRUE, 
+          label=TRUE) +
+    labs(y= "UMAP 2", x = "UMAP 1")
+})
+
+pure_cd8_umap.plt <- wrap_plots(umap_plots, ncol=3)
+pure_cd8_umap.plt
+```
+
+```{r, message=FALSE, warning=FALSE, fig.height=4, fig.width=13}
+# Visualise the umap
+group_by <- c("ref", "tissue", "group")
+umap_plots <- lapply(group_by, function (group){
+  DimPlot(pure_cd8_seurat, 
+          reduction = "umap", 
+          group.by = group, 
+          pt.size = 2,
+          repel=TRUE,
+          raster=TRUE, 
+          label=TRUE) +
+    labs(y= "UMAP 2", x = "UMAP 1")
+})
+
+pure_cd8_umap.plt <- wrap_plots(umap_plots, ncol=3)
+pure_cd8_umap.plt
+```
+
+```{r, message=FALSE, warning=FALSE, fig.height=5, fig.width=10}
+# Visualise the cases
+pure_cd8_seurat$patient <- paste0(pure_cd8_seurat$case, "_", pure_cd8_seurat$ref)
+case_cd8.plt <- DimPlot(pure_cd8_seurat, 
+                       reduction = "umap", 
+                       group.by = "patient", 
+                       pt.size = 2,
+                       repel=TRUE,
+                       raster=TRUE, 
+                       label=TRUE) + 
+  labs(y= "UMAP 2", x = "UMAP 1")
+
+case_cd8.plt
+```
+
+Based on Parry (2023b), although the original clinical condition for cases MDAC-ACC-17_Parry_2023b, MDAC-ACC-18_Parry_2023b, and MDAC-ACC-29_Parry_2023b was CLL, their tumour cells were annotated as CCND2hi RT based on RT-associated marker expression and predominant S-phase cell-cycle scores (see Tumour Subtype Annotation section).
+
+Similarly, in Penter (2021), tumour cells from case 1 were annotated as BCAT1hiCCND2hi RT, with high G2/M-phase cell-cycle scores. Accordingly, we reclassified the clinical condition of these samples from CLL to RT for downstream analyses.
+
+```{r, eval=FALSE}
+# Change the new condition for case MDAC-ACC-17_Parry_2023b, MDAC-ACC-18_Parry_2023b, and MDAC-ACC-29_Parry_2023b
+selected_cases <- c("MDAC-ACC-17_Parry_2023b", "MDAC-ACC-18_Parry_2023b", "MDAC-ACC-29_Parry_2023b", "1_Penter_2021")
+pure_cd8_seurat$new_cond <- pure_cd8_seurat$group
+pure_cd8_seurat@meta.data[pure_cd8_seurat$patient %in% selected_cases, "new_cond"] <- "RT"
+```
+
+```{r, message=FALSE, warning=FALSE, fig.height=5, fig.width=6}
+# Visualise the adapted condition
+new_cond_cd8.plt <- DimPlot(pure_cd8_seurat, 
+                       reduction = "umap", 
+                       group.by = "new_cond", 
+                       pt.size = 2,
+                       repel=TRUE,
+                       raster=TRUE, 
+                       label=TRUE) + 
+  labs(y= "UMAP 2", x = "UMAP 1")
+
+new_cond_cd8.plt
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Show the marker results
+markers <- readRDS(path_to_save_pure_cd8_markers)
+DT::datatable(markers, options = list(scrollX = TRUE))
+```
+
+We annotated the myeloid subtypes as literature below:
+
+- [CD8+ T cell states in human cancer: insights from single-cell analysis](https://www.nature.com/articles/s41568-019-0235-4)
+- [Phenotypic and spatial heterogeneity of CD8+ tumour infiltrating lymphocytes](https://link.springer.com/article/10.1186/s12943-024-02104-w)
+- [KLRG+ invariant natural killer T cells are long-lived effectors](https://www.pnas.org/doi/full/10.1073/pnas.1406240111)
+- [Human CD8+ T-Cell Populations That Express Natural Killer Receptors](https://immunenetwork.org/DOIx.php?id=10.4110/in.2023.23.e8)
+- [Unraveling the phenotypic states of human innate-like T cells: Comparative insights with conventional T cells and mouse models](https://www.cell.com/cell-reports/fulltext/S2211-1247(24)01056-8)
+- [Granzyme M: behind enemy lines](https://www.nature.com/articles/cdd2013189#:~:text=This%20highly%20specific%20expression%20of%20hGrM%20by,a%20role%20for%20GrM%20in%20innate%20immunity.)
+- [Potential mechanisms of cancer stem-like progenitor T-cell bio-behaviours](https://onlinelibrary.wiley.com/doi/10.1002/ctm2.1817)
+- [Developmental Relationships of Four Exhausted CD8+ T Cell Subsets Reveals Underlying Transcriptional and Epigenetic Landscape Control Mechanisms](https://www.sciencedirect.com/science/article/pii/S1074761320301722)
+
+| Cluster | Markers                                                         | Annotation    |
+|---------|-----------------------------------------------------------------|---------------|
+| 0       | GNLY, GZMB, PRF1                                                | Teff          |
+| 1_0     | ZNF683, PRF1, FGFBP2                                            | Tem           |
+| 1_1     | ZNF683, PRF1, FGFBP2, FCRL6, NKG7                               | Tem           |
+| 1_2     | GZMK, PDCD1, CD28, LAG3, TIGIT, HAVCR2, ENTPD1                  | Pre Tex       |
+| 2_0     | ID2, CXCR3, EOMES, GZMK                                         | Tint          |
+| 2_1     | TCF7, PDCD1, CD28                                               | Tpex          |
+| 2_2     | TCF7, CCR7, IL7R, LTB, SELL, CD27, PTPRCAP                      | Tcm           |
+| 3       | CX3CR1, FCGR3A, FGFBP2, GNLY, FCRL6, NKG7, CXCR3, S1PR1, S1PR5  | Temra         |
+| 4       | GZMA, IFNG, CCL3, XCL2, MYADM, CAPG, NR4A1, NR4A2, CD69         | Trm-like      |
+| 5       | LEF1, TCF7, CCR7, IL7R, S1PR1                                   | Tn            |
+| 6       | KLRG1, GZMM, KLRB1, ZBTB16, NCAM1                               | NKT-like      |
+| 7       | PDCD1, LAG3, TIGIT, HAVCR2, ENTPD1, IFNG, TOX                   | Tex           |
+
+Abbreviations: Tn, naive T cell; Tcm, central memory T cell; Teff, effector T cell; Tem, effector memory T cell; Temra, terminally differentiated effector memory T cell; Trm-like, tissue-resident memory (Trm)-like T cell; CTL, cytotoxic T cell; NKT, NK-like T cell; Tint, intermediate T cell; Tpex, Progenitor exhausted T cell; Tex, exhausted T cell; Pre Tex, pre-exhausted T cell;
+
+```{r, message=FALSE, warning=FALSE, fig.height=4.5, fig.width=5.5}
+# Plot UMAP for CD8+ T cell subtypes
+
+# 1. Map Seurat clusters and create the annotation column
+cluster_to_annotation <- c(
+  "0" = "Teff", "1_0" = "Tem", "1_1" = "Tem", "1_2" = "Pre Tex", "2_0" = "Tint", "2_1" = "Tpex", "2_2" = "Tcm", 
+  "3" = "Temra", "4" = "Trm-like", "5" = "Tn", "6" = "NKT-like", "7" = "Tex"
+  )
+
+pure_cd8_seurat$level2_annotate <- 
+  as.vector(cluster_to_annotation[as.character(pure_cd8_seurat$seurat_subclusters)])
+
+# 2. Set level order
+new_levels <- c(
+  # Group1: naive and central memory cells 
+  "Tn", "Tcm", "Tint", "Tpex", 
+  
+  # Group2: effector memory, tissue-resident, and CTL  
+  "Tem", "Teff", "Temra", "Trm-like",  
+  
+  # Group3: innate-like T cell
+  "NKT-like",
+
+  # Group3: exhausted T cell  
+  "Pre Tex", "Tex" 
+)
+
+pure_cd8_seurat$level2_annotate <- factor(
+  pure_cd8_seurat$level2_annotate,
+  levels = new_levels
+) 
+
+# 3. Define colours and labels
+new_colours <- c(
+  "#B3B3B3", "#1F78B4", "#6BAED6", "#A6CEE3",   # Group 1 (4 colours)
+  "#4DAF4A", "#008080", "#C28BCD", "#F38D30",   # Group 2 (4 colours)
+  "#FFD92F",                                    # Group 3 (1 colour)
+  "#E25644", "#B04968"                          # Group 4 (3 colours)
+) 
+
+custom_labels <- list(
+  bquote("Tn"), bquote("Tcm"), bquote("Tint"), bquote("Tpex"),
+  bquote("Tem"), bquote("Teff"), bquote("Temra"), bquote("Trm-like"),
+  bquote("NKT-like"), 
+  bquote("Pre Tex"), bquote("Tex")
+  )
+
+# 4. Plot UMAP
+cd8_subtype.plt <- DimPlot(pure_cd8_seurat, 
+                          group.by = "level2_annotate", 
+                          label = FALSE,
+                          repel = TRUE,
+                          pt.size = 2,
+                          alpha = 1,
+                          raster = TRUE
+                          ) +
+  scale_color_manual(
+    values = new_colours,
+    breaks = new_levels,
+    labels = custom_labels
+  ) +
+  labs(y = "UMAP 2", x = "UMAP 1") +
+  ggtitle("CD8+ T cell subtypes")
+
+cd8_subtype.plt
+```
+
+```{r, message=FALSE, warning=FALSE, fig.height=4, fig.width=13}
+# Dot plot for biomarker expressions based on annotated cells
+features <- c("TCF7", "LEF1", "SELL", "CCR7", "LTB", "GPR183", "EOMES","CD27", "CD28", "GZMK", "GZMA", 
+              "GZMB", "PRF1", "GNLY", "NKG7", "CCL3", "CCL4", "S1PR1", "S1PR5", "CX3CR1", "FCGR3A", 
+              "FGFBP2", "ZNF683", "GZMM", "KLRB1", "NCAM1", "PDCD1", "LAG3", "TIGIT", "HAVCR2"
+              )
+colour_pal <- colorRampPalette(c("#053061", "#2171B5", "white", "#FFD92F", "#A50F15"))(100)
+
+cd8_markers.plt <- DotPlot(pure_cd8_seurat, features=features, group.by = "level2_annotate") +
+  RotatedAxis() +
+  scale_colour_gradientn(colours = colour_pal) +
+  scale_y_discrete(
+      limits = rev(new_levels),
+      labels = rev(custom_labels)
+    ) +
+  labs(
+    colour = "Average\nExpression",
+    size = "Percent\nExpressed"
+  )
+
+cd8_markers.plt
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Plot subtype population based on tissue and condition
+proportion_tissue_df <- pure_cd8_seurat@meta.data %>%
+  dplyr::mutate(level2_annotate = factor(level2_annotate, levels = new_levels)) %>%
+  dplyr::count(tissue, level2_annotate) %>%
+  dplyr::group_by(tissue) %>%
+  dplyr::mutate(proportion = n / sum(n)) %>%
+  dplyr::ungroup() %>%
+  dplyr::select(-n) # Remove n column
+
+proportion_cond_df <- pure_cd8_seurat@meta.data %>%
+  dplyr::mutate(level2_annotate = factor(level2_annotate, levels = new_levels)) %>%
+  dplyr::count(new_cond, level2_annotate) %>%
+  dplyr::group_by(new_cond) %>%
+  dplyr::mutate(proportion = n / sum(n)) %>%
+  dplyr::ungroup() %>%
+  dplyr::select(-n) # Remove n column
+
+tissue_cell_pop.plt <- ggplot(proportion_tissue_df, aes(x = tissue, 
+                                                    y = proportion, 
+                                                    fill = level2_annotate)) +
+  geom_col(position = "stack", width = 0.7) +
+  scale_fill_manual(
+    values = new_colours,
+    breaks = new_levels,
+    name = "CD4+ T cell subtype" # Set legend title
+  ) +
+  labs(
+    y = "Cell proportion",
+    x = "Tissue", 
+    title = "Tissue"
+  ) +
+  theme_bw() +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    axis.text.x = element_text(angle = 45, hjust = 1), # Rotate x-axis labels 
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank()
+  )
+
+cond_cell_pop.plt <- ggplot(proportion_cond_df, aes(x = new_cond, 
+                                                    y = proportion, 
+                                                    fill = level2_annotate)) +
+  geom_col(position = "stack", width = 0.5) +
+  scale_fill_manual(
+    values = new_colours,
+    breaks = new_levels,
+    name = "CD8+ T cell subtype" # Set legend title
+  ) +
+  labs(
+    y = "Cell proportion",
+    x = "Condition", 
+    title = "Condition"
+  ) +
+  theme_bw() +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    axis.text.x = element_text(angle = 45, hjust = 1), # Rotate x-axis labels 
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank()
+  )
+
+# Combine the plots
+adapted_tissue_cell_pop.plt <- tissue_cell_pop.plt +
+  theme(legend.position = "none",
+        axis.title.x = element_blank()) 
+
+adapted_cond_cell_pop.plt <- cond_cell_pop.plt + 
+  theme(legend.position = "right", 
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks.y = element_blank()) 
+
+combined_cell_pop.plt <- adapted_tissue_cell_pop.plt + adapted_cond_cell_pop.plt
+combined_cell_pop.plt
+```
+
+```{r, eval=FALSE}
+# Save the CD8+ T cell object
+saveRDS(pure_cd8_seurat, path_to_save_pure_cd8_obj)
+
+# Save the figures
+ggsave(filename=paste0(path_to_save_figure, "/cd8_umap.png"), plot=cd8_subtype.plt, dpi=500, height=4.5, width=5.5)
+ggsave(filename=paste0(path_to_save_figure, "/cd8_dot.png"), plot=cd8_markers.plt, dpi=500, height=4, width=13)
+ggsave(filename=paste0(path_to_save_figure, "/cd8_cell_pop.png"), plot=combined_cell_pop.plt , dpi=500, height=4, width=7)
+```
+
+# Trajectory analysis
+
+In this section, we used the Monocle 3 package to identify developmental trajectories of CD8+ T cells using naive T cell subtype as a root node.
+
+```{r, message=FALSE, warning=FALSE}
+# Import the relevant packages
+library(monocle3)
+library(igraph)
+library(SeuratWrappers)
+library(paletteer)
+```
+
+```{r}
+# Define path to save
+path_to_save_cd8_monocle_obj <- here::here("scRNAseq/meta_analysis/R_objects/cd8_monocle_cds.rds")
+path_to_save_cd8_monocle_dea <- here::here("scRNAseq/meta_analysis/R_objects/cd8_monocle_dea.rds")
+path_to_save_cd8_monocle_module <- here::here("scRNAseq/meta_analysis/R_objects/cd8_monocle_module.rds")
+path_to_save_cd8_monocle_agg_mat <- here::here("scRNAseq/meta_analysis/R_objects/cd8_monocle_agg_mat.rds")
+```
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Create monocle object and generate graph (use data from seurat)
+cds <- as.cell_data_set(pure_cd8_seurat) # Convert the seurat object to monocle object using SeuratWrappers
+cds <- preprocess_cds(cds)
+
+# Create gene_short_name
+rowData(cds)$gene_short_name <- row.names(rowData(cds))
+
+# Assign seurat clusters to monocle and create a partition
+cds <- monocle3::cluster_cells(cds, reduction_method = "UMAP", 
+                               cluster_method = "louvain", 
+                               resolution = 0.5)
+cds@clusters$UMAP$clusters <- pure_cd8_seurat$SCT_snn_res.0.6
+
+# Assign UMAP coordination
+cds@int_colData$reducedDims$UMAP <- pure_cd8_seurat@reductions$umap@cell.embeddings
+```
+
+```{r, message=FALSE, warning=FALSE, fig.height=4, fig.width=17}
+# Monocle plot before trajectory analysis
+cds <- readRDS(path_to_save_cd8_monocle_obj)
+group_by <- c("cluster", "partition", "level2_annotate")
+umap_plots <- lapply(group_by, function (group){
+  plot_cells(cds, 
+             color_cells_by = group, 
+             label_groups_by_cluster = FALSE, 
+             group_label_size = 5,
+             cell_size = 0.1) +  
+    theme(legend.position = "right")
+})
+
+monocle_umap.plt <- wrap_plots(umap_plots, ncol=3)
+monocle_umap.plt
+```
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Learn trajectory
+cds <- learn_graph(cds, use_partition = TRUE, close_loop = TRUE,
+                   learn_graph_control = list(minimal_branch_len = 5, rann.k = 50))
+```
+
+```{r, message=FALSE, warning=FALSE, fig.height=5, fig.width=7}
+# Plot after learning trajectory
+monocle_cluster.plt <- plot_cells(cds, 
+                                  color_cells_by = "cluster",
+                                  graph_label_size=5,
+                                  cell_size = 0.1,
+                                  show_trajectory_graph = TRUE
+                                  ) + 
+  ggtitle("Seurat clusters") +
+  theme(legend.position = "right",
+        plot.title = element_text(size = 16, face = "bold", hjust = 0.5)
+        )
+
+monocle_cluster.plt
+```
+
+```{r, message=FALSE, warning=FALSE, fig.height=5, fig.width=7}
+# Plot root
+root.plt <- plot_cells(cds, label_principal_points = TRUE) + 
+  ggtitle("Root principal node") +
+  theme(legend.position = "right",
+        plot.title = element_text(size = 16, face = "bold", hjust = 0.5)
+        )
+
+root.plt
+```
+
+```{r, fig.height=9, fig.width=8, warning=FALSE, message=FALSE}
+# Plot based on cell biomarker expression
+FeaturePlot(pure_cd8_seurat, 
+            features = c("CCR7", "LEF1", "TCF7", "SELL", "GZMK", "LTB"),
+            reduction = "umap") 
+```
+
+From the Tcm subtype we set Y_200 as a root node as this point expressed the highest TCF7 and SELL.
+
+## Calculate pseudotime
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Set a root to order cells in pseudotime
+cds <- order_cells(cds, reduction_method = "UMAP", root_pr_nodes = c("Y_666", "Y_200", "Y_959"))
+```
+
+```{r, fig.height=5, fig.width=7}
+# Plot the pseudotime
+monocle_pseudotime.plt <- plot_cells(cds, 
+                                     color_cells_by = "pseudotime",
+                                     label_cell_groups=FALSE,
+                                     label_leaves=FALSE,
+                                     label_branch_points=FALSE,
+                                     graph_label_size=1.5,
+                                     cell_size = 0.1) +
+  ggtitle("Pseudotime") +
+  theme(legend.position = "right",
+        plot.title = element_text(size = 16, face = "bold", hjust = 0.5)
+        )
+
+monocle_pseudotime.plt
+```
+
+```{r, fig.height=5, fig.width=5}
+# Plot the pseudotime with trajectory path with Seurat style
+
+# 1. Extract principal graph
+pg_aux <- principal_graph_aux(cds)$UMAP
+
+# 2. Convert to edge list
+edges <- as_data_frame(principal_graph(cds)$UMAP, what = "edges")
+nodes <- as.data.frame(t(pg_aux$dp_mst))
+nodes$name <- rownames(nodes)
+root_node <- cds@principal_graph_aux$UMAP$root_pr_nodes
+
+# 3. Merge edges with coordinates
+trajectory_df <- edges %>%
+  dplyr::left_join(nodes, by = c("from" = "name")) %>%
+  dplyr::rename(
+    UMAP_1_from = umap_1,
+    UMAP_2_from = umap_2
+  ) %>%
+  dplyr::left_join(nodes, by = c("to" = "name")) %>%
+  dplyr::rename(
+    UMAP_1_to = umap_1,
+    UMAP_2_to = umap_2
+  )
+
+seurat_df <- data.frame(
+  Embeddings(pure_cd8_seurat, "umap"),
+  pseudotime = pseudotime(cds)
+)
+
+root_df <- nodes %>%
+  dplyr::filter(name %in% root_node)
+
+# 4. Plot
+trajectory_no_annotate.plt <- ggplot(seurat_df, aes(umap_1, umap_2)) +
+  geom_point(aes(color = pseudotime), size = 0.5, alpha=1) +
+  geom_segment(
+    data = trajectory_df,
+    aes(
+      x = UMAP_1_from,
+      y = UMAP_2_from,
+      xend = UMAP_1_to,
+      yend = UMAP_2_to
+    ),
+    inherit.aes = FALSE,
+    colour = "black",
+    linewidth = 0.7
+  ) +
+  geom_point(
+    data = root_df,
+    aes(umap_1, umap_2),
+    inherit.aes = FALSE,
+    shape = 21,          # circle with fill
+    size = 6,
+    fill = "white",
+    colour = "black",
+    stroke = 1
+  ) +
+  geom_text(
+    data = root_df,
+    aes(umap_1, umap_2),
+    label = c("1", "2", "3"),
+    inherit.aes = FALSE,
+    size = 5,
+    fontface = "bold"
+  ) +
+  scale_color_gradientn(
+    name = "Pseudotime",
+    colors = paletteer_c("grDevices::RdYlBu", 30, direction = -1)
+  ) +
+  theme_void() +
+  theme(
+    legend.position = "top" 
+  )  
+  
+annotate_trajectory.plt <- trajectory_no_annotate.plt +  
+  annotate("text", x = -6, y = 5, label = "Tn", 
+             color = "black", fontface = "plain", size = 4) +
+  annotate("text", x = -10, y = -2.2, label = "Temra", 
+             color = "black", fontface = "plain", size = 4) +
+  annotate("text", x = 2.8, y = 14.5, label = "Trm-like", 
+             color = "black", fontface = "plain", size = 4) +
+  annotate("text", x = -2.7, y = 5.5, label = "Tcm", 
+             color = "black", fontface = "plain", size = 4) +
+  annotate("text", x = 0, y = 8.5, label = "Tint", 
+             color = "black", fontface = "plain", size = 4) +
+  annotate("text", x = 5.8, y = 5, label = "Pre Tex", 
+             color = "black", fontface = "plain", size = 4) +
+  annotate("text", x = 5, y = 9, label = "Tex", 
+             color = "black", fontface = "plain", size = 4) +
+  annotate("text", x = 6.8, y = -1, label = "Tem", 
+             color = "black", fontface = "plain", size = 4) +
+  annotate("text", x = -5, y = -8, label = "Teff", 
+             color = "black", fontface = "plain", size = 4) +
+  annotate("text", x = -4.2, y = -2, label = "NKT-like", 
+             color = "black", fontface = "plain", size = 4) +
+  annotate("text", x = -3, y = 2, label = "Tpex", 
+             color = "black", fontface = "plain", size = 4) + 
+  annotate(
+    "segment", 
+    x = -2.2, y = 1.9,       # Start point (near the 'Tpex' text)
+    xend = 0, yend = 2.5,    # End point (the actual 'Tpex' cells/node)
+    colour = "black",
+    linewidth = 0.5
+  )
+
+annotate_trajectory.plt
+```
+
+```{r, eval=FALSE}
+# Save the monocle object
+saveRDS(cds, path_to_save_cd8_monocle_obj)
+
+# Save the figure
+ggsave(filename=paste0(path_to_save_figure, "/cd8_trajectory.png"), plot=annotate_trajectory.plt, dpi=500, height=5, width=5)
+```
+
+## Gene expression across pseudotime
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Group genes into modules
+cd8_cds_pr_test_res <- monocle3::graph_test(cds, neighbor_graph = "principal_graph", cores = 4)
+monocle_degs <- row.names(subset(cd8_cds_pr_test_res, q_value < 0.05))
+gene_modules_df <- find_gene_modules(cds[monocle_degs,], resolution=1e-3)
+cell_group_df <- tibble::tibble(cell=row.names(colData(cds)), 
+                                cell_group=colData(cds)$level2_annotate)
+agg_mat <- aggregate_gene_expression(cds, gene_modules_df, cell_group_df)
+row.names(agg_mat) <- paste0("Module ", row.names(agg_mat))
+
+# Save the module results
+write.csv(cd8_cds_pr_test_res, here::here("scRNAseq/meta_analysis/supplm_file/cd8_trajectory_gene_expr.csv"))
+saveRDS(cd8_cds_pr_test_res, path_to_save_cd8_monocle_dea)
+saveRDS(gene_modules_df, path_to_save_cd8_monocle_module)
+saveRDS(agg_mat, path_to_save_cd8_monocle_agg_mat)
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Show the monocle dae
+monocle_dea <- readRDS(path_to_save_cd8_monocle_dea)
+DT::datatable(monocle_dea, options = list(scrollX = TRUE))
+```
+
+```{r, fig.height=6, fig.width=6}
+# Plot heatmap 
+library(pheatmap)
+gene_modules_df <- readRDS(path_to_save_cd8_monocle_module)
+agg_mat <- readRDS(path_to_save_cd8_monocle_agg_mat)
+colour_pal <- colorRampPalette(c("#053061", "#2171B5", "white", "#FFD92F", "#A50F15"))(100)
+pseudotime_heatmap.plt <- pheatmap::pheatmap(agg_mat, scale="column", fontsize = 11,
+                                             color = colour_pal,
+                                             angle_col = 45,
+                                             clustering_method="ward.D2")
+
+pseudotime_heatmap.plt
+```
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Test a range of resolutions to appropriate modules
+resolutions <- c(1e-3, 2e-3, 3e-3, 4e-3, 5e-3)
+
+for(res in resolutions){
+  modules <- find_gene_modules(cds[monocle_degs,], resolution = res)
+  num_mods <- length(unique(modules$module))
+  print(paste("Resolution:", res, "->", num_mods, "Modules"))
+}
+```
+
+```{r}
+# Collect gene signatures for fate subtypes based on gene modules
+tex_gene <- gene_modules_df %>% filter(module %in% c(10, 12)) %>% pull(id)
+temra_gene <- gene_modules_df %>% filter(module %in% c(1)) %>% pull(id)
+teff_gene <- gene_modules_df %>% filter(module %in% c(2, 5)) %>% pull(id)
+```
+
+```{r, message=FALSE, warning=FALSE, fig.height=8, fig.width=6}
+# Branch 1 Tcm to Tex
+cells_types_of_interest <- c("Tcm", "Tpex", "Tint", "Pre Tex", "Tex")
+pseudotime_genes <- c("PDCD1", "HAVCR2", "TIGIT", "ISG15", "PCNA", "NDUFS3")
+
+tex_genes_pseudotime <- plot_expression_on_pseudotime(cds_ordered = cds, 
+                                                           genes = pseudotime_genes, 
+                                                           cell_annotations = cells_types_of_interest, 
+                                                           pseudotime_boundary = 11,
+                                                           facet_wrap_plot = TRUE) +
+  miller_discrete_scale(style = "bars") +
+  labs(title = "Tcm to Tex") +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold", size = 16))
+
+tex_genes_pseudotime
+```
+
+For the Tex fate in CD8+ T cells, this subtype was confirmed by upregulation in exhausted genes (PDCD1, HAVCR2, and TGIT). Moreover, this subtype also exhibited interferon-related and proliferation genes: ISG15 and PCNA. A mitochnondiral gene, such as NDUFS3, was also observed, suggesting that the oxidative phosphorylation was predominated in the exhausted state.
+
+```{r, message=FALSE, warning=FALSE, fig.height=8, fig.width=6}
+# Branch 2 Tcm to Teff
+cells_types_of_interest <- c("Tcm", "Tint", "Tem", "Teff")
+pseudotime_genes <- c("GZMB", "PRF1", "ZAP70", "MTOR", "PDCD6IP", "EGLN1")
+
+teff_genes_pseudotime <- plot_expression_on_pseudotime(cds_ordered = cds, 
+                                                           genes = pseudotime_genes, 
+                                                           cell_annotations = cells_types_of_interest, 
+                                                           pseudotime_boundary = 20,
+                                                           facet_wrap_plot = TRUE) +
+  miller_discrete_scale(style = "bars") +
+  labs(title = "Tcm to Teff") +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold", size = 16))
+
+teff_genes_pseudotime
+```
+
+From this fate, Teff cells exhibited higher cytotoxic activity, characterised by the upregulation of metabolic-related genes such as mTOR and cytotoxic effector genes including GZMB and PRF1, although the latter two genes declined towards the terminal state. Moreover, this subtype demonstrated enhanced TCR signalling, indicated by increased expression of ZAP70. However, the upregulation of PDCD6IP, an exhaustion-associated gene, together with EGLN1, a hypoxia-response gene, was also observed, suggesting that Teff cells may progressively acquire an exhausted phenotype.
+
+```{r, message=FALSE, warning=FALSE, fig.height=8, fig.width=6}
+# Branch 3 Tn to Temra
+cells_types_of_interest <- c("Tn", "Temra")
+pseudotime_genes <- c("FCGR3A", "FGFBP2", "GNLY", "NKG7", "CXCR3", "ENO1")
+
+temra_genes_pseudotime <- plot_expression_on_pseudotime(cds_ordered = cds, 
+                                                           genes = pseudotime_genes, 
+                                                           cell_annotations = cells_types_of_interest, 
+                                                           pseudotime_boundary = 10,
+                                                           facet_wrap_plot = TRUE) +
+  miller_discrete_scale(style = "bars") +
+  labs(title = "Tn to Temra") +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold", size = 16))
+
+temra_genes_pseudotime
+```
+
+Based on the results, the Temra fate was confirmed by the expression of canonical markers, including FCGR3A, FGFBP2, and GNLY. Moreover, the increased expression of ENO1 suggested that this subtype may progress towards a senescent-like state.
+
+```{r, eval=FALSE}
+# Save the figures
+ggsave(filename=paste0(path_to_save_figure, "/cd8_tex_gene_flow.png"), plot=tex_genes_pseudotime, dpi=500, height=8, width=6)
+ggsave(filename=paste0(path_to_save_figure, "/cd8_teff_gene_flow.png"), plot=teff_genes_pseudotime, dpi=500, height=8, width=6)
+ggsave(filename=paste0(path_to_save_figure, "/cd8_temra_gene_flow.png"), plot=temra_genes_pseudotime, dpi=500, height=8, width=6)
+```
+
+# Gene expression analysis between RT versus CLL
+
+```{r, message=FALSE, warning=FALSE}
+# Import the related libraries in functional enrichment analysis
+library(DESeq2)
+library(limma)
+library(clusterProfiler)
+library(enrichplot)
+library(msigdbr)
+library(org.Hs.eg.db)
+library(EnhancedVolcano)
+library(ggpubr)
+```
+
+## Based on Seurat command
+
+```{r}
+# Define paths to save and load
+path_to_save_seurat_dea <- here::here("scRNAseq/meta_analysis/R_objects/gene_exprs/cd8_seurat_dea.rds")
+path_to_save_seurat_hm_gsea <- here::here("scRNAseq/meta_analysis/R_objects/gene_exprs/cd8_seurat_hm_gsea.rds")
+path_to_save_seurat_go_gsea <- here::here("scRNAseq/meta_analysis/R_objects/gene_exprs/cd8_seurat_go_gsea.rds")
+path_to_save_seurat_kegg_gsea <- here::here("scRNAseq/meta_analysis/R_objects/gene_exprs/cd8_seurat_kegg_gsea.rds")
+path_to_save_seurat_reactome_gsea <- here::here("scRNAseq/meta_analysis/R_objects/gene_exprs/cd8_seurat_reactome_gsea.rds")
+path_to_save_seurat_wikipath_gsea <- here::here("scRNAseq/meta_analysis/R_objects/gene_exprs/cd8_seurat_wikipath_gsea.rds")
+```
+
+### Find biomarkers of monocytes between RT and CLL conditions
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Find markers between CLL and RT conditions  
+Idents(pure_cd8_seurat) <- "new_cond" # we used this variable as it contains RT and CLL
+pure_cd8_seurat <- PrepSCTFindMarkers(pure_cd8_seurat) # Prepare SCT assay for DE testing
+cd8.ge <- FindMarkers(
+  pure_cd8_seurat,
+  ident.1 = "RT",
+  ident.2 = "CLL",
+  test.use = "wilcox",
+  only.pos = FALSE,
+  logfc.threshold = 0
+)
+dea.df <- cbind(gene = rownames(cd8.ge), cd8.ge)
+avg_exp <- AverageExpression(pure_cd8_seurat, features = dea.df$gene, assay = "SCT") # Calculate the average expression for the genes
+dea.df$baseMean <- rowMeans(avg_exp$SCT) # Calculate the mean across all relevant groups (e.g., global mean for the gene)
+
+# Save the expression results
+saveRDS(dea.df, path_to_save_seurat_dea)
+write.csv(dea.df, here::here("scRNAseq/meta_analysis/supplm_file/cd8_seurat_dea.csv"))
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Load the saved expression data
+dea.df <- readRDS(path_to_save_seurat_dea)
+DT::datatable(dea.df, options = list(scrollX = TRUE))
+```
+
+```{r, message=FALSE, warning=FALSE, fig.height=7, fig.width=10}
+# Volcano plot for Seurat pseudobulk analysis
+genes_of_interest <- c(
+  "TIGIT", "PDCD1", "HAVCR2", "GZMK", "CX3CR1", "EOMES",        # RT CD8+ T cells: exhausted gene upregulation               
+  "TCF7", "IL7R", "MTOR"                                        # CLL CD8+ T cells: stemness and metabolic adaptation
+)
+
+non_zero_min_pval <- sort(unique(dea.df$p_val_adj), decreasing = FALSE)[2] # Find minimum p-value which is not 0
+dea.df$adapted_p_val <- ifelse(dea.df$p_val_adj == 0, non_zero_min_pval, dea.df$p_val_adj) # Change zero adj_p_val to non-zero minimum adj_p_val to avoid plotting error
+
+volcano.plt <- volcano_plot(dea.df, 
+                            FC=0.25, 
+                            x_col="avg_log2FC",
+                            y_col="adapted_p_val",
+                            xlim=c(-10,10), 
+                            ylim=c(-0.1,300), 
+                            genes_of_interest=genes_of_interest,
+                            boxedLabels = TRUE) 
+
+volcano.plt
+```
+
+```{r, message=FALSE, warning=FALSE}
+# MA plot for Seurat pseudobulk analysis
+ma_data <- dea.df
+colnames(ma_data)[colnames(ma_data) == "avg_log2FC"] <- "log2FoldChange"
+colnames(ma_data)[colnames(ma_data) == "p_val_adj"]  <- "padj"
+
+ma.plt <- ggmaplot(ma_data, 
+                   fdr = 0.05,            # Threshold for significance
+                   fc = 2,                # Threshold for FC
+                   size = 0.4,            # Dot size
+                   palette = c("#B31B21", "#1465AC", "darkgray"),
+                   genenames = as.vector(ma_data$gene),
+                   top = 0, label.select = genes_of_interest, # set top = 0, then specify genes using label.select argument
+                   legend = "right", 
+                   font.label = c("bold", 11), 
+                   label.rectangle = TRUE,
+                   font.legend = "bold",
+                   font.main = "bold",
+                   ggtheme = ggplot2::theme_minimal(),
+                   xlab = "Mean Expression",
+                   ylab = "Log2 Fold Change"
+                   )
+
+ma.plt
+```
+
+```{r, eval=FALSE}
+# Save the figure
+ggsave(filename=paste0(path_to_save_figure, "/seurat_cd8_volcano.png"), plot=volcano.plt, dpi=500, height=7, width=9)
+ggsave(filename=paste0(path_to_save_figure, "/seurat_cd8_ma.png"), plot=ma.plt, dpi=500, height=3.5, width=5)
+```
+
+Briefly, RT CD8+ T cells upregulated genes involved in exhausted state while CLL CD8+ cells upregulated in stemness and metabolic associated genes.
+
+### GSEA
+
+```{r}
+# Manipulate the expression data
+lfc_vector <- dea.df$avg_log2FC # Create a named vector ranked based on the log2 fold change
+names(lfc_vector) <- dea.df$gene
+lfc_vector <- na.omit(lfc_vector) # Omit any NA values
+lfc_vector <- sort(lfc_vector, decreasing = TRUE) # Sort the log2 fold change in descending order
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Hallmark
+HM_gsea <- HM_GSEA(lfc_vector)
+
+# Collect the HM GSEA result
+HM_GSEA.result <- HM_gsea@result
+HM_GSEA_selected.result <- HM_GSEA.result %>%
+  as_tibble() %>%
+  dplyr::select(c(Description, NES, pvalue, p.adjust))
+
+DT::datatable(HM_GSEA_selected.result, options = list(scrollX = TRUE))
+```
+
+```{r, message=FALSE, warning=FALSE}
+# GO:BP
+GOBP_gsea <- GO_GSEA(lfc_vector)
+
+# Collect the GSEA result
+GOBP_GSEA.result <- GOBP_gsea@result
+GOBP_GSEA_selected.result <- GOBP_GSEA.result %>%
+  as_tibble() %>%
+  dplyr::select(c(Description, NES, pvalue, p.adjust))
+
+DT::datatable(GOBP_GSEA_selected.result, options = list(scrollX = TRUE))
+```
+
+```{r, message=FALSE, warning=FALSE}
+# KEGG pathway
+KEGG_gsea <- KEGG_GSEA(lfc_vector)
+
+# Collect the HM GSEA result
+KEGG_GSEA.result <- KEGG_gsea@result
+KEGG_GSEA_selected.result <- KEGG_GSEA.result %>%
+  as_tibble() %>%
+  dplyr::select(c(Description, NES, pvalue, p.adjust))
+
+DT::datatable(KEGG_GSEA_selected.result, options = list(scrollX = TRUE))
+```
+
+```{r, message=FALSE, warning=FALSE}
+# REACTOME
+REACTOME_gsea <- REACTOME_GSEA(lfc_vector)
+
+# Collect the HM GSEA result
+REACTOME_GSEA.result <- REACTOME_gsea@result
+REACTOME_GSEA_selected.result <- REACTOME_GSEA.result %>%
+  as_tibble() %>%
+  dplyr::select(c(Description, NES, pvalue, p.adjust))
+
+DT::datatable(REACTOME_GSEA_selected.result, options = list(scrollX = TRUE))
+```
+
+```{r, message=FALSE, warning=FALSE}
+# WikiPath
+WIKIPATH_gsea <- WIKIPATH_GSEA(lfc_vector)
+
+# Collect the HM GSEA result
+WIKIPATH_GSEA.result <- WIKIPATH_gsea@result
+WIKIPATH_GSEA_selected.result <- WIKIPATH_GSEA.result %>%
+  as_tibble() %>%
+  dplyr::select(c(Description, NES, pvalue, p.adjust))
+
+DT::datatable(WIKIPATH_GSEA_selected.result, options = list(scrollX = TRUE))
+```
+
+### GSEA summary
+
+We then summarised the common terms found from Hallmark, GO:BP, and canonical pathways.
+
+```{r, message=FALSE, warning=FALSE}
+# Bar plot of GSEA 
+gsea_bp <- rbind(
+  HM_GSEA_selected.result[HM_GSEA_selected.result$Description == "HALLMARK_OXIDATIVE_PHOSPHORYLATION",],
+  KEGG_GSEA_selected.result[KEGG_GSEA_selected.result$Description == "KEGG_PYRUVATE_METABOLISM",],
+  KEGG_GSEA_selected.result[KEGG_GSEA_selected.result$Description == "KEGG_GLYCOLYSIS_GLUCONEOGENESIS",],
+  KEGG_GSEA_selected.result[KEGG_GSEA_selected.result$Description == "KEGG_FATTY_ACID_METABOLISM",],
+  HM_GSEA_selected.result[HM_GSEA_selected.result$Description == "HALLMARK_MYC_TARGETS_V1",],
+  GOBP_GSEA_selected.result[GOBP_GSEA_selected.result$Description == "GOBP_MITOCHONDRIAL_GENE_EXPRESSION",],
+  WIKIPATH_GSEA_selected.result[WIKIPATH_GSEA_selected.result$Description == "WP_METABOLIC_REPROGRAMMING_IN_COLON_CANCER",],
+  HM_GSEA_selected.result[HM_GSEA_selected.result$Description == "HALLMARK_MITOTIC_SPINDLE",],
+  GOBP_GSEA_selected.result[GOBP_GSEA_selected.result$Description == "GOBP_REGULATION_OF_CELL_DEVELOPMENT",],
+  GOBP_GSEA_selected.result[GOBP_GSEA_selected.result$Description == "GOBP_CELL_CELL_SIGNALING",],
+  HM_GSEA_selected.result[HM_GSEA_selected.result$Description == "HALLMARK_APOPTOSIS",],
+  HM_GSEA_selected.result[HM_GSEA_selected.result$Description == "HALLMARK_HYPOXIA",],
+  GOBP_GSEA_selected.result[GOBP_GSEA_selected.result$Description == "GOBP_ADAPTIVE_IMMUNE_RESPONSE",],
+  WIKIPATH_GSEA_selected.result[WIKIPATH_GSEA_selected.result$Description == "WP_INSULIN_SIGNALING",],
+  GOBP_GSEA_selected.result[GOBP_GSEA_selected.result$Description == "GOBP_WNT_SIGNALING_PATHWAY",],
+  KEGG_GSEA_selected.result[KEGG_GSEA_selected.result$Description == "KEGG_MAPK_SIGNALING_PATHWAY",],
+  KEGG_GSEA_selected.result[KEGG_GSEA_selected.result$Description == "KEGG_ERBB_SIGNALING_PATHWAY",],
+  KEGG_GSEA_selected.result[KEGG_GSEA_selected.result$Description == "KEGG_MTOR_SIGNALING_PATHWAY",],
+  HM_GSEA_selected.result[HM_GSEA_selected.result$Description == "HALLMARK_KRAS_SIGNALING_DN",],
+  HM_GSEA_selected.result[HM_GSEA_selected.result$Description == "HALLMARK_P53_PATHWAY",],
+  WIKIPATH_GSEA_selected.result[WIKIPATH_GSEA_selected.result$Description == "WP_EGFEGFR_SIGNALING",],
+  WIKIPATH_GSEA_selected.result[WIKIPATH_GSEA_selected.result$Description == "WP_NOTCH_SIGNALING_WP61",],
+  HM_GSEA_selected.result[HM_GSEA_selected.result$Description == "HALLMARK_TNFA_SIGNALING_VIA_NFKB",],
+  WIKIPATH_GSEA_selected.result[WIKIPATH_GSEA_selected.result$Description == "WP_IL1_SIGNALING",],
+  WIKIPATH_GSEA_selected.result[WIKIPATH_GSEA_selected.result$Description == "WP_IL3_SIGNALING",],
+  WIKIPATH_GSEA_selected.result[WIKIPATH_GSEA_selected.result$Description == "WP_IL4_SIGNALING",],
+  WIKIPATH_GSEA_selected.result[WIKIPATH_GSEA_selected.result$Description == "WP_IL5_SIGNALING",],
+  WIKIPATH_GSEA_selected.result[WIKIPATH_GSEA_selected.result$Description == "WP_IL18_SIGNALING",],
+  WIKIPATH_GSEA_selected.result[WIKIPATH_GSEA_selected.result$Description == "WP_TOLLLIKE_RECEPTOR_SIGNALING",],
+  WIKIPATH_GSEA_selected.result[WIKIPATH_GSEA_selected.result$Description == "WP_PDGF_PATHWAY",]
+)
+
+gsea_bp$Description <- gsub("HALLMARK_", "", gsea_bp$Description)
+gsea_bp$Description <- gsub("GOBP_", "", gsea_bp$Description)
+gsea_bp$Description <- gsub("KEGG_", "", gsea_bp$Description)
+gsea_bp$Description <- gsub("REACTOME_", "", gsea_bp$Description)
+gsea_bp$Description <- gsub("WP_", "", gsea_bp$Description)
+gsea_bp$Description <- gsub("_V1", "", gsea_bp$Description)
+gsea_bp$Description <- gsub("METABOLIC_REPROGRAMMING_IN_COLON_CANCER", "CRC_METABOLIC_REPROGRAMMING", gsea_bp$Description)
+gsea_bp$Description <- gsub("CELL_CELL_SIGNALING", "CELL-CELL_SIGNALING", gsea_bp$Description)
+gsea_bp$Description <- gsub("TNFA_SIGNALING_VIA_NFKB", "TNFA_SIGNALING", gsea_bp$Description)
+gsea_bp$Description <- gsub("WNT_SIGNALING_PATHWAY", "WNT_SIGNALING", gsea_bp$Description)
+gsea_bp$Description <- gsub("MAPK_SIGNALING_PATHWAY", "MAPK_SIGNALING", gsea_bp$Description)
+gsea_bp$Description <- gsub("ERBB_SIGNALING_PATHWAY", "ERBB_SIGNALING", gsea_bp$Description)
+gsea_bp$Description <- gsub("MTOR_SIGNALING_PATHWAY", "MTOR_SIGNALING", gsea_bp$Description)
+gsea_bp$Description <- gsub("KRAS_SIGNALING_DN", "KRAS_SIGNALING", gsea_bp$Description)
+gsea_bp$Description <- gsub("NOTCH_SIGNALING_WP61", "NOTCH_SIGNALING", gsea_bp$Description)
+gsea_bp$Description <- gsub("TOLLLIKE_RECEPTOR_SIGNALING", "TLR_SIGNALING", gsea_bp$Description)
+gsea_bp$Description <- gsub("EGFEGFR_SIGNALING", "EGF-EGFR_SIGNALING", gsea_bp$Description)
+gsea_bp$Description <- gsub("_", " ", gsea_bp$Description)
+
+gsea_bp$Description <- factor(gsea_bp$Description, levels = gsea_bp$Description)
+gsea_bp$Direction <- "Up"
+gsea_bp$Direction[gsea_bp$NES<0] <- "Down"
+
+gsea_bar.plt <- ggplot(gsea_bp, aes(x=Description, y=NES, fill=Direction)) +
+  geom_bar(stat = "identity", color="black", width = 0.75) +  
+  theme_classic() +
+  theme(
+    axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1, color = "black"),
+    plot.margin = margin(t = 10, r = 10, b = 100, l = 65, unit = "pt"),
+    legend.position = "none"
+  ) +
+  geom_hline(yintercept = 0) + 
+  ylab("NES") + xlab(NULL) + 
+  scale_fill_manual(values=c("#357EBD", "#D43F3A"))
+
+gsea_bar.plt
+```
+
+```{r, message=FALSE, warning=FALSE, fig.height=30, fig.width=13}
+# GSEA plots
+terms_of_interest <- c(
+  "HALLMARK_OXIDATIVE_PHOSPHORYLATION", "KEGG_PYRUVATE_METABOLISM", "KEGG_GLYCOLYSIS_GLUCONEOGENESIS", 
+  "KEGG_FATTY_ACID_METABOLISM", "HALLMARK_MYC_TARGETS_V1", "GOBP_MITOCHONDRIAL_GENE_EXPRESSION",
+  "WP_METABOLIC_REPROGRAMMING_IN_COLON_CANCER", "HALLMARK_MITOTIC_SPINDLE", "GOBP_REGULATION_OF_CELL_DEVELOPMENT",
+  "GOBP_CELL_CELL_SIGNALING", "HALLMARK_APOPTOSIS", "HALLMARK_HYPOXIA", "GOBP_ADAPTIVE_IMMUNE_RESPONSE",
+  "WP_INSULIN_SIGNALING", "GOBP_WNT_SIGNALING_PATHWAY", "KEGG_MAPK_SIGNALING_PATHWAY", "KEGG_ERBB_SIGNALING_PATHWAY",
+  "KEGG_MTOR_SIGNALING_PATHWAY", "HALLMARK_KRAS_SIGNALING_DN", "HALLMARK_P53_PATHWAY", "WP_EGFEGFR_SIGNALING",
+  "WP_NOTCH_SIGNALING_WP61", "HALLMARK_TNFA_SIGNALING_VIA_NFKB", "WP_IL1_SIGNALING", "WP_IL3_SIGNALING",
+  "WP_IL4_SIGNALING", "WP_IL5_SIGNALING", "WP_IL18_SIGNALING", "WP_TOLLLIKE_RECEPTOR_SIGNALING",
+  "WP_PDGF_PATHWAY"
+  )
+
+gsea_plot.lst <- lapply(terms_of_interest, function(term){
+  term_system <- strsplit(term, split = "_")[[1]][1]
+
+  adapted_term <- term %>% 
+    str_remove("^(HALLMARK|GOBP|KEGG|REACTOME|WP)_") %>%
+    str_replace("METABOLIC_REPROGRAMMING_IN_COLON_CANCER", "CRC_METABOLIC_REPROGRAMMING") %>%
+    str_replace("CELL_CELL_SIGNALING", "CELL-CELL_SIGNALING") %>%
+    str_replace("TNFA_SIGNALING_VIA_NFKB", "TNFA_SIGNALING") %>%
+    str_replace("WNT_SIGNALING_PATHWAY", "WNT_SIGNALING") %>%
+    str_replace("MAPK_SIGNALING_PATHWAY", "MAPK_SIGNALING") %>%
+    str_replace("ERBB_SIGNALING_PATHWAY", "ERBB_SIGNALING") %>%
+    str_replace("MTOR_SIGNALING_PATHWAY", "MTOR_SIGNALING") %>%
+    str_replace("KRAS_SIGNALING_DN", "KRAS_SIGNALING") %>%
+    str_replace("NOTCH_SIGNALING_WP61", "NOTCH_SIGNALING") %>%
+    str_replace("TOLLLIKE_RECEPTOR_SIGNALING", "TLR_SIGNALING") %>%
+    str_replace("EGFEGFR_SIGNALING", "EGF-EGFR_SIGNALING") %>%
+    str_replace_all("_", " ")
+  
+  if (term_system == "HALLMARK"){
+    gseaplot(HM_gsea, 
+             by = "runningScore", 
+             title = adapted_term, 
+             geneSetID = term,
+             base_size = 10) + 
+      theme(axis.text.x = element_text(angle = 0, hjust = 1))
+  } else if (term_system == "GOBP"){
+    gseaplot(GOBP_gsea, 
+             by = "runningScore", 
+             title = adapted_term, 
+             geneSetID = term,
+             base_size = 10) + 
+      theme(axis.text.x = element_text(angle = 0, hjust = 1))
+  } else if (term_system == "KEGG") {
+    gseaplot(KEGG_gsea, 
+             by = "runningScore", 
+             title = adapted_term, 
+             geneSetID = term,
+             base_size = 10) + 
+      theme(axis.text.x = element_text(angle = 0, hjust = 1))
+  } else if (term_system == "REACTOME") {
+    gseaplot(REACTOME_gsea, 
+             by = "runningScore", 
+             title = adapted_term, 
+             geneSetID = term,
+             base_size = 10) + 
+      theme(axis.text.x = element_text(angle = 0, hjust = 1))
+  } else {
+    gseaplot(WIKIPATH_gsea, 
+             by = "runningScore", 
+             title = adapted_term, 
+             geneSetID = term,
+             base_size = 10) + 
+      theme(axis.text.x = element_text(angle = 0, hjust = 1))
+  }
+})
+
+gsea.plt <- wrap_plots(gsea_plot.lst, ncol=3)
+gsea.plt
+```
+
+```{r, eval=FALSE}
+# Save GSEA results
+saveRDS(HM_gsea, path_to_save_seurat_hm_gsea)
+saveRDS(GOBP_gsea, path_to_save_seurat_go_gsea)
+saveRDS(KEGG_gsea, path_to_save_seurat_kegg_gsea)
+saveRDS(REACTOME_gsea, path_to_save_seurat_reactome_gsea)
+saveRDS(WIKIPATH_gsea, path_to_save_seurat_wikipath_gsea)
+
+# Save as data frames
+write.csv(HM_GSEA.result, here::here("scRNAseq/meta_analysis/supplm_file/cd8_seurat_hm_gsea.csv"))
+write.csv(GOBP_GSEA.result, here::here("scRNAseq/meta_analysis/supplm_file/cd8_seurat_go_gsea.csv"))
+write.csv(KEGG_GSEA.result, here::here("scRNAseq/meta_analysis/supplm_file/cd8_seurat_kegg_gsea.csv"))
+write.csv(REACTOME_GSEA.result, here::here("scRNAseq/meta_analysis/supplm_file/cd8_seurat_reactome_gsea.csv"))
+write.csv(WIKIPATH_GSEA.result, here::here("scRNAseq/meta_analysis/supplm_file/cd8_seurat_wikipath_gsea.csv"))
+
+# Save the figures
+ggsave(filename=paste0(path_to_save_figure, "/cd8_gsea.png"), plot=gsea_bar.plt, dpi=500, height=5, width=9)
+ggsave(filename=paste0(path_to_save_figure, "/cd8_gsea_plt.png"), plot=gsea.plt, dpi=500, height=30, width=13)
+```
+
+Overall, RT CD8+ T cells upregulated in metabolic reprogramming to Warburg's effect while downregulated in cell proliferation and differentiation, apoptosis, and immune responses.
+
+## Based on DESeq2
+
+```{r}
+# Define paths to save the results
+path_to_save_deseq2_dea <- here::here("scRNAseq/meta_analysis/R_objects/gene_exprs/cd8_deseq2_dea.rds")
+path_to_save_deseq2_hm_gsea <- here::here("scRNAseq/meta_analysis/R_objects/gene_exprs/cd8_deseq2_hm_gsea.rds")
+path_to_save_deseq2_go_gsea <- here::here("scRNAseq/meta_analysis/R_objects/gene_exprs/cd8_deseq2_go_gsea.rds")
+path_to_save_deseq2_kegg_gsea <- here::here("scRNAseq/meta_analysis/R_objects/gene_exprs/cd8_deseq2_kegg_gsea.rds")
+path_to_save_deseq2_reactome_gsea <- here::here("scRNAseq/meta_analysis/R_objects/gene_exprs/cd8_deseq2_reactome_gsea.rds")
+path_to_save_deseq2_wikipath_gsea <- here::here("scRNAseq/meta_analysis/R_objects/gene_exprs/cd8_deseq2_wikipath_gsea.rds")
+```
+
+### Create an DESeq2 object
+
+```{r, message=FALSE, warning=FALSE}
+# Prepare single-cell meta-data for DESeq2
+pure_cd8_seurat$ref[pure_cd8_seurat$ref == "Hing_2022"] <- "Hing_2023" # Update reference name
+pure_cd8_seurat$patient_cond <- paste0("case_", pure_cd8_seurat$case, "_", pure_cd8_seurat$ref, "_", pure_cd8_seurat$new_cond) 
+patient_cond_cls <- unique(pure_cd8_seurat$patient_cond)
+RT_subjects <- patient_cond_cls[grep("RT", patient_cond_cls)]
+RT_subjects <- gsub(pattern = "_", replacement = "-", x=RT_subjects) # change "_" to "-" as DESeq2 converted sample names from "_" to "-"
+
+# Create pseudocount matrix for tumour cell object
+cts <- AggregateExpression(pure_cd8_seurat, 
+                           group.by = "patient_cond",
+                           assays = "RNA",
+                           slot = "counts",
+                           resturn.seurat = FALSE) 
+cts <- cts$RNA
+pseudo_count.mat <- as.data.frame(cts)
+
+# Create metadata for DESeq2 object
+batch_map <- c("Penter (2021)" = "1", "Nadeu (2022)" = "2", "Rejeski (2022)" = "3", "Hing (2023)" = "4", "Parry (2023a)" = "5", 
+               "Parry (2023b)" = "6", "Rigo (2024)" = "7")
+colData <- data.frame(samples = colnames(pseudo_count.mat))
+colData$condition <- ifelse(colData$samples %in% RT_subjects, "RT", "CLL")
+colData$study <- stringr::word(colData$samples, start = -3, end = -2, sep = fixed("-"))
+colData$study <- sub("^(.*)-([0-9].*)$", "\\1 (\\2)", colData$study) # Substitiute string like "Parry-2023b" to "Parry (2023b)"
+colData$study <- factor(colData$study, level = c("Penter (2021)", "Nadeu (2022)", "Rejeski (2022)", "Hing (2023)", 
+                                                 "Parry (2023a)", "Parry (2023b)", "Rigo (2024)"))
+colData$batch <- batch_map[colData$study]
+colData$batch <- factor(colData$batch)
+rownames(colData) <- colData$samples
+
+# Create a DESeq2 object
+dds <- DESeqDataSetFromMatrix(countData = pseudo_count.mat, 
+                              colData = colData,
+                              design = ~ batch + condition)
+
+# Keep genes with at least 10 counts across all samples
+keep <- rowSums(counts(dds)) >= 10
+dds <- dds[keep,]
+```
+
+### Plot the PCA based on the expression data
+
+```{r, message=FALSE, warning=FALSE, fig.height=4.5, fig.width=6.5}
+# Variance stabilised transformation
+vsdata <- vst(dds, blind = FALSE)
+
+# Extract matrix
+vs_mat <- assay(vsdata)
+
+# Adjust for batch (assume batch info is in colData(dds)$batch)
+design_matrix <- model.matrix(~ condition, data = colData(dds))
+vs_mat_corrected <- limma::removeBatchEffect(
+  vs_mat, 
+  batch = colData(dds)$batch, 
+  design = design_matrix 
+)
+
+# PCA on corrected data
+pca <- prcomp(t(vs_mat_corrected))
+
+# Calculate % variance explained
+pca_var <- pca$sdev^2               # variance of each PC
+pca_var_percent <- pca_var / sum(pca_var) * 100
+
+# Make a dataframe for ggplot
+pca_df <- data.frame(pca$x,
+                     condition = colData(dds)$condition,
+                     study = colData(dds)$study)
+
+# Plot PCA
+pca.plt <- ggplot(pca_df, aes(PC1, PC2, color = study, shape = condition)) +
+  geom_point(size = 3) +
+  xlab(paste0("PC1 (", round(pca_var_percent[1], 1), "%)")) +
+  ylab(paste0("PC2 (", round(pca_var_percent[2], 1), "%)")) +
+  scale_color_manual(values = c(
+    "Penter (2021)" = "#1f77b4", 
+    "Nadeu (2022)" = "#ff7f0e",
+    "Rejeski (2022)" = "#9632B8" ,
+    "Hing (2023)" = "#D43F3A" ,
+    "Parry (2023a)" = "#5CB85C",
+    "Parry (2023b)" = "#FFB900",
+    "Rigo (2024)" = "#46B8DA")) +
+  scale_shape_manual(values = c("CLL" = 16, "RT" = 17)) +
+  guides(
+    color = guide_legend(title = "Study"),
+    shape = guide_legend(title = "Condition")
+  ) +
+  theme_bw() +
+  theme(
+    legend.title = element_text(size = 12, face = "bold"),
+    legend.text = element_text(size = 11),
+    axis.title = element_text(size = 13, face = "bold"),
+    axis.text = element_text(size = 11)
+  )
+
+pca.plt
+```
+
+From the PCA plot we detected two outliers we then removed it before further analysis
+
+```{r, message=FALSE, warning=FALSE, fig.height=4.5, fig.width=6.5}
+# Plot the PCA plot after outlier removal
+
+# Identify and Remove the Outlier 
+outlier_id <- rownames(pca_df)[c(which.max(pca_df$PC1), which.min(pca_df$PC2))] # the outliers are the sample with the highest PC1 value and lowest PC2 value
+dds_clean <- dds[, colnames(dds) != outlier_id] # Filter the outlier out of the original dds object
+
+# Re-run VST on the cleaned dataset
+vsdata_clean <- vst(dds_clean, blind = FALSE)
+vs_mat_clean <- assay(vsdata_clean)
+
+# Adjust for batch (assume batch info is in colData(dds)$batch)
+design_matrix <- model.matrix(~ condition, data = colData(dds_clean))
+vs_mat_corrected <- limma::removeBatchEffect(
+  vs_mat_clean, 
+  batch = colData(dds_clean)$batch, 
+  design = design_matrix # <--- This argument is key for separation!
+)
+
+# PCA on corrected data
+pca <- prcomp(t(vs_mat_corrected))
+
+# Calculate % variance explained
+pca_var <- pca$sdev^2
+pca_var_percent <- pca_var / sum(pca_var) * 100
+
+# Make a dataframe for ggplot
+pca_df_clean <- data.frame(pca$x,
+                     condition = colData(dds_clean)$condition,
+                     study = colData(dds_clean)$study)
+
+# Plot PCA
+corrected_pca.plt <- ggplot(pca_df_clean, aes(PC1, PC2, color = study, shape = condition)) + 
+  geom_point(size = 3) +
+  xlab(paste0("PC1 (", round(pca_var_percent[1], 1), "%)")) +
+  ylab(paste0("PC2 (", round(pca_var_percent[2], 1), "%)")) +
+  scale_color_manual(values = c(
+    "Penter (2021)" = "#1f77b4", 
+    "Nadeu (2022)" = "#ff7f0e",
+    "Rejeski (2022)" = "#9632B8" ,
+    "Hing (2023)" = "#D43F3A" ,
+    "Parry (2023a)" = "#5CB85C",
+    "Parry (2023b)" = "#FFB900",
+    "Rigo (2024)" = "#46B8DA")) +
+  scale_shape_manual(values = c("CLL" = 16, "RT" = 17)) +
+  guides(
+    color = guide_legend(title = "Study"),
+    shape = guide_legend(title = "Condition")
+  ) +
+  theme_bw() +
+  theme(
+    legend.title = element_text(size = 12, face = "bold"),
+    legend.text = element_text(size = 11),
+    axis.title = element_text(size = 13, face = "bold"),
+    axis.text = element_text(size = 11)
+  ) 
+
+corrected_pca.plt
+```
+
+```{r, eval=FALSE}
+# Save the figure
+ggsave(filename=paste0(path_to_save_figure, "/deseq2_cd8_pca.png"), plot=pca.plt, dpi=500, height=4.5, width=6.5)
+ggsave(filename=paste0(path_to_save_figure, "/deseq2_cd8_corrected_pca.png"), plot=corrected_pca.plt, dpi=500, height=4.5, width=6.5)
+```
+
+### Run DESeq2
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Run DESeq2 for the data after outlier removal
+counts_clean <- counts(dds_clean)
+colData_clean <- colData(dds_clean)
+colData_clean$condition <- factor(colData_clean$condition, levels = c("CLL", "RT"))
+colData_clean$batch <- factor(colData_clean$batch) 
+
+dds_final <- DESeqDataSetFromMatrix(
+  countData = counts_clean,
+  colData = colData_clean,
+  design = ~ batch + condition  
+)
+
+keep <- rowSums(counts(dds_final) >= 10) >= 3 # Keep genes with at least 10 counts in at least 3 samples
+noise_genes <- c(
+  grep("^IG[HKL][VDJ]", rownames(dds), value = TRUE),  # Ig genes
+  grep("^HLA-", rownames(dds), value = TRUE),          # Patient ID (HLA)
+  grep("^MT-", rownames(dds), value = TRUE),           # Mitochondrial stress
+  "XIST", "RPS4Y1", "KDM5D", "UTY", "DDX3Y",           # Sex genes
+  "S100A8", "S100A9", "S100A12", "CXCL8"               # Acute stress response
+)
+dds_final <- dds_final[keep & (!rownames(dds_final) %in% noise_genes), ]
+dds_final$condition <- relevel(dds_final$condition, ref = "CLL")
+dds_final <- DESeq(dds_final)
+
+# Generate a table for gene expression
+res <- results(dds_final, contrast = c("condition", "RT", "CLL"), independentFiltering = FALSE)
+res <- lfcShrink(dds_final, contrast = c("condition", "RT", "CLL"), res = res, type = "normal")
+res$direction <- "NS"
+res$direction[res$padj < 0.05 & res$log2FoldChange > 0.25] <- "Up"
+res$direction[res$padj < 0.05 & res$log2FoldChange < (-0.25)] <- "Down"
+dea.df <- as.data.frame(res)
+
+# Save the expression results
+saveRDS(dea.df, path_to_save_deseq2_dea)
+write.csv(dea.df, here::here("scRNAseq/meta_analysis/supplm_file/cd8_deseq2_dea.csv"))
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Show the expression results
+dea.df <- readRDS(path_to_save_deseq2_dea)
+DT::datatable(dea.df, options = list(scrollX = TRUE))
+```
+
+```{r, message=FALSE, warning=FALSE, fig.height=7, fig.width=10}
+# Volcano plot
+genes_of_interest <- c(
+  "TK1", "NUSAP1", "PCLAF"
+)
+
+volcano.plt <- volcano_plot(dea.df, 
+                            FC=0.25, 
+                            x_col="log2FoldChange",
+                            y_col="padj",
+                            xlim=c(-1.4,1.4), 
+                            ylim=c(-0.1,3.5), 
+                            genes_of_interest=genes_of_interest,
+                            boxedLabels = TRUE) 
+
+volcano.plt
+```
+
+```{r, message=FALSE, warning=FALSE}
+# MA plot 
+ma_data <- dea.df
+
+ma.plt <- ggmaplot(ma_data, 
+                   fdr = 0.05,            # Threshold for significance
+                   fc = 1.19,                # Threshold for FC
+                   size = 0.4,            # Dot size
+                   palette = c("#B31B21", "#1465AC", "darkgray"),
+                   genenames = as.vector(ma_data$gene),
+                   top = 0, label.select = genes_of_interest, # set top = 0, then specify genes using label.select argument
+                   legend = "right", 
+                   font.label = c("bold", 11), 
+                   label.rectangle = TRUE,
+                   font.legend = "bold",
+                   font.main = "bold",
+                   ggtheme = ggplot2::theme_minimal(),
+                   xlab = "Mean Expression",
+                   ylab = "Log2 Fold Change"
+                   )
+
+ma.plt
+```
+
+### GSEA
+
+```{r}
+# Manipulate the expression data
+lfc_vector <- dea.df$log2FoldChange # Create a named vector ranked based on the log2 fold change
+names(lfc_vector) <- rownames(dea.df) 
+lfc_vector <- na.omit(lfc_vector) # Omit any NA values
+lfc_vector <- sort(lfc_vector, decreasing = TRUE) # Sort the log2 fold change in descending order
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Hallmark
+HM_gsea <- HM_GSEA(lfc_vector)
+
+# Collect the HM GSEA result
+HM_GSEA.result <- HM_gsea@result
+HM_GSEA_selected.result <- HM_GSEA.result %>%
+  as_tibble() %>%
+  dplyr::select(c(Description, NES, pvalue, p.adjust))
+
+DT::datatable(HM_GSEA_selected.result, options = list(scrollX = TRUE))
+```
+
+```{r, message=FALSE, warning=FALSE}
+# GO:BP
+GOBP_gsea <- GO_GSEA(lfc_vector)
+
+# Collect the GSEA result
+GOBP_GSEA.result <- GOBP_gsea@result
+GOBP_GSEA_selected.result <- GOBP_GSEA.result %>%
+  as_tibble() %>%
+  dplyr::select(c(Description, NES, pvalue, p.adjust))
+
+DT::datatable(GOBP_GSEA_selected.result, options = list(scrollX = TRUE))
+```
+
+```{r, message=FALSE, warning=FALSE}
+# KEGG pathway
+KEGG_gsea <- KEGG_GSEA(lfc_vector)
+
+# Collect the HM GSEA result
+KEGG_GSEA.result <- KEGG_gsea@result
+KEGG_GSEA_selected.result <- KEGG_GSEA.result %>%
+  as_tibble() %>%
+  dplyr::select(c(Description, NES, pvalue, p.adjust))
+
+DT::datatable(KEGG_GSEA_selected.result, options = list(scrollX = TRUE))
+```
+
+```{r, message=FALSE, warning=FALSE}
+# REACTOME
+REACTOME_gsea <- REACTOME_GSEA(lfc_vector)
+
+# Collect the HM GSEA result
+REACTOME_GSEA.result <- REACTOME_gsea@result
+REACTOME_GSEA_selected.result <- REACTOME_GSEA.result %>%
+  as_tibble() %>%
+  dplyr::select(c(Description, NES, pvalue, p.adjust))
+
+DT::datatable(REACTOME_GSEA_selected.result, options = list(scrollX = TRUE))
+```
+
+```{r, message=FALSE, warning=FALSE}
+# WikiPath
+WIKIPATH_gsea <- WIKIPATH_GSEA(lfc_vector)
+
+# Collect the HM GSEA result
+WIKIPATH_GSEA.result <- WIKIPATH_gsea@result
+WIKIPATH_GSEA_selected.result <- WIKIPATH_GSEA.result %>%
+  as_tibble() %>%
+  dplyr::select(c(Description, NES, pvalue, p.adjust))
+
+DT::datatable(WIKIPATH_GSEA_selected.result, options = list(scrollX = TRUE))
+```
+
+```{r, eval=FALSE}
+# Save the enrichment results
+saveRDS(HM_gsea, path_to_save_deseq2_hm_gsea)
+saveRDS(GOBP_gsea, path_to_save_deseq2_go_gsea)
+saveRDS(KEGG_gsea, path_to_save_deseq2_kegg_gsea)
+saveRDS(REACTOME_gsea, path_to_save_deseq2_reactome_gsea)
+saveRDS(WIKIPATH_gsea, path_to_save_deseq2_wikipath_gsea)
+
+# Save as data frames
+write.csv(HM_GSEA.result, here::here("scRNAseq/meta_analysis/supplm_file/cd8_deseq2_hm_gsea.csv"))
+write.csv(GOBP_GSEA.result, here::here("scRNAseq/meta_analysis/supplm_file/cd8_deseq2_go_gsea.csv"))
+write.csv(KEGG_GSEA.result, here::here("scRNAseq/meta_analysis/supplm_file/cd8_deseq2_kegg_gsea.csv"))
+write.csv(REACTOME_GSEA.result, here::here("scRNAseq/meta_analysis/supplm_file/cd8_deseq2_reactome_gsea.csv"))
+write.csv(WIKIPATH_GSEA.result, here::here("scRNAseq/meta_analysis/supplm_file/cd8_deseq2_wikipath_gsea.csv"))
+```
+
+# Session Information
+
+```{r}
+sessionInfo()
+```
+
+
+
+
+
+
+

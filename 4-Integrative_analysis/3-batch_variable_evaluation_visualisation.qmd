@@ -1,0 +1,297 @@
+---
+title: "Batch_variable_evaluation_visualisation"
+author: "Pakorn Sagulkoo"
+format:
+  html: 
+    toc: true
+    toc-location: left
+    embed-resources: true
+editor: visual
+---
+
+Following the previous step, where the Harmony package was employed to integrate single-cell datasets for CLL and RT across several studies, we corrected batch effects using several variables, including case_id (sample ID), ref (studies), and patient (cases). We computed a series of metrics, specifically LISI, kBET, cASW, and PCRegression, to evaluate which variables yielded the optimal balance between batch-effect removal and biological structure conservation. The subsequent code serves to visualise these results. 
+
+# Import the relevant packages and set working path directory
+
+```{r, setup, message=FALSE, warning=FALSE}
+# Attach the packages you will need for the analysis.
+library(Seurat)
+library(harmony)
+library(SingleR)
+library(celldex)
+library(sctransform)
+library(ggsci)
+library(tidyverse)
+library(dplyr)
+library(data.table)
+library(kBET)
+library(FNN)
+library(lisi)
+library(cluster)
+library(stats)
+library(DescTools)
+```
+
+```{r}
+# Check root path
+here::here()
+```
+
+# Define paths
+
+```{r}
+# Define paths to load and save
+path_to_obj <- here::here("scRNAseq/meta_analysis/R_objects")
+path_to_lisi_df <- paste0(path_to_obj, "/lisi_df.rds")
+path_to_kbet_df <- paste0(path_to_obj, "/kbet_df.rds")
+path_to_sil_df <- paste0(path_to_obj, "/sil_df.rds")
+path_to_pcr_df <- paste0(path_to_obj, "/pcr_df.rds")
+path_to_save_figure <- here::here("figures")
+```
+
+# Load data and functions
+
+```{r, message=FALSE, warning=FALSE}
+# Source functions
+source(here::here("bin/utils.R"))
+```
+
+```{r}
+# Load the result data frames
+lisi_df <- readRDS(path_to_lisi_df)
+kbet_df <- readRDS(path_to_kbet_df)
+sil_df <- readRDS(path_to_sil_df)
+pcr_df <- readRDS(path_to_pcr_df)
+```
+
+# Colour and name preparation
+
+```{r}
+# Set label and colour pallete
+variable_map <- c(
+  "sample"       = "Sample",
+  "ref"          = "Study",
+  "case"         = "Patient",
+  "sample_ref"   = "Sample+Study",
+  "sample_case"  = "Sample+Patient",
+  "ref_case"     = "Study+Patient",
+  "all"          = "All variables"
+)
+
+variable_cols <- c(
+  "Sample"        = "#F05C3B",
+  "Study"         = "#197EC0",
+  "Patient"       = "#C80813",
+  "Sample+Study"  = "#FD8CC1",
+  "Study+Patient" = "#46732E",
+  "All variables" = "#FFB900"
+)
+```
+
+# Batch removal and biological conservation performance
+
+## LISI
+
+```{r}
+# Plot mean LISI scores
+lisi_df <- lisi_df %>% dplyr::mutate(variable = variable_map[dataset])
+
+## bLISI score
+mean_blisi.plt <- lisi_df %>%
+  dplyr::select(c("bLISI", "variable")) %>%
+  dplyr::group_by(variable) %>%
+  dplyr::summarize(mean_bLISI = mean(bLISI)) %>%
+  dplyr::mutate(variable = fct_reorder(as.factor(variable), mean_bLISI, .desc=TRUE)) %>%
+  ggplot(aes(x=variable, y=mean_bLISI, fill=variable)) + 
+  geom_col(width = 0.6) + 
+  xlab("Variable") + 
+  ylab("Mean bLISI") + 
+  scale_fill_manual(values = variable_cols) + 
+  theme_bw() +
+  theme(aspect.ratio = 1.3,
+        legend.position = "none",
+        axis.text.x = element_text(angle=45, hjust=1))
+
+## cLISI score
+mean_clisi.plt <- lisi_df %>%
+  dplyr::select(c("cLISI", "variable")) %>%
+  dplyr::group_by(variable) %>%
+  dplyr::summarize(mean_cLISI = mean(cLISI)) %>%
+  dplyr::mutate(variable = fct_reorder(as.factor(variable), mean_cLISI, .desc=TRUE)) %>%
+  ggplot(aes(x=variable, y=mean_cLISI, fill=variable)) + 
+  geom_col(width = 0.6) + 
+  xlab("Variable") + 
+  ylab("Mean cLISI") + 
+  scale_fill_manual(values = variable_cols) + 
+  theme_bw() +
+  theme(aspect.ratio = 1.3,
+        legend.position = "none",
+        axis.text.x = element_text(angle=45, hjust=1))
+
+## clLISI score
+mean_cllisi.plt <- lisi_df %>%
+  dplyr::select(c("clLISI", "variable")) %>%
+  dplyr::group_by(variable) %>%
+  dplyr::summarize(mean_clLISI = mean(clLISI)) %>%
+  dplyr::mutate(variable = fct_reorder(as.factor(variable), mean_clLISI, .desc=TRUE)) %>%
+  ggplot(aes(x=variable, y=mean_clLISI, fill=variable)) + 
+  geom_col(width = 0.6) + 
+  xlab("Variable") + 
+  ylab("Mean clLISI") + 
+  scale_fill_manual(values = variable_cols) + 
+  theme_bw() +
+  theme(aspect.ratio = 1.3,
+        legend.position = "none",
+        axis.text.x = element_text(angle=45, hjust=1))
+
+mean_lisi.plt <- mean_blisi.plt + mean_clisi.plt + mean_cllisi.plt
+mean_lisi.plt
+```
+
+```{r, eval=FALSE}
+# Save the figures
+ggsave(filename=paste0(path_to_save_figure, "/harmony_blisi.png"), plot=mean_blisi.plt, dpi=500, height=3, width=4.5)
+ggsave(filename=paste0(path_to_save_figure, "/harmony_clisi.png"), plot=mean_clisi.plt, dpi=500, height=3, width=4.5)
+ggsave(filename=paste0(path_to_save_figure, "/harmony_cllisi.png"), plot=mean_cllisi.plt, dpi=500, height=3, width=4.5)
+```
+
+From the LISI scores, we found that `Sample` variable provided the highest bLISI score (2.70), following with `Patient` (1.55), `Sample+Patient` (1.54), and `All variables` (1.13). `Study` and `Study+Patient` variables had the lowest bLISI scores (1.12). All measured variables had the same cLISI at 1.15. For clLISI scores, `Sample+Patient` had the highest value at 1.57, following with `Sample` (1.55), `Patient` (1.46), `Sample+Study` and `All variables` (1.37), and `Study+Patient` (1.31). `Study` variable provided the lowest clLISI score at 1.15.
+
+## kBET
+
+```{r, message=FALSE, warning=FALSE, fig.width=12.5}
+# Plot kBET observed rejection rates curve
+k_levels <- c("k_10", "k_25", "k_50", "k_56.5", "k_100", "k_237.75", "k_500", "k_883.25", "k_1000", "k_2500")
+
+kbet_df <- kbet_df %>% 
+  dplyr::mutate(variable = variable_map[dataset]) %>%
+  # Ensure k is an ordered factor before summarising
+  dplyr::mutate(k_ordered = factor(k, levels = k_levels))
+
+kbet_rates_curve.plt = kbet_df %>%
+  dplyr::filter(class == "observed") %>%
+  dplyr::group_by(variable, k_ordered) %>% # Group by the new ordered factor
+  dplyr::summarize(mean_obs_rejection_rate = mean(data), .groups = "drop") %>%
+  ggplot(aes(x=k_ordered, 
+              y=mean_obs_rejection_rate, 
+              color=variable)) + 
+  geom_line(aes(y=mean_obs_rejection_rate, group=variable), 
+            linetype="dashed") + 
+  geom_point(size=1.5) +
+  labs(x="Neighborhood size (k)",
+       y="Mean kBET observed rejection rate",
+       color="Variable") + 
+  theme_bw() +
+  theme(aspect.ratio = 1.3,
+        legend.position = "right",
+        axis.text.x = element_text(angle=45, hjust=1)) + # Added angle for readability
+  scale_color_manual(values= variable_cols) 
+
+kbet_rates_curve.plt
+```
+
+```{r, eval=FALSE}
+# Save the figures
+ggsave(filename=paste0(path_to_save_figure, "/harmony_kbet.png"), plot=kbet_rates_curve.plt, dpi=500, height=5, width=5.5)
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Calculate AUC in each method
+auc.lst <- list()
+variables <- c("Sample", "Study", "Patient", "Sample+Study", "Sample+Patient", "Study+Patient", "All variables")
+
+for (i in seq_along(variables)) { 
+  
+  # Keep only observed rejection rates and compute means
+  sorted_rej_rates <- kbet_df %>% 
+    dplyr::filter(class == "observed" & variable == variables[i]) %>%
+    dplyr::group_by(variable, k) %>%
+    dplyr::summarize(mean_obs_rejection_rate = mean(data), .groups = "drop") %>%
+    dplyr::arrange(mean_obs_rejection_rate) %>%
+    dplyr::mutate(k_index = seq(1, length(unique(k)), by=1))
+  
+  # Calculate AUC 
+  auc <- DescTools::AUC(x=sorted_rej_rates$k_index,
+                       y=sorted_rej_rates$mean_obs_rejection_rate,
+                       method="spline")
+  auc.lst[[i]] <- auc
+  names(auc.lst)[i] <- variables[i]
+
+}
+
+auc.lst
+```
+
+For the AUC, `All variables` provided the lowest value at 6.759225, following with `Study` at 6.764062. While `Sample+Patient` had the greatest value at 6.990039.
+
+## cASW
+
+```{r, message=FALSE, warning=FALSE, fig.height=5, fig.width=5.5}
+# Plot silhouette scores
+sil_df <- sil_df %>% dplyr::mutate(variable = variable_map[dataset])
+
+sil_scores.plt <- sil_df %>%
+  dplyr::group_by(res, variable) %>%
+  dplyr::summarise(mean_sil = mean(sil_width), .groups = "drop") %>%
+  ggplot(aes(x = factor(res), y = mean_sil, fill = variable)) +
+  geom_col(position = position_dodge(width = 0.8), width = 0.7) +
+  xlab("Clustering resolution") +
+  ylab("Mean Silhouette score") +
+  scale_fill_manual(values = variable_cols) +
+  theme_bw() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "bottom"
+  ) +
+  labs(fill = "Variable") 
+
+sil_scores.plt
+```
+
+```{r, eval=FALSE}
+# Save the figures
+ggsave(filename=paste0(path_to_save_figure, "/harmony_sil.png"), plot=sil_scores.plt, dpi=500, height=5, width=5.5)
+```
+
+From the cASW results, only `Study` variable provided the positive value for all resolution, indicating biological structure preservation. Batch removal based on other variables could over correct as all cASW values were negative.
+
+## PCRegression
+
+```{r}
+# Plot the -log10 values of variance explained by batch effects
+pcr_df <- pcr_df %>% dplyr::mutate(variable = variable_map[dataset])
+
+r2var.plt <- pcr_df %>%
+  dplyr::group_by(variable) %>%
+  dplyr::summarise(mean_R2Var = mean(R2Var), .groups = "drop") %>%
+  dplyr::mutate(variable=fct_reorder(variable, -log10(mean_R2Var), .desc=TRUE)) %>%
+  ggplot(aes(x=variable, y=-log10(mean_R2Var), fill=variable)) + 
+  geom_col(width = 0.6) + 
+  xlab("Variable") + 
+  ylab("-Log10(mean R2Var)") +
+  scale_fill_manual(values = variable_cols) + 
+  theme_bw() +
+  theme(aspect.ratio = 1.3,
+        legend.position = "none",
+        axis.text.x = element_text(angle = 45, hjust=1))
+
+r2var.plt
+```
+
+```{r, eval=FALSE}
+# Save the figures
+ggsave(filename=paste0(path_to_save_figure, "/harmony_r2var.png"), plot=r2var.plt, dpi=500, height=3, width=4.5)
+```
+
+From the plots, it was observed that `Sample+Study` and `Study` provided the highest negative logarithmic *R^2^* variance, following with `All variables`, `Study+Patient`, `Patient`, `Sample+Patient`, and `Sample`.
+
+When considering both batch removal and biological conservation through the metrices, the seurat object using Harmony with batch correction based on `Study` variable is the best option for further downstream analysis.
+
+# Session Information
+
+```{r}
+sessionInfo()
+```
+
+
+

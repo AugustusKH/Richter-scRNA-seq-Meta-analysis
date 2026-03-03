@@ -1,0 +1,1519 @@
+---
+title: "Microenvironment_immune_cell_analysis"
+author: "Pakorn Sagulkoo"
+format:
+  html:
+    toc: true
+    toc-location: left
+    embed-resources: true
+editor: visual
+---
+
+In this analysis, we focused on immune cells, such as NK, CD4+, and CD8+ T cells, from the integrated dataset by performing pseudobulk analysis between RT and CLL in this cell type. Moreover, we also annotated level-2 subtypes of these cells.
+
+# Import the relevant packages and set working path directory
+
+```{r, setup, message=FALSE, warning=FALSE}
+# Attach the packages you will need for the analysis.
+library(Seurat)
+library(harmony)
+library(dplyr)
+library(tibble)
+library(SingleR)
+library(celldex)
+library(sctransform)
+library(cowplot)
+library(DT)
+```
+
+```{r}
+# Check root path
+here::here()
+```
+
+# Define paths
+
+```{r}
+# Define paths to load and save 
+path_to_microenvir_obj <- here::here("scRNAseq/meta_analysis/R_objects/microenvir_seu.rds")
+path_to_save_immune_obj <- here::here("scRNAseq/meta_analysis/R_objects/immune_seu.rds")
+path_to_save_nk_obj <- here::here("scRNAseq/meta_analysis/R_objects/nk_seu.rds")
+path_to_save_t_obj <- here::here("scRNAseq/meta_analysis/R_objects/t_seu.rds")
+path_to_save_cd4_obj <- here::here("scRNAseq/meta_analysis/R_objects/cd4_seu.rds")
+path_to_save_cd8_obj <- here::here("scRNAseq/meta_analysis/R_objects/cd8_seu.rds")
+path_to_save_figure <- here::here("figures")
+```
+
+```{r}
+# Thresholds
+min_log2FC <- 0.25
+alpha <- 0.001
+```
+
+```{r}
+# Set seed for reproducibility
+set.seed(1)
+```
+
+# Load data and functions
+
+```{r, message=FALSE, warning=FALSE}
+# Source functions
+source(here::here("bin/utils.R"))
+```
+
+```{r}
+# Load the microenvironment object
+microenvir_seurat <- readRDS(path_to_microenvir_obj)
+```
+
+# Extract immune cells
+
+```{r, warning=FALSE, message=FALSE, eval=FALSE}
+# Extract immune cells with reanalysis
+immune_seurat <- subset(microenvir_seurat, subset = singleR.labels_main != "Monocytes")
+immune_seurat <- SCTransform(immune_seurat, vst.flavor = "v2", method = "glmGamPoi", verbose = FALSE)
+immune_seurat <- RunPCA(immune_seurat)
+immune_seurat <- RunUMAP(immune_seurat, dims = 1:30, reduction = "harmony")
+immune_seurat <- FindNeighbors(immune_seurat, dims = 1:30, reduction = "harmony")        
+immune_seurat <- FindClusters(
+  immune_seurat,
+  random.seed = 12345,
+  verbose = FALSE,
+  resolution = seq(0.1, 0.9, by = 0.1)
+)
+
+# Save the object
+saveRDS(immune_seurat, path_to_save_immune_obj)
+```
+
+We separated the NK from T cells based on the markers below.
+
+| Marker          | Role                | T Cells (CD4/CD8) | NK Cells                   |
+|-----------------|---------------------|-------------------|----------------------------|
+| CD3D, CD3E      | T-cell receptor     | High              | Absent                     |
+| KLRF1           | NK surface receptor | Low/Absent        | High (The cleanest marker) |
+| NCAM1 (CD56)    | Classical NK marker | Absent            | High (in some subsets)     |
+| FCGR3A (CD16)   | ADCC receptor       | Low               | High (CD56-dim subset)     |
+| TYROBP          | Signaling adaptor   | Absent            | High                       |
+
+```{r, fig.height=7, fig.width=12, warning=FALSE, message=FALSE}
+# Plot based on cell biomarker expression
+immune_seurat <- readRDS(path_to_save_immune_obj)
+FeaturePlot(immune_seurat, 
+            features = c("HBM", "HBA1", "CD19", "CD79A", "CD14", "CD3D", "CD3E", 
+                         "KLRF1", "NCAM1", "FCGR3A", "TYROBP"),
+            reduction = "umap") 
+```
+
+```{r, message=FALSE, warning=FALSE, fig.height=4, fig.width=13}
+# Visualise the immune cell clusters
+group_by <- c("SCT_snn_res.0.6", "SCT_snn_res.0.7", "SCT_snn_res.0.8")
+umap_plots <- lapply(group_by, function (group){
+  DimPlot(immune_seurat, 
+          reduction = "umap", 
+          group.by = group, 
+          pt.size = 2,
+          repel=TRUE,
+          raster=TRUE, 
+          label=TRUE) +
+    labs(y= "UMAP 2", x = "UMAP 1")
+})
+
+immune_umap.plt <- wrap_plots(umap_plots, ncol=3)
+immune_umap.plt
+```
+
+## Extract NK cells
+
+At SCT_snn_res.0.7, we found that cluster 10 and 12 were NK cells. Then we extracted them for NK cell analyses.
+
+```{r, warning=FALSE, message=FALSE, eval=FALSE}
+# Extract Nk cells with reanalysis
+nk_seurat <- subset(immune_seurat, subset = SCT_snn_res.0.7 %in% c(10, 12, 21))
+nk_seurat <- SCTransform(nk_seurat, vst.flavor = "v2", method = "glmGamPoi", verbose = FALSE)
+nk_seurat <- RunPCA(nk_seurat)
+nk_seurat <- RunUMAP(nk_seurat, dims = 1:30, reduction = "harmony")
+nk_seurat <- FindNeighbors(nk_seurat, dims = 1:30, reduction = "harmony")        
+nk_seurat <- FindClusters(
+  nk_seurat,
+  random.seed = 12345,
+  verbose = FALSE,
+  resolution = seq(0.1, 1, by = 0.1)
+)
+
+# Save the object
+saveRDS(nk_seurat, path_to_save_nk_obj)
+```
+
+## Extract T cells
+
+In contrast, we extracted T cells from the remaining clusters apart from cluster 10 and 12.
+
+```{r, warning=FALSE, message=FALSE, eval=FALSE}
+# Extract T cells with reanalysis
+t_seurat <- subset(immune_seurat, subset = !(SCT_snn_res.0.7 %in% c(10, 12)))
+t_seurat <- SCTransform(t_seurat, vst.flavor = "v2", method = "glmGamPoi", verbose = FALSE)
+t_seurat <- RunPCA(t_seurat)
+t_seurat <- RunUMAP(t_seurat, dims = 1:30, reduction = "harmony")
+t_seurat <- FindNeighbors(t_seurat, dims = 1:30, reduction = "harmony")        
+t_seurat <- FindClusters(
+  t_seurat,
+  random.seed = 12345,
+  verbose = FALSE,
+  resolution = seq(0.1, 1, by = 0.1)
+)
+
+# Save the object
+saveRDS(t_seurat, path_to_save_t_obj)
+```
+
+```{r}
+# Define paths to load and save 
+path_to_save_filtered_nk_obj <- here::here("scRNAseq/meta_analysis/R_objects/filtered_nk_seu.rds")
+path_to_save_filtered_nk_markers <- here::here("scRNAseq/meta_analysis/R_objects/filtered_nk_marker.rds")
+path_to_save_filtered2_nk_obj <- here::here("scRNAseq/meta_analysis/R_objects/filtered2_nk_seu.rds")
+path_to_save_filtered2_nk_markers <- here::here("scRNAseq/meta_analysis/R_objects/filtered2_nk_marker.rds")
+path_to_save_filtered3_nk_obj <- here::here("scRNAseq/meta_analysis/R_objects/filtered3_nk_seu.rds")
+path_to_save_filtered3_nk_markers <- here::here("scRNAseq/meta_analysis/R_objects/filtered3_nk_marker.rds")
+path_to_save_filtered4_nk_obj <- here::here("scRNAseq/meta_analysis/R_objects/filtered4_nk_seu.rds")
+path_to_save_filtered4_nk_markers <- here::here("scRNAseq/meta_analysis/R_objects/filtered4_nk_marker.rds")
+path_to_save_pure_nk_obj <- here::here("scRNAseq/meta_analysis/R_objects/pure_nk_seu.rds")
+path_to_save_pure_nk_markers <- here::here("scRNAseq/meta_analysis/R_objects/pure_nk_marker.rds")
+```
+
+# Filtering out contaminated cells
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# NK cell purification
+nk_seurat <- readRDS(path_to_save_nk_obj)
+
+# 1.Filter out based on percentage of IG, HB, TCR, and platelet genes 
+nk_seurat[["percent.rbc"]] <- PercentageFeatureSet(nk_seurat, pattern = "^HB[AB]")
+nk_seurat[["percent.ig"]] <- PercentageFeatureSet(nk_seurat, pattern = "^IG[HKL]")
+nk_seurat[["percent.tcr"]] <- PercentageFeatureSet(nk_seurat, pattern = "^TR[ABGD]")
+platelet_genes <- c("PF4", "PPBP", "TUBB1")
+nk_seurat[["percent.platelet"]] <- PercentageFeatureSet(nk_seurat, features = platelet_genes)
+filtered_nk_seurat <- subset(nk_seurat, 
+                             subset = percent.rbc < 1 & percent.ig < 1 & percent.tcr < 1 & percent.platelet < 1) 
+
+# 2.Filter out comtaminated T and B cells
+filtered_nk_seurat <- subset(filtered_nk_seurat, subset = CD3E < 1 & CD3D < 1 & MS4A1 < 1)
+
+# 3.Filter out comtaminated monocytes
+filtered_nk_seurat <- subset(filtered_nk_seurat, subset = CD14 < 1 & LYZ < 2 & S100A9 < 1) # LYS's cutoff is high as it can be found in blood elsewhere
+
+# 4.Reanalysis
+filtered_nk_seurat <- SCTransform(filtered_nk_seurat, vst.flavor = "v2", method = "glmGamPoi", verbose = FALSE) 
+filtered_nk_seurat <- RunPCA(filtered_nk_seurat)
+filtered_nk_seurat <- RunUMAP(filtered_nk_seurat, dims = 1:30, reduction = "harmony")
+filtered_nk_seurat <- FindNeighbors(filtered_nk_seurat, dims = 1:30, reduction = "harmony")        
+filtered_nk_seurat <- FindClusters(
+  filtered_nk_seurat,
+  random.seed = 12345,
+  verbose = FALSE,
+  resolution = seq(0.1, 2, by = 0.1)
+)
+
+# 5.Save the object
+saveRDS(filtered_nk_seurat, path_to_save_filtered_nk_obj)
+```
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Calculate markers
+filtered_nk_seurat <- readRDS(path_to_save_filtered_nk_obj)
+Idents(filtered_nk_seurat) <- "SCT_snn_res.1.2"
+markers <- FindAllMarkers(filtered_nk_seurat, only.pos = TRUE, logfc.threshold = min_log2FC)
+markers <- markers %>%
+  mutate(cluster = as.character(cluster)) %>%
+  filter(p_val_adj < alpha) %>%
+  arrange(cluster) %>%
+  group_by(cluster) %>%
+  arrange(desc(avg_log2FC), .by_group = TRUE)
+
+# Save the marker results
+saveRDS(markers, path_to_save_filtered_nk_markers)
+write.csv(markers, here::here("scRNAseq/meta_analysis/text_files/filtered_nk_markers.csv"), row.names = FALSE)
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Show the marker results
+markers <- readRDS(path_to_save_filtered_nk_markers)
+DT::datatable(markers, options = list(scrollX = TRUE))
+```
+
+From the results we found that cluster 0, 5, 10, 14, 15, and 16 were contaminated cells.
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Keep only the NK cell clusters with reprocessing
+filtered2_nk_seurat <- subset(filtered_nk_seurat, idents = c(0, 1, 2, 4, 6, 8, 9, 11, 15))
+filtered2_nk_seurat <- SCTransform(filtered2_nk_seurat, vst.flavor = "v2", method = "glmGamPoi", verbose = FALSE)
+filtered2_nk_seurat <- RunPCA(filtered2_nk_seurat)
+filtered2_nk_seurat <- RunUMAP(filtered2_nk_seurat, dims = 1:30, reduction = "harmony")
+filtered2_nk_seurat <- FindNeighbors(filtered2_nk_seurat, dims = 1:30, reduction = "harmony")        
+filtered2_nk_seurat <- FindClusters(
+  filtered2_nk_seurat,
+  random.seed = 12345,
+  verbose = FALSE,
+  resolution = seq(0.1, 2, by = 0.1)
+)
+
+# Save the object
+saveRDS(filtered2_nk_seurat, path_to_save_filtered2_nk_obj)
+```
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Calculate markers
+Idents(filtered2_nk_seurat) <- "SCT_snn_res.1.2"
+markers <- FindAllMarkers(filtered2_nk_seurat, only.pos = TRUE, logfc.threshold = min_log2FC)
+markers <- markers %>%
+  mutate(cluster = as.character(cluster)) %>%
+  filter(p_val_adj < alpha) %>%
+  arrange(cluster) %>%
+  group_by(cluster) %>%
+  arrange(desc(avg_log2FC), .by_group = TRUE)
+
+# Save the marker results
+saveRDS(markers, path_to_save_filtered2_nk_markers)
+write.csv(markers, here::here("scRNAseq/meta_analysis/text_files/filtered2_nk_markers.csv"), row.names = FALSE)
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Show the marker results
+markers <- readRDS(path_to_save_filtered2_nk_markers)
+DT::datatable(markers, options = list(scrollX = TRUE))
+```
+
+Cluster 0, 1, 7, and 11 were contaminated cells, we then removed them.
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Keep only the NK cell clusters with reprocessing
+filtered3_nk_seurat <- subset(filtered2_nk_seurat, idents = c(2, 3, 4, 5, 6, 8, 9, 10))
+filtered3_nk_seurat <- SCTransform(filtered3_nk_seurat, vst.flavor = "v2", method = "glmGamPoi", verbose = FALSE)
+filtered3_nk_seurat <- RunPCA(filtered3_nk_seurat)
+filtered3_nk_seurat <- RunUMAP(filtered3_nk_seurat, dims = 1:30, reduction = "harmony")
+filtered3_nk_seurat <- FindNeighbors(filtered3_nk_seurat, dims = 1:30, reduction = "harmony")        
+filtered3_nk_seurat <- FindClusters(
+  filtered3_nk_seurat,
+  random.seed = 12345,
+  verbose = FALSE,
+  resolution = seq(0.1, 2, by = 0.1)
+)
+
+# Save the object
+saveRDS(filtered3_nk_seurat, path_to_save_filtered3_nk_obj)
+```
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Calculate markers
+Idents(filtered3_nk_seurat) <- "SCT_snn_res.1"
+markers <- FindAllMarkers(filtered3_nk_seurat, only.pos = TRUE, logfc.threshold = min_log2FC)
+markers <- markers %>%
+  mutate(cluster = as.character(cluster)) %>%
+  filter(p_val_adj < alpha) %>%
+  arrange(cluster) %>%
+  group_by(cluster) %>%
+  arrange(desc(avg_log2FC), .by_group = TRUE)
+
+# Save the marker results
+saveRDS(markers, path_to_save_filtered3_nk_markers)
+write.csv(markers, here::here("scRNAseq/meta_analysis/text_files/filtered3_nk_markers.csv"), row.names = FALSE)
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Show the marker results
+markers <- readRDS(path_to_save_filtered3_nk_markers)
+DT::datatable(markers, options = list(scrollX = TRUE))
+```
+
+We found cluster 4 and 6 were contaminated cells.
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Keep only the NK cell clusters with reprocessing
+filtered4_nk_seurat <- subset(filtered3_nk_seurat, idents = c(0, 1, 2, 3, 5, 7, 8, 9))
+filtered4_nk_seurat <- SCTransform(filtered4_nk_seurat, vst.flavor = "v2", method = "glmGamPoi", verbose = FALSE)
+filtered4_nk_seurat <- RunPCA(filtered4_nk_seurat)
+filtered4_nk_seurat <- RunUMAP(filtered4_nk_seurat, dims = 1:30, reduction = "harmony")
+filtered4_nk_seurat <- FindNeighbors(filtered4_nk_seurat, dims = 1:30, reduction = "harmony")        
+filtered4_nk_seurat <- FindClusters(
+  filtered4_nk_seurat,
+  random.seed = 12345,
+  verbose = FALSE,
+  resolution = seq(0.1, 2, by = 0.1)
+)
+
+# Save the object
+saveRDS(filtered4_nk_seurat, path_to_save_filtered4_nk_obj)
+```
+
+In conclusion, we removed and processed the NK cell object for 4 times till we obtained the pure NK cell object for further analysis.
+
+# Subtype annotation
+
+```{r, eval=FALSE}
+# Change the obeject name
+pure_nk_seurat <- filtered4_nk_seurat
+saveRDS(pure_nk_seurat, path_to_save_pure_nk_obj)
+```
+
+```{r, message=FALSE, warning=FALSE, fig.height=4, fig.width=13}
+# Visualise the clusters
+pure_nk_seurat <- readRDS(path_to_save_pure_nk_obj)
+group_by <- c("SCT_snn_res.0.2", "SCT_snn_res.0.3", "SCT_snn_res.0.4")
+umap_plots <- lapply(group_by, function (group){
+  DimPlot(pure_nk_seurat, 
+          reduction = "umap", 
+          group.by = group, 
+          pt.size = 4,
+          repel=TRUE,
+          raster=TRUE, 
+          label=TRUE) +
+    labs(y= "UMAP 2", x = "UMAP 1")
+})
+
+pure_nk_umap.plt <- wrap_plots(umap_plots, ncol=3)
+pure_nk_umap.plt
+```
+
+```{r, message=FALSE, warning=FALSE, fig.height=4, fig.width=13}
+# Visualise the umap
+group_by <- c("ref", "tissue", "group")
+umap_plots <- lapply(group_by, function (group){
+  DimPlot(pure_nk_seurat, 
+          reduction = "umap", 
+          group.by = group, 
+          pt.size = 4,
+          repel=TRUE,
+          raster=TRUE, 
+          label=TRUE) +
+    labs(y= "UMAP 2", x = "UMAP 1")
+})
+
+pure_nk_umap.plt <- wrap_plots(umap_plots, ncol=3)
+pure_nk_umap.plt
+```
+
+```{r, fig.height=7, fig.width=12, warning=FALSE, message=FALSE}
+# Plot based on cell biomarker expression
+FeaturePlot(pure_nk_seurat, 
+            features = c("NCAM1", "HAVCR2", "FCGR3A", "SELL", "GZMK", "PRF1", "GZMA", "TIGIT",
+                         "JUNB", "XCL1", "XCL2", "CD69"),
+            reduction = "umap") 
+```
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Calculate markers
+Idents(pure_nk_seurat) <- "SCT_snn_res.0.3"
+markers <- FindAllMarkers(pure_nk_seurat, only.pos = TRUE, logfc.threshold = min_log2FC)
+markers <- markers %>%
+  mutate(cluster = as.character(cluster)) %>%
+  filter(p_val_adj < alpha) %>%
+  arrange(cluster) %>%
+  group_by(cluster) %>%
+  arrange(desc(avg_log2FC), .by_group = TRUE)
+
+# Save the marker results
+saveRDS(markers, path_to_save_pure_nk_markers)
+write.csv(markers, here::here("scRNAseq/meta_analysis/text_files/pure_nk_markers.csv"), row.names = FALSE)
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Show the marker results
+markers <- readRDS(path_to_save_pure_nk_markers)
+DT::datatable(markers, options = list(scrollX = TRUE))
+```
+
+We annotated the myeloid subtypes as literatures below:
+
+- [Inflammatory-driven NK cell maturation and its impact on pathology](https://www.frontiersin.org/journals/immunology/articles/10.3389/fimmu.2022.1061959/full)
+- [Distinct granzyme k expression in immune cells: a single-cell rna-seq meta-analysis](https://link.springer.com/article/10.1007/s13258-024-01555-1)
+- [Single-cell data revealed exhaustion of characteristic NK cell subpopulations and T cell subpopulations in hepatocellular carcinoma](https://www.aging-us.com/article/205723/text)
+- [Glucocorticoid-induced Tumor Necrosis Factor Receptor Negatively Regulates Activation of Human Primary Natural Killer (NK) Cells by Blocking Proliferative Signals and Increasing NK Cell Apoptosis](https://www.jbc.org/article/S0021-9258(20)52775-0/fulltext)
+- [Discovery of specialized NK cell populations infiltrating human melanoma metastases](https://insight.jci.org/articles/view/133103#F2)
+
+| Cluster | Markers             | Annotation                   | 
+|---------|---------------------|------------------------------|
+| 0       | PRF1, GZMA          | Cytotoxic NK                 | 
+| 1       | CD69, JUN, AREG     | TI-like NK                   | 
+| 2       | HAVCR2, PRF1, GZMA  | Early exhausted NK           | 
+| 3       | GZMK                | Late transitional NK         | 
+| 4       | TNFRSF18            | TNFRSF18hi NK                | 
+| 5       | CD27, GZMK          | Early transitional NK        | 
+
+* TI-like NK is tumour-infiltrating-like NK
+
+```{r, message=FALSE, warning=FALSE, fig.height=4.5, fig.width=7}
+# Plot UMAP for NK cell subtypes
+
+# 1. Map Seurat clusters and create the annotation column
+cluster_to_annotation <- c(
+  "0" = "Cytotoxic NK", "1" = "TI-like NK", "2" = "Early exhausted NK", "3" = "Late transitional NK", 
+  "4" = "TNFRSF18hi NK", "5" = "Early transitional NK"
+  )
+
+pure_nk_seurat$level2_annotate <- 
+  as.vector(cluster_to_annotation[as.character(pure_nk_seurat$SCT_snn_res.0.3)])
+
+# 2. Set level order
+new_levels <- c(
+  # Group1: transitional NK 
+  "Early transitional NK", "Late transitional NK",
+  
+  # Group2: cytotoxic and early exhausted NK  
+  "Cytotoxic NK", "Early exhausted NK",     
+
+  # Group3: other NK 
+  "TNFRSF18hi NK", "TI-like NK" 
+)
+
+pure_nk_seurat$level2_annotate <- factor(
+  pure_nk_seurat$level2_annotate,
+  levels = new_levels
+) 
+
+# 3. Define colours and labels
+new_colours <- c(
+  "#A6CEE3", "#1F78B4",  # Group 1 (2 colours)
+  "#E25644", "#B04968",  # Group 2 (2 colours)
+  "#FFD92F", "#FDBF6F"   # Group 3 (2 colours)
+)
+
+custom_labels <- list(
+  bquote("Early transitional NK"), bquote("Late transitional NK"),
+  bquote("Cytotoxic NK"), bquote("Early exhausted NK"), 
+  bquote(TNFRSF18^hi~"NK"), bquote("TI-like NK")
+  )
+
+# 4. Plot UMAP
+nk_subtype.plt <- DimPlot(pure_nk_seurat, 
+                          group.by = "level2_annotate", 
+                          label = FALSE,
+                          repel = TRUE,
+                          pt.size = 1.5,
+                          alpha = 1,
+                          raster = FALSE
+                          ) +
+  scale_color_manual(
+    values = new_colours,
+    breaks = new_levels,
+    labels = custom_labels
+  ) +
+  labs(y = "UMAP 2", x = "UMAP 1") +
+  ggtitle("NK subtypes")
+
+nk_subtype.plt
+```
+
+```{r, message=FALSE, warning=FALSE, fig.height=4, fig.width=9}
+# Dot plot for biomarker expressions based on annotated cells
+features <- c("NCAM1", "FCGR3A", "SELL", "CD27", "GZMK", "XCL1", "XCL2", "PRF1", "GZMA", "GZMB", "HAVCR2", 
+              "TNFRSF18", "CD69", "JUN", "AREG")
+colour_pal <- colorRampPalette(c("#053061", "#2171B5", "white", "#FFD92F", "#A50F15"))(100)
+
+nk_markers.plt <- DotPlot(pure_nk_seurat, features=features, group.by = "level2_annotate") +
+  RotatedAxis() +
+  scale_colour_gradientn(colours = colour_pal) +
+  scale_y_discrete(
+      limits = rev(new_levels),
+      labels = rev(custom_labels)
+    ) +
+  labs(
+    colour = "Average\nExpression",
+    size = "Percent\nExpressed"
+  )
+
+nk_markers.plt
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Plot subtype population based on tissue and condition
+proportion_tissue_df <- pure_nk_seurat@meta.data %>%
+  dplyr::mutate(level2_annotate = factor(level2_annotate, levels = new_levels)) %>%
+  dplyr::count(tissue, level2_annotate) %>%
+  dplyr::group_by(tissue) %>%
+  dplyr::mutate(proportion = n / sum(n)) %>%
+  dplyr::ungroup() %>%
+  dplyr::select(-n) # Remove n column
+
+proportion_cond_df <- pure_nk_seurat@meta.data %>%
+  dplyr::mutate(level2_annotate = factor(level2_annotate, levels = new_levels)) %>%
+  dplyr::count(new_cond, level2_annotate) %>%
+  dplyr::group_by(new_cond) %>%
+  dplyr::mutate(proportion = n / sum(n)) %>%
+  dplyr::ungroup() %>%
+  dplyr::select(-n) # Remove n column
+
+tissue_cell_pop.plt <- ggplot(proportion_tissue_df, aes(x = tissue, 
+                                                    y = proportion, 
+                                                    fill = level2_annotate)) +
+  geom_col(position = "stack", width = 0.7) +
+  scale_fill_manual(
+    values = new_colours,
+    breaks = new_levels,
+    name = "NK cell subtype" # Set legend title
+  ) +
+  labs(
+    y = "Cell proportion",
+    x = "Tissue", 
+    title = "Tissue"
+  ) +
+  theme_bw() +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    axis.text.x = element_text(angle = 45, hjust = 1), # Rotate x-axis labels 
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank()
+  )
+
+cond_cell_pop.plt <- ggplot(proportion_cond_df, aes(x = new_cond, 
+                                                    y = proportion, 
+                                                    fill = level2_annotate)) +
+  geom_col(position = "stack", width = 0.5) +
+  scale_fill_manual(
+    values = new_colours,
+    breaks = new_levels,
+    name = "NK cell subtype" # Set legend title
+  ) +
+  labs(
+    y = "Cell proportion",
+    x = "Condition", 
+    title = "Condition"
+  ) +
+  theme_bw() +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    axis.text.x = element_text(angle = 45, hjust = 1), # Rotate x-axis labels 
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank()
+  )
+
+# Combine the plots
+adapted_tissue_cell_pop.plt <- tissue_cell_pop.plt +
+  theme(legend.position = "none",
+        axis.title.x = element_blank()) 
+
+adapted_cond_cell_pop.plt <- cond_cell_pop.plt + 
+  theme(legend.position = "right", 
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks.y = element_blank()) 
+
+combined_cell_pop.plt <- adapted_tissue_cell_pop.plt + adapted_cond_cell_pop.plt
+combined_cell_pop.plt
+```
+
+```{r, eval=FALSE}
+# Save the nk object
+saveRDS(pure_nk_seurat, path_to_save_pure_nk_obj)
+
+# Save the figures
+ggsave(filename=paste0(path_to_save_figure, "/nk_umap.png"), plot=nk_subtype.plt, dpi=500, height=4.5, width=7)
+ggsave(filename=paste0(path_to_save_figure, "/nk_dot.png"), plot=nk_markers.plt, dpi=500, height=4, width=9)
+ggsave(filename=paste0(path_to_save_figure, "/nk_cell_pop.png"), plot=combined_cell_pop.plt , dpi=500, height=4, width=7)
+```
+
+# Trajectory analysis
+
+In this section, we used the Monocle 3 package to identify developmental trajectories of NK cells using early transitional subtype as a root node.
+
+```{r, message=FALSE, warning=FALSE}
+# Import the relevant packages
+library(monocle3)
+library(igraph)
+library(SeuratWrappers)
+library(paletteer)
+```
+
+```{r}
+# Define path to save
+path_to_save_nk_monocle_obj <- here::here("scRNAseq/meta_analysis/R_objects/nk_monocle_cds.rds")
+path_to_save_nk_monocle_dea <- here::here("scRNAseq/meta_analysis/R_objects/nk_monocle_dea.rds")
+path_to_save_nk_monocle_module <- here::here("scRNAseq/meta_analysis/R_objects/nk_monocle_module.rds")
+path_to_save_nk_monocle_agg_mat <- here::here("scRNAseq/meta_analysis/R_objects/nk_monocle_agg_mat.rds")
+```
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Create monocle object and generate graph (use data from seurat)
+cds <- as.cell_data_set(pure_nk_seurat) # Convert the seurat object to monocle object using SeuratWrappers
+cds <- preprocess_cds(cds)
+
+# Create gene_short_name
+rowData(cds)$gene_short_name <- row.names(rowData(cds))
+
+# Assign seurat clusters to monocle and create a partition
+cds <- monocle3::cluster_cells(cds, reduction_method = "UMAP", 
+                               cluster_method = "louvain", 
+                               resolution = 0.5)
+cds@clusters$UMAP$clusters <- pure_nk_seurat$SCT_snn_res.0.3
+
+# Assign UMAP coordination
+cds@int_colData$reducedDims$UMAP <- pure_nk_seurat@reductions$umap@cell.embeddings
+```
+
+```{r, message=FALSE, warning=FALSE, fig.height=4, fig.width=17}
+# Monocle plot before trajectory analysis
+cds <- readRDS(path_to_save_nk_monocle_obj)
+group_by <- c("cluster", "partition", "level2_annotate")
+umap_plots <- lapply(group_by, function (group){
+  plot_cells(cds, 
+             color_cells_by = group, 
+             label_groups_by_cluster = FALSE, 
+             group_label_size = 5,
+             cell_size = 0.7) +  
+    theme(legend.position = "right")
+})
+
+monocle_umap.plt <- wrap_plots(umap_plots, ncol=3)
+monocle_umap.plt
+```
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Learn trajectory
+cds <- learn_graph(cds, use_partition = TRUE, close_loop = FALSE)
+```
+
+```{r, fig.height=5, fig.width=7}
+# Plot after learning trajectory
+monocle_cluster.plt <- plot_cells(cds, 
+                                  color_cells_by = "cluster",
+                                  graph_label_size=5,
+                                  cell_size = 0.7,
+                                  show_trajectory_graph = TRUE
+                                  ) + 
+  ggtitle("Seurat clusters") +
+  theme(legend.position = "right",
+        plot.title = element_text(size = 16, face = "bold", hjust = 0.5)
+        )
+
+monocle_cluster.plt
+```
+
+```{r, fig.height=5, fig.width=7}
+# Plot root
+root.plt <- plot_cells(cds, label_principal_points = TRUE) + 
+  ggtitle("Root principal node") +
+  theme(legend.position = "right",
+        plot.title = element_text(size = 16, face = "bold", hjust = 0.5)
+        )
+
+root.plt
+```
+
+## Calculate pseudotime
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Set a root to order cells in pseudotime
+cds <- order_cells(cds, reduction_method = "UMAP", root_pr_nodes = "Y_60")
+```
+
+```{r, fig.height=5, fig.width=7}
+# Plot the pseudotime
+monocle_pseudotime.plt <- plot_cells(cds, 
+                                     color_cells_by = "pseudotime",
+                                     label_cell_groups=FALSE,
+                                     label_leaves=FALSE,
+                                     label_branch_points=FALSE,
+                                     graph_label_size=1.5,
+                                     cell_size = 0.7) +
+  ggtitle("Pseudotime") +
+  theme(legend.position = "right",
+        plot.title = element_text(size = 16, face = "bold", hjust = 0.5)
+        )
+
+monocle_pseudotime.plt
+```
+
+```{r, fig.height=5, fig.width=5}
+# Plot the pseudotime with trajectory path with Seurat stype
+
+# 1. Extract principal graph
+pg_aux <- principal_graph_aux(cds)$UMAP
+
+# 2. Convert to edge list
+edges <- as_data_frame(principal_graph(cds)$UMAP, what = "edges")
+nodes <- as.data.frame(t(pg_aux$dp_mst))
+nodes$name <- rownames(nodes)
+root_node <- cds@principal_graph_aux$UMAP$root_pr_nodes
+
+# 3. Merge edges with coordinates
+trajectory_df <- edges %>%
+  dplyr::left_join(nodes, by = c("from" = "name")) %>%
+  dplyr::rename(
+    UMAP_1_from = umap_1,
+    UMAP_2_from = umap_2
+  ) %>%
+  dplyr::left_join(nodes, by = c("to" = "name")) %>%
+  dplyr::rename(
+    UMAP_1_to = umap_1,
+    UMAP_2_to = umap_2
+  )
+
+seurat_df <- data.frame(
+  Embeddings(pure_nk_seurat, "umap"),
+  pseudotime = pseudotime(cds)
+)
+
+root_df <- nodes %>%
+  dplyr::filter(name %in% root_node)
+
+# 4. Plot
+trajectory_no_annotate.plt <- ggplot(seurat_df, aes(umap_1, umap_2)) +
+  geom_point(aes(color = pseudotime), size = 2, alpha=1) +
+  geom_segment(
+    data = trajectory_df,
+    aes(
+      x = UMAP_1_from,
+      y = UMAP_2_from,
+      xend = UMAP_1_to,
+      yend = UMAP_2_to
+    ),
+    inherit.aes = FALSE,
+    colour = "black",
+    linewidth = 0.7
+  ) +
+  geom_point(
+    data = root_df,
+    aes(umap_1, umap_2),
+    inherit.aes = FALSE,
+    shape = 21,          # circle with fill
+    size = 6,
+    fill = "white",
+    colour = "black",
+    stroke = 1
+  ) +
+  geom_text(
+    data = root_df,
+    aes(umap_1, umap_2),
+    label = "1",
+    inherit.aes = FALSE,
+    size = 5,
+    fontface = "bold"
+  ) +
+  scale_color_gradientn(
+    name = "Pseudotime",
+    colors = paletteer_c("grDevices::RdYlBu", 30, direction = -1)
+  ) +
+  theme_void() +
+  theme(
+    legend.position = "bottom" 
+  )  
+  
+annotate_trajectory.plt <- trajectory_no_annotate.plt +  
+  annotate("text", x = 1.5, y = -4.3, label = "Transitional NK", 
+             color = "black", fontface = "plain", size = 4) +
+  annotate("text", x = -2.5, y = -6.8, label = "TNFRSF18hi NK", 
+             color = "black", fontface = "plain", size = 4) +
+  annotate("text", x = -3.7, y = 2.8, label = "Cytotoxic NK", 
+             color = "black", fontface = "plain", size = 4) +
+  annotate("text", x = 2, y = 6.5, label = "Early exhausted NK", 
+             color = "black", fontface = "plain", size = 4) +
+  annotate("text", x = 7, y = -1.5, label = "TI-like NK", 
+             color = "black", fontface = "plain", size = 4)
+
+annotate_trajectory.plt
+```
+
+```{r, eval=FALSE}
+# Save the monocle object
+saveRDS(cds, path_to_save_nk_monocle_obj)
+
+# Save the figure
+ggsave(filename=paste0(path_to_save_figure, "/nk_trajectory.png"), plot=annotate_trajectory.plt, dpi=500, height=5, width=5)
+```
+
+## Gene expression across pseudotime
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Group genes into modules
+nk_cds_pr_test_res <- monocle3::graph_test(cds, neighbor_graph = "principal_graph", cores = 4)
+monocle_degs <- row.names(subset(nk_cds_pr_test_res, q_value < 0.05))
+gene_modules_df <- find_gene_modules(cds[monocle_degs,], resolution=3e-3)
+cell_group_df <- tibble::tibble(cell=row.names(colData(cds)), 
+                                cell_group=colData(cds)$level2_annotate)
+agg_mat <- aggregate_gene_expression(cds, gene_modules_df, cell_group_df)
+row.names(agg_mat) <- paste0("Module ", row.names(agg_mat))
+
+# Save the module results
+write.csv(nk_cds_pr_test_res, here::here("scRNAseq/meta_analysis/supplm_file/nk_trajectory_gene_expr.csv"))
+saveRDS(nk_cds_pr_test_res, path_to_save_nk_monocle_dea)
+saveRDS(gene_modules_df, path_to_save_nk_monocle_module)
+saveRDS(agg_mat, path_to_save_nk_monocle_agg_mat)
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Show the monocle dae
+monocle_dea <- readRDS(path_to_save_nk_monocle_dea)
+DT::datatable(monocle_dea, options = list(scrollX = TRUE))
+```
+
+```{r, fig.height=10, fig.width=8}
+# Plot heatmap 
+library(pheatmap)
+gene_modules_df <- readRDS(path_to_save_nk_monocle_module)
+agg_mat <- readRDS(path_to_save_mn_monocle_agg_mat)
+colour_pal <- colorRampPalette(c("#053061", "#2171B5", "white", "#FFD92F", "#A50F15"))(100)
+pseudotime_heatmap.plt <- pheatmap::pheatmap(agg_mat, scale="column", fontsize = 11,
+                                             color = colour_pal,
+                                             angle_col = 45,
+                                             clustering_method="ward.D2")
+
+pseudotime_heatmap.plt
+```
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Test a range of resolutions to appropriate modules
+resolutions <- c(1e-3, 2e-3, 3e-3, 4e-3, 5e-3)
+
+for(res in resolutions){
+  modules <- find_gene_modules(cds[monocle_degs,], resolution = res)
+  num_mods <- length(unique(modules$module))
+  print(paste("Resolution:", res, "->", num_mods, "Modules"))
+}
+```
+
+```{r}
+# Collect gene signatures for fate subtypes based on gene modules
+tnfrsf18_gene <- gene_modules_df %>% filter(module %in% c(5, 13)) %>% pull(id)
+exhausted_gene <- gene_modules_df %>% filter(module %in% c(3, 11, 12)) %>% pull(id)
+ti_like_gene <- gene_modules_df %>% filter(module %in% c(4, 6)) %>% pull(id)
+```
+
+```{r, message=FALSE, warning=FALSE, fig.height=8, fig.width=6}
+# Branch 1 Transitional NK > TNFRSF18hi NK
+cells_types_of_interest <- c("Early transitional NK", "Late transitional NK", "TNFRSF18hi NK")
+pseudotime_genes <- c("TNFRSF18", "FCGR3A", "PRF1", "HIGD1A", "BAG5", "LILRB1")
+
+tnfrsf18_genes_pseudotime <- plot_expression_on_pseudotime(cds_ordered = cds, 
+                                                           genes = pseudotime_genes, 
+                                                           cell_annotations = cells_types_of_interest, 
+                                                           pseudotime_boundary = 8,
+                                                           facet_wrap_plot = TRUE) +
+  miller_discrete_scale(style = "bars") +
+  labs(title = "Transitional NK to TNFRSF18hi NK") +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold", size = 16))
+
+tnfrsf18_genes_pseudotime
+```
+
+During the transition from transitional NK cells towards the TNFRSF18^hi NK state, NK cells exhibited features consistent with increased maturation, characterised by the upregulation of FCGR3A and PRF1. However, this trajectory also showed evidence of cellular stress, potentially associated with hypoxic adaptation, as indicated by increased expression of HIGD1A, a gene implicated in promoting cell survival under hypoxic and nutrient-deprived conditions.
+
+In addition, reduced expression of BAG5, an anti-apoptotic regulator, suggests a potential increase in susceptibility to cell death along this developmental path. Notably, this NK cell fate may also contribute to tumour-supportive activity through the upregulation of LILRB1, an inhibitory receptor associated with immune suppression.
+
+```{r, message=FALSE, warning=FALSE, fig.height=8, fig.width=6}
+# Branch 2 Transitional NK > Early exhausted NK
+cells_types_of_interest <- c("Early transitional NK", "Late transitional NK", "Cytotoxic NK", "Early exhausted NK")
+pseudotime_genes <- c("FCGR3A", "HAVCR2", "CD160", "SMAD3", "CD244", "HIF1A")
+
+exhausted_genes_pseudotime <- plot_expression_on_pseudotime(cds_ordered = cds, 
+                                                           genes = pseudotime_genes, 
+                                                           cell_annotations = cells_types_of_interest, 
+                                                           pseudotime_boundary = 15,
+                                                           facet_wrap_plot = TRUE) +
+  miller_discrete_scale(style = "bars") +
+  labs(title = "Transitional NK to Early exhausted NK") +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold", size = 16))
+
+exhausted_genes_pseudotime
+```
+
+For the transition to the early exhausted NK state, this trajectory exhibited transcriptional features consistent with immune suppression, characterised by increased expression of HAVCR2, SMAD3 (a mediator of TGF-β signalling), and CD244, together with reduced expression of FCGR3A and CD160.
+
+In addition, decreased expression of HIF1A suggests a potential impairment in hypoxic adaptation, indicating that this NK cell subtype may exhibit reduced functional capacity and survival potential within the TME.
+
+```{r, message=FALSE, warning=FALSE, fig.height=8, fig.width=6}
+# Branch 3 Transitional NK > TI-like NK
+cells_types_of_interest <- c("Early transitional NK", "Late transitional NK", "Cytotoxic NK", "TI-like NK")
+pseudotime_genes <- c("CD69", "NR4A2", "DUSP1", "IFNG", "HIF1A", "LDHA")
+
+ti_like_genes_pseudotime <- plot_expression_on_pseudotime(cds_ordered = cds, 
+                                                           genes = pseudotime_genes, 
+                                                           cell_annotations = cells_types_of_interest, 
+                                                           pseudotime_boundary = 20,
+                                                           facet_wrap_plot = TRUE) +
+  miller_discrete_scale(style = "bars") +
+  labs(title = "Transitional NK to TI-like NK") +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold", size = 16))
+
+ti_like_genes_pseudotime
+```
+
+Compared with other cell fates, this trajectory retained features consistent with preserved immune function and proliferative capacity, characterised by increased expression of IFNG. This state also exhibited transcriptional signatures suggestive of aerobic glycolysis, as indicated by the upregulation of LDHA, despite reduced expression of HIF1A.
+
+Notably, several genes associated with early exhaustion or stress responses, including NR4A2 and DUSP1, were also upregulated, suggesting a transitional functional state rather than complete exhaustion.
+
+```{r, eval=FALSE}
+# Save the figures
+ggsave(filename=paste0(path_to_save_figure, "/nk_tnfrsf18_gene_flow.png"), plot=tnfrsf18_genes_pseudotime, dpi=500, height=8, width=6)
+ggsave(filename=paste0(path_to_save_figure, "/nk_exhausted_gene_flow.png"), plot=exhausted_genes_pseudotime, dpi=500, height=8, width=6)
+ggsave(filename=paste0(path_to_save_figure, "/nk_ti_like_gene_flow.png"), plot=ti_like_genes_pseudotime, dpi=500, height=8, width=6)
+```
+
+# Pseudobulk gene expression analysis between RT versus CLL
+
+```{r, message=FALSE, warning=FALSE}
+# Import the related libraries in functional enrichment analysis
+library(DESeq2)
+library(limma)
+library(clusterProfiler)
+library(enrichplot)
+library(msigdbr)
+library(org.Hs.eg.db)
+library(EnhancedVolcano)
+library(ggpubr)
+```
+
+## Based on Seurat command
+
+```{r}
+# Define paths to save and load
+path_to_save_seurat_dea <- here::here("scRNAseq/meta_analysis/R_objects/gene_exprs/nk_seurat_dea.rds")
+path_to_save_seurat_hm_gsea <- here::here("scRNAseq/meta_analysis/R_objects/gene_exprs/nk_seurat_hm_gsea.rds")
+path_to_save_seurat_go_gsea <- here::here("scRNAseq/meta_analysis/R_objects/gene_exprs/nk_seurat_go_gsea.rds")
+path_to_save_seurat_kegg_gsea <- here::here("scRNAseq/meta_analysis/R_objects/gene_exprs/nk_seurat_kegg_gsea.rds")
+path_to_save_seurat_reactome_gsea <- here::here("scRNAseq/meta_analysis/R_objects/gene_exprs/nk_seurat_reactome_gsea.rds")
+path_to_save_seurat_wikipath_gsea <- here::here("scRNAseq/meta_analysis/R_objects/gene_exprs/nk_seurat_wikipath_gsea.rds")
+```
+
+### Find biomarkers of monocytes between RT and CLL conditions
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Find markers between CLL and RT conditions  
+Idents(pure_nk_seurat) <- "new_cond" # we used this variable as it contains RT and CLL
+pure_nk_seurat <- PrepSCTFindMarkers(pure_nk_seurat) # Prepare SCT assay for DE testing
+nk.ge <- FindMarkers(
+  pure_nk_seurat,
+  ident.1 = "RT",
+  ident.2 = "CLL",
+  test.use = "wilcox",
+  only.pos = FALSE,
+  logfc.threshold = 0
+)
+dea.df <- cbind(gene = rownames(nk.ge), nk.ge)
+avg_exp <- AverageExpression(pure_nk_seurat, features = dea.df$gene, assay = "SCT") # Calculate the average expression for the genes
+dea.df$baseMean <- rowMeans(avg_exp$SCT) # Calculate the mean across all relevant groups (e.g., global mean for the gene)
+
+# Save the expression results
+saveRDS(dea.df, path_to_save_seurat_dea)
+write.csv(dea.df, here::here("scRNAseq/meta_analysis/supplm_file/nk_seurat_dea.csv"))
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Load the saved expression data
+dea.df <- readRDS(path_to_save_seurat_dea)
+DT::datatable(dea.df, options = list(scrollX = TRUE))
+```
+
+```{r, message=FALSE, warning=FALSE, fig.height=7, fig.width=10}
+# Volcano plot for Seurat pseudobulk analysis
+genes_of_interest <- c(
+  "FASLG", "PRF1", "HAVCR2", "FCGR3A", "FOS", "FOSB", "JUND", "GNLY", "TGFB1", "TNF", "IFNG", "LTA"                           
+)
+
+non_zero_min_pval <- sort(unique(dea.df$p_val_adj), decreasing = FALSE)[2] # Find minimum p-value which is not 0
+dea.df$adapted_p_val <- ifelse(dea.df$p_val_adj == 0, non_zero_min_pval, dea.df$p_val_adj) # Change zero adj_p_val to non-zero minimum adj_p_val to avoid plotting error
+
+volcano.plt <- volcano_plot(dea.df, 
+                            FC=0.25, 
+                            x_col="avg_log2FC",
+                            y_col="adapted_p_val",
+                            xlim=c(-10,10), 
+                            ylim=c(-0.1,100), 
+                            genes_of_interest=genes_of_interest,
+                            boxedLabels = TRUE) 
+
+volcano.plt
+```
+
+```{r, message=FALSE, warning=FALSE}
+# MA plot for Seurat pseudobulk analysis
+ma_data <- dea.df
+colnames(ma_data)[colnames(ma_data) == "avg_log2FC"] <- "log2FoldChange"
+colnames(ma_data)[colnames(ma_data) == "p_val_adj"]  <- "padj"
+
+ma.plt <- ggmaplot(ma_data, 
+                   fdr = 0.05,            # Threshold for significance
+                   fc = 2,                # Threshold for FC
+                   size = 0.4,            # Dot size
+                   palette = c("#B31B21", "#1465AC", "darkgray"),
+                   genenames = as.vector(ma_data$gene),
+                   top = 0, label.select = genes_of_interest, # set top = 0, then specify genes using label.select argument
+                   legend = "right", 
+                   font.label = c("bold", 11), 
+                   label.rectangle = TRUE,
+                   font.legend = "bold",
+                   font.main = "bold",
+                   ggtheme = ggplot2::theme_minimal(),
+                   xlab = "Mean Expression",
+                   ylab = "Log2 Fold Change"
+                   )
+
+ma.plt
+```
+
+```{r, eval=FALSE}
+# Save the figure
+ggsave(filename=paste0(path_to_save_figure, "/seurat_nk_volcano.png"), plot=volcano.plt, dpi=500, height=7, width=9)
+ggsave(filename=paste0(path_to_save_figure, "/seurat_nk_ma.png"), plot=ma.plt, dpi=500, height=3.5, width=5)
+```
+
+For the gene expression analysis, we found that RT NK cells upregulated genes associated with cytotoxicity (FASLG, PRF1, and FCGR3A) and exhaustive state (HAVCR2), suggesting that NK cells may retain cytotoxic potential in the RT condition.
+
+In contrast, the downregulated DEGs in RT NK cells included members of the AP-1 transcription factor family (FOS, FOSB, and JUND), GNLY (a gene related to cytotoxic function), and several regulatory cytokines (TGFB1, TNF, IFNG, and LTA).  
+
+### GSEA
+
+```{r}
+# Manipulate the expression data
+lfc_vector <- dea.df$avg_log2FC # Create a named vector ranked based on the log2 fold change
+names(lfc_vector) <- dea.df$gene
+lfc_vector <- na.omit(lfc_vector) # Omit any NA values
+lfc_vector <- sort(lfc_vector, decreasing = TRUE) # Sort the log2 fold change in descending order
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Hallmark
+HM_gsea <- HM_GSEA(lfc_vector)
+
+# Collect the HM GSEA result
+HM_GSEA.result <- HM_gsea@result
+HM_GSEA_selected.result <- HM_GSEA.result %>%
+  as_tibble() %>%
+  dplyr::select(c(Description, NES, pvalue, p.adjust))
+
+DT::datatable(HM_GSEA_selected.result, options = list(scrollX = TRUE))
+```
+
+```{r, message=FALSE, warning=FALSE}
+# GO:BP
+GOBP_gsea <- GO_GSEA(lfc_vector)
+
+# Collect the GSEA result
+GOBP_GSEA.result <- GOBP_gsea@result
+GOBP_GSEA_selected.result <- GOBP_GSEA.result %>%
+  as_tibble() %>%
+  dplyr::select(c(Description, NES, pvalue, p.adjust))
+
+DT::datatable(GOBP_GSEA_selected.result, options = list(scrollX = TRUE))
+```
+
+```{r, message=FALSE, warning=FALSE}
+# KEGG pathway
+KEGG_gsea <- KEGG_GSEA(lfc_vector)
+
+# Collect the HM GSEA result
+KEGG_GSEA.result <- KEGG_gsea@result
+KEGG_GSEA_selected.result <- KEGG_GSEA.result %>%
+  as_tibble() %>%
+  dplyr::select(c(Description, NES, pvalue, p.adjust))
+
+DT::datatable(KEGG_GSEA_selected.result, options = list(scrollX = TRUE))
+```
+
+```{r, message=FALSE, warning=FALSE}
+# REACTOME
+REACTOME_gsea <- REACTOME_GSEA(lfc_vector)
+
+# Collect the HM GSEA result
+REACTOME_GSEA.result <- REACTOME_gsea@result
+REACTOME_GSEA_selected.result <- REACTOME_GSEA.result %>%
+  as_tibble() %>%
+  dplyr::select(c(Description, NES, pvalue, p.adjust))
+
+DT::datatable(REACTOME_GSEA_selected.result, options = list(scrollX = TRUE))
+```
+
+```{r, message=FALSE, warning=FALSE}
+# WikiPath
+WIKIPATH_gsea <- WIKIPATH_GSEA(lfc_vector)
+
+# Collect the HM GSEA result
+WIKIPATH_GSEA.result <- WIKIPATH_gsea@result
+WIKIPATH_GSEA_selected.result <- WIKIPATH_GSEA.result %>%
+  as_tibble() %>%
+  dplyr::select(c(Description, NES, pvalue, p.adjust))
+
+DT::datatable(WIKIPATH_GSEA_selected.result, options = list(scrollX = TRUE))
+```
+
+### GSEA summary 
+
+We then summarised the common terms found from Hallmark, GO:BP, and canonical pathways.
+
+```{r, message=FALSE, warning=FALSE}
+# Bar plot of GSEA 
+gsea_bp <- rbind(
+  GOBP_GSEA_selected.result[GOBP_GSEA_selected.result$Description == "GOBP_MITOCHONDRIAL_TRANSLATION",],
+  GOBP_GSEA_selected.result[GOBP_GSEA_selected.result$Description == "GGOBP_MITOTIC_CELL_CYCLE_PROCESS",],
+  GOBP_GSEA_selected.result[GOBP_GSEA_selected.result$Description == "GOBP_INTRINSIC_APOPTOTIC_SIGNALING_PATHWAY",],
+  GOBP_GSEA_selected.result[GOBP_GSEA_selected.result$Description == "GOBP_FC_RECEPTOR_SIGNALING_PATHWAY",],
+  GOBP_GSEA_selected.result[GOBP_GSEA_selected.result$Description == "GOBP_REGULATION_OF_B_CELL_PROLIFERATION",],
+  HM_GSEA_selected.result[HM_GSEA_selected.result$Description == "HALLMARK_TNFA_SIGNALING_VIA_NFKB",],
+  WIKIPATH_GSEA_selected.result[WIKIPATH_GSEA_selected.result$Description == "WP_IL1_SIGNALING",],
+  WIKIPATH_GSEA_selected.result[WIKIPATH_GSEA_selected.result$Description == "WP_EGFEGFR_SIGNALING",],
+  WIKIPATH_GSEA_selected.result[WIKIPATH_GSEA_selected.result$Description == "WP_TOLLLIKE_RECEPTOR_SIGNALING",]
+)
+
+gsea_bp$Description <- gsub("HALLMARK_", "", gsea_bp$Description)
+gsea_bp$Description <- gsub("GOBP_", "", gsea_bp$Description)
+gsea_bp$Description <- gsub("KEGG_", "", gsea_bp$Description)
+gsea_bp$Description <- gsub("REACTOME_", "", gsea_bp$Description)
+gsea_bp$Description <- gsub("WP_", "", gsea_bp$Description)
+gsea_bp$Description <- gsub("_V1", "", gsea_bp$Description)
+gsea_bp$Description <- gsub("MITOTIC_CELL_CYCLE_PROCESS", "MITOTIC_CELL_CYCLE", gsea_bp$Description)
+gsea_bp$Description <- gsub("INTRINSIC_APOPTOTIC_SIGNALING_PATHWAY", "INTRINSIC_APOPTOTIC_SIGNALING", gsea_bp$Description)
+gsea_bp$Description <- gsub("FC_RECEPTOR_SIGNALING_PATHWAY", "FC_RECEPTOR_SIGNALING", gsea_bp$Description)
+gsea_bp$Description <- gsub("TNFA_SIGNALING_VIA_NFKB", "TNFA_SIGNALING", gsea_bp$Description)
+gsea_bp$Description <- gsub("_", " ", gsea_bp$Description)
+
+gsea_bp$Description <- factor(gsea_bp$Description, levels = gsea_bp$Description)
+gsea_bp$Direction <- "Up"
+gsea_bp$Direction[gsea_bp$NES<0] <- "Down"
+
+gsea_bar.plt <- ggplot(gsea_bp, aes(x=Description, y=NES, fill=Direction)) +
+  geom_bar(stat = "identity", color="black", width = 0.75) +  
+  theme_classic() +
+  theme(
+    axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1, color = "black"),
+    plot.margin = margin(t = 10, r = 10, b = 100, l = 65, unit = "pt"),
+    legend.position = "none"
+  ) +
+  geom_hline(yintercept = 0) + 
+  ylab("NES") + xlab(NULL) + 
+  scale_fill_manual(values=c("#357EBD", "#D43F3A"))
+
+gsea_bar.plt
+```
+
+```{r, message=FALSE, warning=FALSE, fig.height=10, fig.width=14}
+# GSEA plots
+terms_of_interest <- c(
+  "GOBP_MITOCHONDRIAL_TRANSLATION", "GOBP_MITOTIC_CELL_CYCLE_PROCESS", "GOBP_INTRINSIC_APOPTOTIC_SIGNALING_PATHWAY",
+  "GOBP_FC_RECEPTOR_SIGNALING_PATHWAY", "GOBP_REGULATION_OF_B_CELL_PROLIFERATION", "HALLMARK_TNFA_SIGNALING_VIA_NFKB",
+  "WP_IL1_SIGNALING", "WP_EGFEGFR_SIGNALING", "WP_TOLLLIKE_RECEPTOR_SIGNALING"
+  )
+
+gsea_plot.lst <- lapply(terms_of_interest, function(term){
+  term_system <- strsplit(term, split = "_")[[1]][1]
+
+  adapted_term <- term %>% 
+    str_remove("^(HALLMARK|GOBP|KEGG|REACTOME|WP)_") %>%
+    str_replace("MITOTIC_CELL_CYCLE_PROCESS", "MITOTIC_CELL_CYCLE") %>%
+    str_replace("INTRINSIC_APOPTOTIC_SIGNALING_PATHWAY", "INTRINSIC_APOPTOTIC_SIGNALING") %>%
+    str_replace("FC_RECEPTOR_SIGNALING_PATHWAY", "FC_RECEPTOR_SIGNALING") %>%
+    str_replace("TNFA_SIGNALING_VIA_NFKB", "TNFA_SIGNALING") %>%
+    str_replace_all("_", " ")
+  
+  if (term_system == "HALLMARK"){
+    gseaplot(HM_gsea, 
+             by = "runningScore", 
+             title = adapted_term, 
+             geneSetID = term,
+             base_size = 10) + 
+      theme(axis.text.x = element_text(angle = 0, hjust = 1))
+  } else if (term_system == "GOBP"){
+    gseaplot(GOBP_gsea, 
+             by = "runningScore", 
+             title = adapted_term, 
+             geneSetID = term,
+             base_size = 10) + 
+      theme(axis.text.x = element_text(angle = 0, hjust = 1))
+  } else if (term_system == "KEGG") {
+    gseaplot(KEGG_gsea, 
+             by = "runningScore", 
+             title = adapted_term, 
+             geneSetID = term,
+             base_size = 10) + 
+      theme(axis.text.x = element_text(angle = 0, hjust = 1))
+  } else if (term_system == "REACTOME") {
+    gseaplot(REACTOME_gsea, 
+             by = "runningScore", 
+             title = adapted_term, 
+             geneSetID = term,
+             base_size = 10) + 
+      theme(axis.text.x = element_text(angle = 0, hjust = 1))
+  } else {
+    gseaplot(WIKIPATH_gsea, 
+             by = "runningScore", 
+             title = adapted_term, 
+             geneSetID = term,
+             base_size = 10) + 
+      theme(axis.text.x = element_text(angle = 0, hjust = 1))
+  }
+})
+
+gsea.plt <- wrap_plots(gsea_plot.lst, ncol=3)
+gsea.plt
+```
+
+```{r, eval=FALSE}
+# Save GSEA results
+saveRDS(HM_gsea, path_to_save_seurat_hm_gsea)
+saveRDS(GOBP_gsea, path_to_save_seurat_go_gsea)
+saveRDS(KEGG_gsea, path_to_save_seurat_kegg_gsea)
+saveRDS(REACTOME_gsea, path_to_save_seurat_reactome_gsea)
+saveRDS(WIKIPATH_gsea, path_to_save_seurat_wikipath_gsea)
+
+# Save as data frames
+write.csv(HM_GSEA.result, here::here("scRNAseq/meta_analysis/supplm_file/nk_seurat_hm_gsea.csv"))
+write.csv(GOBP_GSEA.result, here::here("scRNAseq/meta_analysis/supplm_file/nk_seurat_go_gsea.csv"))
+write.csv(KEGG_GSEA.result, here::here("scRNAseq/meta_analysis/supplm_file/nk_seurat_kegg_gsea.csv"))
+write.csv(REACTOME_GSEA.result, here::here("scRNAseq/meta_analysis/supplm_file/nk_seurat_reactome_gsea.csv"))
+write.csv(WIKIPATH_GSEA.result, here::here("scRNAseq/meta_analysis/supplm_file/nk_seurat_wikipath_gsea.csv"))
+
+# Save the figures
+ggsave(filename=paste0(path_to_save_figure, "/nk_gsea.png"), plot=gsea_bar.plt, dpi=500, height=5, width=7)
+ggsave(filename=paste0(path_to_save_figure, "/nk_gsea_plt.png"), plot=gsea.plt, dpi=500, height=10, width=14)
+```
+
+## Based on DESeq2
+
+```{r}
+# Define paths to save the results
+path_to_save_deseq2_dea <- here::here("scRNAseq/meta_analysis/R_objects/gene_exprs/nk_deseq2_dea.rds")
+path_to_save_deseq2_hm_gsea <- here::here("scRNAseq/meta_analysis/R_objects/gene_exprs/nk_deseq2_hm_gsea.rds")
+path_to_save_deseq2_go_gsea <- here::here("scRNAseq/meta_analysis/R_objects/gene_exprs/nk_deseq2_go_gsea.rds")
+path_to_save_deseq2_kegg_gsea <- here::here("scRNAseq/meta_analysis/R_objects/gene_exprs/nk_deseq2_kegg_gsea.rds")
+path_to_save_deseq2_reactome_gsea <- here::here("scRNAseq/meta_analysis/R_objects/gene_exprs/nk_deseq2_reactome_gsea.rds")
+path_to_save_deseq2_wikipath_gsea <- here::here("scRNAseq/meta_analysis/R_objects/gene_exprs/nk_deseq2_wikipath_gsea.rds")
+```
+
+### Create an DESeq2 object
+
+```{r, message=FALSE, warning=FALSE}
+# Prepare single-cell meta-data for DESeq2
+pure_nk_seurat$ref[pure_nk_seurat$ref == "Hing_2022"] <- "Hing_2023" # Update reference name
+pure_nk_seurat$patient_cond <- paste0("case_", pure_nk_seurat$case, "_", pure_nk_seurat$ref, "_", pure_nk_seurat$new_cond) 
+patient_cond_cls <- unique(pure_nk_seurat$patient_cond)
+RT_subjects <- patient_cond_cls[grep("RT", patient_cond_cls)]
+RT_subjects <- gsub(pattern = "_", replacement = "-", x=RT_subjects) # change "_" to "-" as DESeq2 converted sample names from "_" to "-"
+
+# Create pseudocount matrix for tumour cell object
+cts <- AggregateExpression(pure_nk_seurat, 
+                           group.by = "patient_cond",
+                           assays = "RNA",
+                           slot = "counts",
+                           resturn.seurat = FALSE) 
+cts <- cts$RNA
+pseudo_count.mat <- as.data.frame(cts)
+
+# Create metadata for DESeq2 object
+batch_map <- c("Penter (2021)" = "1", "Nadeu (2022)" = "2", "Rejeski (2022)" = "3", "Hing (2023)" = "4", "Parry (2023a)" = "5", 
+               "Parry (2023b)" = "6", "Rigo (2024)" = "7")
+colData <- data.frame(samples = colnames(pseudo_count.mat))
+colData$condition <- ifelse(colData$samples %in% RT_subjects, "RT", "CLL")
+colData$study <- stringr::word(colData$samples, start = -3, end = -2, sep = fixed("-"))
+colData$study <- sub("^(.*)-([0-9].*)$", "\\1 (\\2)", colData$study) # Substitiute string like "Parry-2023b" to "Parry (2023b)"
+colData$study <- factor(colData$study, level = c("Penter (2021)", "Nadeu (2022)", "Rejeski (2022)", "Hing (2023)", 
+                                                 "Parry (2023a)", "Parry (2023b)", "Rigo (2024)"))
+colData$batch <- batch_map[colData$study]
+colData$batch <- factor(colData$batch)
+rownames(colData) <- colData$samples
+
+# Create a DESeq2 object
+dds <- DESeqDataSetFromMatrix(countData = pseudo_count.mat, 
+                              colData = colData,
+                              design = ~ batch + condition)
+
+# Keep genes with at least 10 counts across all samples
+keep <- rowSums(counts(dds)) >= 10
+dds <- dds[keep,]
+```
+
+### Plot the PCA based on the expression data
+
+```{r, message=FALSE, warning=FALSE, fig.height=4.5, fig.width=6.5}
+# Variance stabilised transformation
+vsdata <- vst(dds, blind = FALSE)
+
+# Extract matrix
+vs_mat <- assay(vsdata)
+
+# Adjust for batch (assume batch info is in colData(dds)$batch)
+design_matrix <- model.matrix(~ condition, data = colData(dds))
+vs_mat_corrected <- limma::removeBatchEffect(
+  vs_mat, 
+  batch = colData(dds)$batch, 
+  design = design_matrix 
+)
+
+# PCA on corrected data
+pca <- prcomp(t(vs_mat_corrected))
+
+# Calculate % variance explained
+pca_var <- pca$sdev^2               # variance of each PC
+pca_var_percent <- pca_var / sum(pca_var) * 100
+
+# Make a dataframe for ggplot
+pca_df <- data.frame(pca$x,
+                     condition = colData(dds)$condition,
+                     study = colData(dds)$study)
+
+# Plot PCA
+pca.plt <- ggplot(pca_df, aes(PC1, PC2, color = study, shape = condition)) +
+  geom_point(size = 3) +
+  xlab(paste0("PC1 (", round(pca_var_percent[1], 1), "%)")) +
+  ylab(paste0("PC2 (", round(pca_var_percent[2], 1), "%)")) +
+  scale_color_manual(values = c(
+    "Penter (2021)" = "#1f77b4", 
+    "Nadeu (2022)" = "#ff7f0e",
+    "Rejeski (2022)" = "#9632B8" ,
+    "Hing (2023)" = "#D43F3A" ,
+    "Parry (2023a)" = "#5CB85C",
+    "Parry (2023b)" = "#FFB900",
+    "Rigo (2024)" = "#46B8DA")) +
+  scale_shape_manual(values = c("CLL" = 16, "RT" = 17)) +
+  guides(
+    color = guide_legend(title = "Study"),
+    shape = guide_legend(title = "Condition")
+  ) +
+  theme_bw() +
+  theme(
+    legend.title = element_text(size = 12, face = "bold"),
+    legend.text = element_text(size = 11),
+    axis.title = element_text(size = 13, face = "bold"),
+    axis.text = element_text(size = 11)
+  )
+
+pca.plt
+```
+
+```{r, eval=FALSE}
+# Save the figure
+ggsave(filename=paste0(path_to_save_figure, "/deseq2_nk_pca.png"), plot=pca.plt, dpi=500, height=4.5, width=6.5)
+```
+
+### Run DESeq2
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Run DESeq2 for the data after outlier removal
+keep <- rowSums(counts(dds) >= 10) >= 3 # Keep genes with at least 10 counts in at least 3 samples
+noise_genes <- c(
+  grep("^IG[HKL][VDJ]", rownames(dds), value = TRUE),  # Ig genes
+  grep("^HLA-", rownames(dds), value = TRUE),          # Patient ID (HLA)
+  grep("^MT-", rownames(dds), value = TRUE),           # Mitochondrial stress
+  "XIST", "RPS4Y1", "KDM5D", "UTY", "DDX3Y",           # Sex genes
+  "S100A8", "S100A9", "S100A12", "CXCL8"               # Acute stress response
+)
+
+dds <- dds[keep & (!rownames(dds) %in% noise_genes), ]
+dds$condition <- relevel(dds$condition, ref = "CLL")
+dds <- DESeq(dds)
+
+# Generate a table for gene expression
+res <- results(dds, contrast = c("condition", "RT", "CLL"), independentFiltering = FALSE)
+res <- lfcShrink(dds, contrast = c("condition", "RT", "CLL"), res = res, type = "normal")
+res$direction <- "NS"
+res$direction[res$padj < 0.05 & res$log2FoldChange > 0.25] <- "Up"
+res$direction[res$padj < 0.05 & res$log2FoldChange < (-0.25)] <- "Down"
+dea.df <- as.data.frame(res)
+
+# Save the expression results
+saveRDS(dea.df, path_to_save_deseq2_dea)
+write.csv(dea.df, here::here("scRNAseq/meta_analysis/supplm_file/nk_deseq2_dea.csv"))
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Show the expression results
+dea.df <- readRDS(path_to_save_deseq2_dea)
+DT::datatable(dea.df, options = list(scrollX = TRUE))
+```
+
+From the results, we observed that pseudobulk analysis using DESeq2 failed to detect DEGs, likely due to low read counts resulting from NK cell aggregation.
+
+### GSEA
+
+```{r}
+# Manipulate the expression data
+lfc_vector <- dea.df$log2FoldChange # Create a named vector ranked based on the log2 fold change
+names(lfc_vector) <- rownames(dea.df) 
+lfc_vector <- na.omit(lfc_vector) # Omit any NA values
+lfc_vector <- sort(lfc_vector, decreasing = TRUE) # Sort the log2 fold change in descending order
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Hallmark
+HM_gsea <- HM_GSEA(lfc_vector)
+
+# Collect the HM GSEA result
+HM_GSEA.result <- HM_gsea@result
+HM_GSEA_selected.result <- HM_GSEA.result %>%
+  as_tibble() %>%
+  dplyr::select(c(Description, NES, pvalue, p.adjust))
+
+DT::datatable(HM_GSEA_selected.result, options = list(scrollX = TRUE))
+```
+
+```{r, message=FALSE, warning=FALSE}
+# GO:BP
+GOBP_gsea <- GO_GSEA(lfc_vector)
+
+# Collect the GSEA result
+GOBP_GSEA.result <- GOBP_gsea@result
+GOBP_GSEA_selected.result <- GOBP_GSEA.result %>%
+  as_tibble() %>%
+  dplyr::select(c(Description, NES, pvalue, p.adjust))
+
+DT::datatable(GOBP_GSEA_selected.result, options = list(scrollX = TRUE))
+```
+
+```{r, message=FALSE, warning=FALSE}
+# KEGG pathway
+KEGG_gsea <- KEGG_GSEA(lfc_vector)
+
+# Collect the HM GSEA result
+KEGG_GSEA.result <- KEGG_gsea@result
+KEGG_GSEA_selected.result <- KEGG_GSEA.result %>%
+  as_tibble() %>%
+  dplyr::select(c(Description, NES, pvalue, p.adjust))
+
+DT::datatable(KEGG_GSEA_selected.result, options = list(scrollX = TRUE))
+```
+
+```{r, message=FALSE, warning=FALSE}
+# REACTOME
+REACTOME_gsea <- REACTOME_GSEA(lfc_vector)
+
+# Collect the HM GSEA result
+REACTOME_GSEA.result <- REACTOME_gsea@result
+REACTOME_GSEA_selected.result <- REACTOME_GSEA.result %>%
+  as_tibble() %>%
+  dplyr::select(c(Description, NES, pvalue, p.adjust))
+
+DT::datatable(REACTOME_GSEA_selected.result, options = list(scrollX = TRUE))
+```
+
+```{r, message=FALSE, warning=FALSE}
+# WikiPath
+WIKIPATH_gsea <- WIKIPATH_GSEA(lfc_vector)
+
+# Collect the HM GSEA result
+WIKIPATH_GSEA.result <- WIKIPATH_gsea@result
+WIKIPATH_GSEA_selected.result <- WIKIPATH_GSEA.result %>%
+  as_tibble() %>%
+  dplyr::select(c(Description, NES, pvalue, p.adjust))
+
+DT::datatable(WIKIPATH_GSEA_selected.result, options = list(scrollX = TRUE))
+```
+
+```{r, eval=FALSE}
+# Save the enrichment results
+saveRDS(HM_gsea, path_to_save_deseq2_hm_gsea)
+saveRDS(GOBP_gsea, path_to_save_deseq2_go_gsea)
+saveRDS(KEGG_gsea, path_to_save_deseq2_kegg_gsea)
+saveRDS(REACTOME_gsea, path_to_save_deseq2_reactome_gsea)
+saveRDS(WIKIPATH_gsea, path_to_save_deseq2_wikipath_gsea)
+
+# Save as data frames
+write.csv(HM_GSEA.result, here::here("scRNAseq/meta_analysis/supplm_file/nk_deseq2_hm_gsea.csv"))
+write.csv(GOBP_GSEA.result, here::here("scRNAseq/meta_analysis/supplm_file/nk_deseq2_go_gsea.csv"))
+write.csv(KEGG_GSEA.result, here::here("scRNAseq/meta_analysis/supplm_file/nk_deseq2_kegg_gsea.csv"))
+write.csv(REACTOME_GSEA.result, here::here("scRNAseq/meta_analysis/supplm_file/nk_deseq2_reactome_gsea.csv"))
+write.csv(WIKIPATH_GSEA.result, here::here("scRNAseq/meta_analysis/supplm_file/nk_deseq2_wikipath_gsea.csv"))
+```
+
+# Session Information
+
+```{r}
+sessionInfo()
+```

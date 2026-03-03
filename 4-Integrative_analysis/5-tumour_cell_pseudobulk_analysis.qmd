@@ -1,0 +1,1581 @@
+---
+title: "Tumour_cell_pseudobulk_analysis"
+author: "Pakorn Sagulkoo"
+format:
+  html:
+    toc: true
+    toc-location: left
+    embed-resources: true
+editor: visual
+---
+
+This source code we analysed the tumour cells after extracting from the harmony-integrated seurat objects. We analysed for pseudobulk gene expression and GSEA analysis between RT versus CLL conditions. 
+
+# Import the relevant packages and set working path directory
+
+```{r, setup, message=FALSE, warning=FALSE}
+# Attach the packages you will need for the analysis.
+library(Seurat)
+library(harmony)
+library(dplyr)
+library(tibble)
+library(SingleR)
+library(celldex)
+library(sctransform)
+library(cowplot)
+```
+
+```{r}
+# Check root path
+here::here()
+```
+
+# Define paths
+
+```{r}
+# Define paths to load and save 
+path_to_tumour_obj <- here::here("scRNAseq/meta_analysis/R_objects/tumour_seu.rds")
+path_to_save_figure <- here::here("figures")
+```
+
+# Load data and functions
+
+```{r, message=FALSE, warning=FALSE}
+# Source functions
+source(here::here("bin/utils.R"))
+```
+
+```{r}
+# Load the tumour object
+tumour_seurat <- readRDS(path_to_tumour_obj)
+```
+
+# Filter out ambient cells
+
+```{r, fig.height=7, fig.width=9, warning=FALSE, message=FALSE}
+# Plot based on gene expression
+FeaturePlot(tumour_seurat, 
+            features = c("HBM", "HBA1", "CD3D", "CD8A", "CD4", "CD19", "CD79A", "CD14", "NKG7"),
+            reduction = "umap") 
+```
+
+As no contaminated or ambient cells were found, then we used the same object for further analyses
+
+# Pseudobulk gene expression analysis between RT versus CLL
+
+```{r, message=FALSE, warning=FALSE}
+# Import the related libraries in functional enrichment analysis
+library(clusterProfiler)
+library(enrichplot)
+library(msigdbr)
+library(org.Hs.eg.db)
+library(EnhancedVolcano)
+library(ggpubr)
+```
+
+## Based on seurat command
+
+```{r}
+# Define paths to save and load
+path_to_save_dea <- here::here("scRNAseq/meta_analysis/R_objects/gene_exprs/tumour_dea.rds")
+path_to_save_hm_gsea <- here::here("scRNAseq/meta_analysis/R_objects/gene_exprs/tumour_hm_gsea.rds")
+path_to_save_go_gsea <- here::here("scRNAseq/meta_analysis/R_objects/gene_exprs/tumour_go_gsea.rds")
+path_to_save_kegg_gsea <- here::here("scRNAseq/meta_analysis/R_objects/gene_exprs/tumour_kegg_gsea.rds")
+path_to_save_reactome_gsea <- here::here("scRNAseq/meta_analysis/R_objects/gene_exprs/tumour_reactome_gsea.rds")
+path_to_save_wikipath_gsea <- here::here("scRNAseq/meta_analysis/R_objects/gene_exprs/tumour_wikipath_gsea.rds")
+```
+
+### Find biomarkers of tumour cells between RT and CLL conditions
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Find markers between CLL and RT conditions  
+Idents(tumour_seurat) <- "group" # we used this variable as it contains RT and CLL
+tumour_seurat <- PrepSCTFindMarkers(tumour_seurat) # Prepare SCT assay for DE testing
+tumour.ge <- FindMarkers(
+  tumour_seurat,
+  ident.1 = "RT",
+  ident.2 = "CLL",
+  test.use = "wilcox",
+  only.pos = FALSE,
+  logfc.threshold = 0
+)
+dea.df <- cbind(gene = rownames(tumour.ge), tumour.ge)
+avg_exp <- AverageExpression(tumour_seurat, features = dea.df$gene, assay = "SCT") # Calculate the average expression for the genes
+dea.df$baseMean <- rowMeans(avg_exp$SCT) # Calculate the mean across all relevant groups (e.g., global mean for the gene)
+
+# Save the expression results
+saveRDS(dea.df, path_to_save_dea)
+write.csv(dea.df, here::here("scRNAseq/meta_analysis/supplm_file/tumour_dea.csv"))
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Load the saved expression data
+dea.df <- readRDS(path_to_save_dea)
+DT::datatable(dea.df, options = list(scrollX = TRUE))
+```
+
+```{r, message=FALSE, warning=FALSE, fig.height=7, fig.width=10}
+# Volcano plot for Seurat pseudobulk analysis
+genes_of_interest <- c("MKI67", "CDK1", "AURKB", "PRMT5", "CDKN3", "CDKN1B", "CREBBP", "CHD7", "TYMS", "SF1", "NPM1", "TOP2A",
+                       "TPX2", "UBE2C", "BIRC5", "KIF14", "LDHA", "MTHFD2", "HMGA1", "CKS2", "IGKC")
+
+non_zero_min_pval <- sort(unique(dea.df$p_val_adj), decreasing = FALSE)[2] # Find minimum p-value which is not 0
+dea.df$adapted_p_val <- ifelse(dea.df$p_val_adj == 0, non_zero_min_pval, dea.df$p_val_adj) # Change zero adj_p_val to non-zero minimum adj_p_val to avoid plotting error
+
+volcano.plt <- volcano_plot(dea.df, 
+                            FC=0.25, 
+                            x_col="avg_log2FC",
+                            y_col="adapted_p_val",
+                            xlim=c(-10,10), 
+                            ylim=c(-0.1,320), 
+                            genes_of_interest=genes_of_interest,
+                            boxedLabels = TRUE) 
+
+volcano.plt
+```
+
+```{r, message=FALSE, warning=FALSE}
+# MA plot for Seurat pseudobulk analysis
+ma_data <- dea.df
+colnames(ma_data)[colnames(ma_data) == "avg_log2FC"] <- "log2FoldChange"
+colnames(ma_data)[colnames(ma_data) == "p_val_adj"]  <- "padj"
+
+ma.plt <- ggmaplot(ma_data, 
+                   fdr = 0.05,            # Threshold for significance
+                   fc = 2,                # Threshold for FC
+                   size = 0.4,            # Dot size
+                   palette = c("#B31B21", "#1465AC", "darkgray"),
+                   genenames = as.vector(ma_data$gene),
+                   top = 0, label.select = genes_of_interest, # set top = 0, then specify genes using label.select argument
+                   legend = "right", 
+                   font.label = c("bold", 11), 
+                   label.rectangle = TRUE,
+                   font.legend = "bold",
+                   font.main = "bold",
+                   ggtheme = ggplot2::theme_minimal(),
+                   xlab = "Mean Expression",
+                   ylab = "Log2 Fold Change"
+                   )
+
+ma.plt
+```
+
+```{r, eval=FALSE}
+# Save the figure
+ggsave(filename=paste0(path_to_save_figure, "/seurat_volcano.png"), plot=volcano.plt, dpi=500, height=7, width=9)
+ggsave(filename=paste0(path_to_save_figure, "/seurat_ma.png"), plot=ma.plt, dpi=500, height=3.5, width=5)
+```
+
+### GSEA
+
+```{r}
+# Manipulate the expression data
+lfc_vector <- dea.df$avg_log2FC # Create a named vector ranked based on the log2 fold change
+names(lfc_vector) <- dea.df$gene
+lfc_vector <- na.omit(lfc_vector) # Omit any NA values
+lfc_vector <- sort(lfc_vector, decreasing = TRUE) # Sort the log2 fold change in descending order
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Hallmark
+HM_gsea <- HM_GSEA(lfc_vector)
+
+# Collect the HM GSEA result
+HM_GSEA.result <- HM_gsea@result
+HM_GSEA_selected.result <- HM_GSEA.result %>%
+  as_tibble() %>%
+  dplyr::select(c(Description, NES, pvalue, p.adjust))
+
+DT::datatable(HM_GSEA_selected.result, options = list(scrollX = TRUE))
+```
+
+```{r, message=FALSE, warning=FALSE}
+# GO:BP
+GOBP_gsea <- GO_GSEA(lfc_vector)
+
+# Collect the GSEA result
+GOBP_GSEA.result <- GOBP_gsea@result
+GOBP_GSEA_selected.result <- GOBP_GSEA.result %>%
+  as_tibble() %>%
+  dplyr::select(c(Description, NES, pvalue, p.adjust))
+
+DT::datatable(GOBP_GSEA_selected.result, options = list(scrollX = TRUE))
+```
+
+```{r, message=FALSE, warning=FALSE}
+# KEGG pathway
+KEGG_gsea <- KEGG_GSEA(lfc_vector)
+
+# Collect the HM GSEA result
+KEGG_GSEA.result <- KEGG_gsea@result
+KEGG_GSEA_selected.result <- KEGG_GSEA.result %>%
+  as_tibble() %>%
+  dplyr::select(c(Description, NES, pvalue, p.adjust))
+
+DT::datatable(KEGG_GSEA_selected.result, options = list(scrollX = TRUE))
+```
+
+```{r, message=FALSE, warning=FALSE}
+# REACTOME
+REACTOME_gsea <- REACTOME_GSEA(lfc_vector)
+
+# Collect the HM GSEA result
+REACTOME_GSEA.result <- REACTOME_gsea@result
+REACTOME_GSEA_selected.result <- REACTOME_GSEA.result %>%
+  as_tibble() %>%
+  dplyr::select(c(Description, NES, pvalue, p.adjust))
+
+DT::datatable(REACTOME_GSEA_selected.result, options = list(scrollX = TRUE))
+```
+
+```{r, message=FALSE, warning=FALSE}
+# WikiPath
+WIKIPATH_gsea <- WIKIPATH_GSEA(lfc_vector)
+
+# Collect the HM GSEA result
+WIKIPATH_GSEA.result <- WIKIPATH_gsea@result
+WIKIPATH_GSEA_selected.result <- WIKIPATH_GSEA.result %>%
+  as_tibble() %>%
+  dplyr::select(c(Description, NES, pvalue, p.adjust))
+
+DT::datatable(WIKIPATH_GSEA_selected.result, options = list(scrollX = TRUE))
+```
+
+```{r, eval=FALSE}
+# Save GSEA results
+saveRDS(HM_gsea, path_to_save_hm_gsea)
+saveRDS(GOBP_gsea, path_to_save_go_gsea)
+saveRDS(KEGG_gsea, path_to_save_kegg_gsea)
+saveRDS(REACTOME_gsea, path_to_save_reactome_gsea)
+saveRDS(WIKIPATH_gsea, path_to_save_wikipath_gsea)
+
+# Save as data frames
+write.csv(HM_GSEA.result, here::here("scRNAseq/meta_analysis/supplm_file/tumour_hm_gsea.csv"))
+write.csv(GOBP_GSEA.result, here::here("scRNAseq/meta_analysis/supplm_file/tumour_go_gsea.csv"))
+write.csv(KEGG_GSEA.result, here::here("scRNAseq/meta_analysis/supplm_file/tumour_kegg_gsea.csv"))
+write.csv(REACTOME_GSEA.result, here::here("scRNAseq/meta_analysis/supplm_file/tumour_reactome_gsea.csv"))
+write.csv(WIKIPATH_GSEA.result, here::here("scRNAseq/meta_analysis/supplm_file/tumour_wikipath_gsea.csv"))
+```
+
+## Based on DESeq2
+
+```{r, message=FALSE, warning=FALSE}
+# Import the relevant packages
+library(DESeq2)
+library(limma)
+```
+
+```{r}
+# Define paths to save the results
+path_to_save_deseq2_dea <- here::here("scRNAseq/meta_analysis/R_objects/gene_exprs/tumour_deseq2_dea.rds")
+path_to_save_deseq2_hm_gsea <- here::here("scRNAseq/meta_analysis/R_objects/gene_exprs/tumour_deseq2_hm_gsea.rds")
+path_to_save_deseq2_go_gsea <- here::here("scRNAseq/meta_analysis/R_objects/gene_exprs/tumour_deseq2_go_gsea.rds")
+path_to_save_deseq2_kegg_gsea <- here::here("scRNAseq/meta_analysis/R_objects/gene_exprs/tumour_deseq2_kegg_gsea.rds")
+path_to_save_deseq2_reactome_gsea <- here::here("scRNAseq/meta_analysis/R_objects/gene_exprs/tumour_deseq2_reactome_gsea.rds")
+path_to_save_deseq2_wikipath_gsea <- here::here("scRNAseq/meta_analysis/R_objects/gene_exprs/tumour_deseq2_wikipath_gsea.rds")
+```
+
+### Create an DESeq2 object
+
+```{r, message=FALSE, warning=FALSE}
+# Prepare single-cell meta-data for DESeq2
+tumour_seurat$patient_group <- paste0("case_", tumour_seurat$patient, "_", tumour_seurat$group) 
+patient_group_cls <- unique(tumour_seurat$patient_group)
+RT_subjects <- patient_group_cls[grep("RT", patient_group_cls)]
+RT_subjects <- gsub(pattern = "_", replacement = "-", x=RT_subjects) # change "_" to "-" as DESeq2 converted sample names from "_" to "-"
+
+# Create pseudocount matrix for tumour cell object
+cts <- AggregateExpression(tumour_seurat, 
+                           group.by = "patient_group",
+                           assays = "RNA",
+                           slot = "counts",
+                           resturn.seurat = FALSE) 
+cts <- cts$RNA
+pseudo_count.mat <- as.data.frame(cts)
+
+# Create metadata for DESeq2 object
+batch_map <- c("Penter (2021)" = "1", "Nadeu (2022)" = "2", "Rejeski (2022)" = "3", "Hing (2023)" = "4", "Parry (2023a)" = "5", 
+               "Parry (2023b)" = "6", "Rigo (2024)" = "7")
+colData <- data.frame(samples = colnames(pseudo_count.mat))
+colData$condition <- ifelse(colData$samples %in% RT_subjects, "RT", "CLL")
+colData$study <- stringr::word(colData$samples, start = -3, end = -2, sep = fixed("-"))
+colData$study <- sub("^(.*)-([0-9].*)$", "\\1 (\\2)", colData$study) # Substitiute string like "Parry-2023b" to "Parry (2023b)"
+colData$study <- factor(colData$study, level = c("Penter (2021)", "Nadeu (2022)", "Rejeski (2022)", "Hing (2023)", 
+                                                 "Parry (2023a)", "Parry (2023b)", "Rigo (2024)"))
+colData$batch <- batch_map[colData$study]
+colData$batch <- factor(colData$batch)
+rownames(colData) <- colData$samples
+
+# Create a DESeq2 object
+dds <- DESeqDataSetFromMatrix(countData = pseudo_count.mat, 
+                              colData = colData,
+                              design = ~ batch + condition)
+
+# Keep genes with at least 10 counts across all samples
+keep <- rowSums(counts(dds)) >= 10
+dds <- dds[keep,]
+```
+
+### Prepare the input for Genome-scale metabolic models (GEMs)
+
+We also converted the raw count matrix to TPM matrix for GEMsx with ftINIT for the next step.
+
+```{r, eval=FALSE}
+# Import the biomaRt package to get the human gene length
+library(biomaRt)
+
+# 1. Connect to Human Ensembl (hg38)
+human_mart <- useMart("ensembl", dataset = "hsapiens_gene_ensembl")
+
+# 2. Get Gene Symbols and Transcript Lengths
+gene_attributes <- getBM(
+  attributes = c("hgnc_symbol", "transcript_length"),
+  filters = "hgnc_symbol",
+  values = rownames(pseudo_count.mat), 
+  mart = human_mart
+)
+
+# 3. Take the MAX length for each gene (Longest Isoform)
+# Since one gene has many transcripts, we pick the longest one as a proxy
+gene_lengths_max <- gene_attributes %>%
+  filter(hgnc_symbol != "") %>%        # Remove rows with no gene name
+  group_by(hgnc_symbol) %>%            # Group by gene name
+  summarise(Length = max(transcript_length))
+
+saveRDS(gene_lengths_max, here::here("scRNAseq/meta_analysis/R_objects/gene_lengths_max.rds"))
+```
+
+```{r}
+# Read the gene length
+gene_lengths_max <- readRDS(here::here("scRNAseq/meta_analysis/R_objects/gene_lengths_max.rds"))
+head(gene_lengths_max)
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Calculate TPM
+matrix_genes <- rownames(pseudo_count.mat)
+match_indices <- match(matrix_genes, gene_lengths_max$hgnc_symbol)
+valid_lengths <- gene_lengths_max$Length[match_indices]
+na_count <- sum(is.na(valid_lengths)) # evaluate missing data
+
+if (na_count > 0) {
+  median_len <- median(gene_lengths_max$Length, na.rm = TRUE)
+  valid_lengths[is.na(valid_lengths)] <- median_len
+}
+
+calculate_tpm <- function(counts, lengths) {
+  rpk <- counts / (lengths / 1000) # Reads Per Kilobase
+  scale_factor <- colSums(rpk) # Sum the RPKs for each sample (scaling factor)
+  tpm <- t(t(rpk) / scale_factor) * 1e6 # Divide RPK by the scaling factor (per million) 
+  # transpose is needed because R divides matrices by rows, not columns
+  return(tpm)
+}
+
+tpm_matrix <- calculate_tpm(pseudo_count.mat, valid_lengths)
+colSums(tpm_matrix) # Check the output (Column sums should all be exactly 1,000,000)
+```
+
+```{r, eval=FALSE}
+# Convert to data frames
+raw_count.df <- as_tibble(pseudo_count.mat, rownames = "Gene")
+tpm_count.df <- as_tibble(tpm_matrix, rownames = "Gene")
+
+# Save the data frames
+write.table(raw_count.df, here::here("scRNAseq/meta_analysis/df_files/raw_count.txt"), row.names=FALSE, quote=FALSE, sep="\t")
+write.table(tpm_count.df, here::here("scRNAseq/meta_analysis/df_files/tpm_count.txt"), row.names=FALSE, quote=FALSE, sep="\t")
+```
+
+### Plot the PCA based on the expression data
+
+```{r, message=FALSE, warning=FALSE, fig.height=4.5, fig.width=6.5}
+# Variance stabilised transformation
+vsdata <- DESeq2::vst(dds, blind = FALSE)
+
+# Extract matrix
+vs_mat <- assay(vsdata)
+
+# Adjust for batch (assume batch info is in colData(dds)$batch)
+design_matrix <- model.matrix(~ condition, data = colData(dds))
+vs_mat_corrected <- limma::removeBatchEffect(
+  vs_mat, 
+  batch = colData(dds)$batch, 
+  design = design_matrix 
+)
+
+# PCA on corrected data
+pca <- prcomp(t(vs_mat_corrected))
+
+# Calculate % variance explained
+pca_var <- pca$sdev^2               # variance of each PC
+pca_var_percent <- pca_var / sum(pca_var) * 100
+
+# Make a dataframe for ggplot
+pca_df <- data.frame(pca$x,
+                     condition = colData(dds)$condition,
+                     study = colData(dds)$study)
+
+# Plot PCA
+pca.plt <- ggplot(pca_df, aes(PC1, PC2, color = study, shape = condition)) +
+  geom_point(size = 3) +
+  xlab(paste0("PC1 (", round(pca_var_percent[1], 1), "%)")) +
+  ylab(paste0("PC2 (", round(pca_var_percent[2], 1), "%)")) +
+  scale_color_manual(values = c(
+    "Penter (2021)" = "#1f77b4", 
+    "Nadeu (2022)" = "#ff7f0e",
+    "Rejeski (2022)" = "#9632B8" ,
+    "Hing (2023)" = "#D43F3A" ,
+    "Parry (2023a)" = "#5CB85C",
+    "Parry (2023b)" = "#FFB900",
+    "Rigo (2024)" = "#46B8DA")) +
+  scale_shape_manual(values = c("CLL" = 16, "RT" = 17)) +
+  guides(
+    color = guide_legend(title = "Study"),
+    shape = guide_legend(title = "Condition")
+  ) +
+  theme_bw() +
+  theme(
+    legend.title = element_text(size = 12, face = "bold"),
+    legend.text = element_text(size = 11),
+    axis.title = element_text(size = 13, face = "bold"),
+    axis.text = element_text(size = 11)
+  )
+
+pca.plt
+```
+
+From the PCA plot we detected an outlier from the right lower corner with the highest PC1 value we then removed it before further analysis
+
+```{r, message=FALSE, warning=FALSE, fig.height=4.5, fig.width=6.5}
+# Plot the PCA plot after outlier removal
+
+# Identify and Remove the Outlier 
+outlier_id <- rownames(pca_df)[which.max(pca_df$PC1)] # the outlier is the sample with the highest PC1 value
+dds_clean <- dds[, colnames(dds) != outlier_id] # Filter the outlier out of the original dds object
+
+# Re-run VST on the cleaned dataset
+vsdata_clean <- vst(dds_clean, blind = FALSE)
+vs_mat_clean <- assay(vsdata_clean)
+
+# Adjust for batch (assume batch info is in colData(dds)$batch)
+design_matrix <- model.matrix(~ condition, data = colData(dds_clean))
+vs_mat_corrected <- limma::removeBatchEffect(
+  vs_mat_clean, 
+  batch = colData(dds_clean)$batch, 
+  design = design_matrix # <--- This argument is key for separation!
+)
+
+# PCA on corrected data
+pca <- prcomp(t(vs_mat_corrected))
+
+# Calculate % variance explained
+pca_var <- pca$sdev^2
+pca_var_percent <- pca_var / sum(pca_var) * 100
+
+# Make a dataframe for ggplot
+pca_df_clean <- data.frame(pca$x,
+                     condition = colData(dds_clean)$condition,
+                     study = colData(dds_clean)$study)
+
+# Plot PCA
+corrected_pca.plt <- ggplot(pca_df_clean, aes(PC1, PC2, color = study, shape = condition)) + 
+  geom_point(size = 3) +
+  xlab(paste0("PC1 (", round(pca_var_percent[1], 1), "%)")) +
+  ylab(paste0("PC2 (", round(pca_var_percent[2], 1), "%)")) +
+  scale_color_manual(values = c(
+    "Penter (2021)" = "#1f77b4", 
+    "Nadeu (2022)" = "#ff7f0e",
+    "Rejeski (2022)" = "#9632B8" ,
+    "Hing (2023)" = "#D43F3A" ,
+    "Parry (2023a)" = "#5CB85C",
+    "Parry (2023b)" = "#FFB900",
+    "Rigo (2024)" = "#46B8DA")) +
+  scale_shape_manual(values = c("CLL" = 16, "RT" = 17)) +
+  guides(
+    color = guide_legend(title = "Study"),
+    shape = guide_legend(title = "Condition")
+  ) +
+  theme_bw() +
+  theme(
+    legend.title = element_text(size = 12, face = "bold"),
+    legend.text = element_text(size = 11),
+    axis.title = element_text(size = 13, face = "bold"),
+    axis.text = element_text(size = 11)
+  ) 
+
+corrected_pca.plt
+```
+
+```{r, eval=FALSE}
+# Save the figure
+ggsave(filename=paste0(path_to_save_figure, "/deseq2_pca.png"), plot=pca.plt, dpi=500, height=4.5, width=6.5)
+ggsave(filename=paste0(path_to_save_figure, "/deseq2_corrected_pca.png"), plot=corrected_pca.plt, dpi=500, height=4.5, width=6.5)
+```
+
+We can see that after outlier removal and batch correction, the PCA successfully separated the conditions along the PC1 axis. Most RT samples (triangles) are located on the negative side of PC1, while most CLL samples (circles) are found on the positive side. 
+
+### Run DESeq2
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Run DESeq2 for the data after outlier removal
+counts_clean <- counts(dds_clean)
+colData_clean <- colData(dds_clean)
+colData_clean$condition <- factor(colData_clean$condition, levels = c("CLL", "RT"))
+colData_clean$batch <- factor(colData_clean$batch) 
+
+dds_final <- DESeqDataSetFromMatrix(
+  countData = counts_clean,
+  colData = colData_clean,
+  design = ~ batch + condition  
+)
+
+keep <- rowSums(counts(dds_final) >= 10) >= 3 # Keep genes with at least 10 counts in at least 3 samples
+dds_final <- dds_final[keep, ]
+dds_final$condition <- relevel(dds_final$condition, ref = "CLL")
+dds_final <- DESeq(dds_final)
+
+# Generate a table for gene expression
+res <- results(dds_final, contrast = c("condition", "RT", "CLL"), independentFiltering = FALSE)
+res <- lfcShrink(dds_final, contrast = c("condition", "RT", "CLL"), res = res, type = "normal")
+res$direction <- "NS"
+res$direction[res$padj < 0.05 & res$log2FoldChange > 0.25] <- "Up"
+res$direction[res$padj < 0.05 & res$log2FoldChange < (-0.25)] <- "Down"
+dea.df <- as.data.frame(res)
+
+# Save the expression results
+saveRDS(dea.df, path_to_save_deseq2_dea)
+write.csv(dea.df, here::here("scRNAseq/meta_analysis/supplm_file/tumour_deseq2_dea.csv"))
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Show the expression results
+dea.df <- readRDS(path_to_save_deseq2_dea)
+DT::datatable(dea.df, options = list(scrollX = TRUE))
+```
+
+We listed the DEGs for both up- and downregulation below.
+
+```{r}
+# Upregulated DEGs arranged by log2FC from high to low
+up_degs <- dea.df %>%
+  dplyr::filter(padj < 0.05 & log2FoldChange > 0.25) %>%
+  dplyr::arrange(desc(log2FoldChange)) %>%
+  tibble::rownames_to_column(var = "gene") %>%
+  dplyr::pull(gene)
+
+up_degs
+```
+
+```{r}
+# Downregulated DEGs arranged by log2FC from high to low
+down_degs <- dea.df %>%
+  dplyr::filter(padj < 0.05 & log2FoldChange < (-0.25)) %>%
+  dplyr::arrange(log2FoldChange) %>%
+  tibble::rownames_to_column(var = "gene") %>%
+  dplyr::pull(gene)
+
+down_degs
+```
+
+```{r, eval=FALSE}
+# Save the results
+write.table(
+  up_degs,
+  file = here::here("scRNAseq/meta_analysis/supplm_file/tumour_deseq2_upregulated_degs.txt"),   
+  sep = "\t",        
+  quote = FALSE,     
+  row.names = FALSE,
+  col.names = FALSE
+)
+
+write.table(
+  down_degs,
+  file = here::here("scRNAseq/meta_analysis/supplm_file/tumour_deseq2_downregulated_degs.txt"),   
+  sep = "\t",        
+  quote = FALSE,     
+  row.names = FALSE,
+  col.names = FALSE
+)
+```
+
+We compared our identified DEGs with those reported in previous human RT versus CLL transcriptomic studies and found that MKI67, NPM1, TOP2A, TPX2, CDK1, UBE2C, BIRC5, AURKB, and KIF14, were significantly upregulated and consistent with prior findings, whereas PRMT5 was upregulated but did not reach statistical significance (padj = 0.0556). Downregulated DEGs, such as CREBBP, CHD7, and CDKN1B, were also consistent.
+
+In addition, we identified other significant genes from the same functional families that have not been reported in previous studies. For example, CDKN3 was identified as an upregulated DEG. We detected that TYMS had the highest overexpression level (log2FC = 2.219). 
+
+We also identified the DEGs that were found from both DESeq2-based pseudobulk analysis and the common DEGs from individual study pseudobulk analysis (see the following sections). For example, LDHA, MTHFD2, HMGA1, and CKS2, upregulated DEGs, have been reported the roles in tumour metabolic reprogramming, proliferation, and aggressiveness for other cancers. Moreover, SF1 was a downregulated DEG from the both methods.
+
+```{r, message=FALSE, warning=FALSE, fig.height=7, fig.width=10}
+# Volcano plot
+genes_of_interest <- c("MKI67", "CDK1", "AURKB", "PRMT5", "CDKN3", "CDKN1B", "CREBBP", "CHD7", "TYMS", "SF1", "NPM1", "TOP2A",
+                       "TPX2", "UBE2C", "BIRC5", "KIF14", "LDHA", "MTHFD2", "HMGA1", "CKS2")
+
+volcano.plt <- volcano_plot(dea.df, 
+                            FC=0.25, 
+                            x_col="log2FoldChange",
+                            y_col="padj",
+                            xlim=c(-2.5,2.5), 
+                            ylim=c(-0.1,8), 
+                            genes_of_interest=genes_of_interest,
+                            boxedLabels = TRUE) 
+
+volcano.plt
+```
+
+```{r, message=FALSE, warning=FALSE}
+# MA plot 
+ma_data <- dea.df
+
+ma.plt <- ggmaplot(ma_data, 
+                   fdr = 0.05,            # Threshold for significance
+                   fc = 1.19,                # Threshold for FC
+                   size = 0.4,            # Dot size
+                   palette = c("#B31B21", "#1465AC", "darkgray"),
+                   genenames = as.vector(ma_data$gene),
+                   top = 0, label.select = genes_of_interest, # set top = 0, then specify genes using label.select argument
+                   legend = "right", 
+                   font.label = c("bold", 11), 
+                   label.rectangle = TRUE,
+                   font.legend = "bold",
+                   font.main = "bold",
+                   ggtheme = ggplot2::theme_minimal(),
+                   xlab = "Mean Expression",
+                   ylab = "Log2 Fold Change"
+                   )
+
+ma.plt
+```
+
+```{r, eval=FALSE}
+# Save the figure
+ggsave(filename=paste0(path_to_save_figure, "/deseq2_volcano.png"), plot=volcano.plt, dpi=500, height=7, width=9)
+ggsave(filename=paste0(path_to_save_figure, "/deseq2_ma.png"), plot=ma.plt, dpi=500, height=3.5, width=5)
+```
+
+### GSEA
+
+```{r}
+# Manipulate the expression data
+lfc_vector <- dea.df$log2FoldChange # Create a named vector ranked based on the log2 fold change
+names(lfc_vector) <- rownames(dea.df) 
+lfc_vector <- na.omit(lfc_vector) # Omit any NA values
+lfc_vector <- sort(lfc_vector, decreasing = TRUE) # Sort the log2 fold change in descending order
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Hallmark
+HM_gsea <- HM_GSEA(lfc_vector)
+
+# Collect the HM GSEA result
+HM_GSEA.result <- HM_gsea@result
+HM_GSEA_selected.result <- HM_GSEA.result %>%
+  as_tibble() %>%
+  dplyr::select(c(Description, NES, pvalue, p.adjust))
+
+DT::datatable(HM_GSEA_selected.result, options = list(scrollX = TRUE))
+```
+
+```{r, message=FALSE, warning=FALSE}
+# GO:BP
+GOBP_gsea <- GO_GSEA(lfc_vector)
+
+# Collect the GSEA result
+GOBP_GSEA.result <- GOBP_gsea@result
+GOBP_GSEA_selected.result <- GOBP_GSEA.result %>%
+  as_tibble() %>%
+  dplyr::select(c(Description, NES, pvalue, p.adjust))
+
+DT::datatable(GOBP_GSEA_selected.result, options = list(scrollX = TRUE))
+```
+
+```{r, message=FALSE, warning=FALSE}
+# KEGG pathway
+KEGG_gsea <- KEGG_GSEA(lfc_vector)
+
+# Collect the HM GSEA result
+KEGG_GSEA.result <- KEGG_gsea@result
+KEGG_GSEA_selected.result <- KEGG_GSEA.result %>%
+  as_tibble() %>%
+  dplyr::select(c(Description, NES, pvalue, p.adjust))
+
+DT::datatable(KEGG_GSEA_selected.result, options = list(scrollX = TRUE))
+```
+
+```{r, message=FALSE, warning=FALSE}
+# REACTOME
+REACTOME_gsea <- REACTOME_GSEA(lfc_vector)
+
+# Collect the HM GSEA result
+REACTOME_GSEA.result <- REACTOME_gsea@result
+REACTOME_GSEA_selected.result <- REACTOME_GSEA.result %>%
+  as_tibble() %>%
+  dplyr::select(c(Description, NES, pvalue, p.adjust))
+
+DT::datatable(REACTOME_GSEA_selected.result, options = list(scrollX = TRUE))
+```
+
+```{r, message=FALSE, warning=FALSE}
+# WikiPath
+WIKIPATH_gsea <- WIKIPATH_GSEA(lfc_vector)
+
+# Collect the HM GSEA result
+WIKIPATH_GSEA.result <- WIKIPATH_gsea@result
+WIKIPATH_GSEA_selected.result <- WIKIPATH_GSEA.result %>%
+  as_tibble() %>%
+  dplyr::select(c(Description, NES, pvalue, p.adjust))
+
+DT::datatable(WIKIPATH_GSEA_selected.result, options = list(scrollX = TRUE))
+```
+
+```{r, eval=FALSE}
+# Save the enrichment results
+saveRDS(HM_gsea, path_to_save_deseq2_hm_gsea)
+saveRDS(GOBP_gsea, path_to_save_deseq2_go_gsea)
+saveRDS(KEGG_gsea, path_to_save_deseq2_kegg_gsea)
+saveRDS(REACTOME_gsea, path_to_save_deseq2_reactome_gsea)
+saveRDS(WIKIPATH_gsea, path_to_save_deseq2_wikipath_gsea)
+
+# Save as data frames
+write.csv(HM_GSEA.result, here::here("scRNAseq/meta_analysis/supplm_file/tumour_deseq2_hm_gsea.csv"))
+write.csv(GOBP_GSEA.result, here::here("scRNAseq/meta_analysis/supplm_file/tumour_deseq2_go_gsea.csv"))
+write.csv(KEGG_GSEA.result, here::here("scRNAseq/meta_analysis/supplm_file/tumour_deseq2_kegg_gsea.csv"))
+write.csv(REACTOME_GSEA.result, here::here("scRNAseq/meta_analysis/supplm_file/tumour_deseq2_reactome_gsea.csv"))
+write.csv(WIKIPATH_GSEA.result, here::here("scRNAseq/meta_analysis/supplm_file/tumour_deseq2_wikipath_gsea.csv"))
+```
+
+## GSEA summary 
+
+We then summarised the common terms found from Hallmark, GO:BP, and canonical pathways.
+
+```{r, message=FALSE, warning=FALSE}
+# Bar plot of GSEA 
+seurat_reactome_result <- readRDS(path_to_save_reactome_gsea)
+seurat_reactome_selected.result <- seurat_reactome_result %>%
+  as_tibble() %>%
+  dplyr::select(c(Description, NES, pvalue, p.adjust))
+
+gsea_bp <- rbind(HM_GSEA_selected.result[HM_GSEA_selected.result$Description == "HALLMARK_OXIDATIVE_PHOSPHORYLATION",],
+                 HM_GSEA_selected.result[HM_GSEA_selected.result$Description == "HALLMARK_FATTY_ACID_METABOLISM",],
+                 HM_GSEA_selected.result[HM_GSEA_selected.result$Description == "HALLMARK_ADIPOGENESIS",],
+                 HM_GSEA_selected.result[HM_GSEA_selected.result$Description == "HALLMARK_CHOLESTEROL_HOMEOSTASIS",],
+                 HM_GSEA_selected.result[HM_GSEA_selected.result$Description == "HALLMARK_GLYCOLYSIS",],
+                 KEGG_GSEA_selected.result[KEGG_GSEA_selected.result$Description == "KEGG_PYRUVATE_METABOLISM",],
+                 REACTOME_GSEA_selected.result[REACTOME_GSEA_selected.result$Description == "REACTOME_DNA_REPAIR",],
+                 GOBP_GSEA_selected.result[GOBP_GSEA_selected.result$Description == "GOBP_MITOCHONDRIAL_TRANSLATION",],
+                 GOBP_GSEA_selected.result[GOBP_GSEA_selected.result$Description == "GOBP_CELL_CYCLE_PHASE_TRANSITION",],
+                 REACTOME_GSEA_selected.result[REACTOME_GSEA_selected.result$Description == "REACTOME_KEAP1_NFE2L2_PATHWAY",],
+                 WIKIPATH_GSEA_selected.result[WIKIPATH_GSEA_selected.result$Description == "WP_NRF2_PATHWAY",],
+                 HM_GSEA_selected.result[HM_GSEA_selected.result$Description == "HALLMARK_MTORC1_SIGNALING",],
+                 HM_GSEA_selected.result[HM_GSEA_selected.result$Description == "HALLMARK_IL2_STAT5_SIGNALING",],
+                 HM_GSEA_selected.result[HM_GSEA_selected.result$Description == "HALLMARK_MYC_TARGETS_V1",],
+                 HM_GSEA_selected.result[HM_GSEA_selected.result$Description == "HALLMARK_E2F_TARGETS",],
+                 HM_GSEA_selected.result[HM_GSEA_selected.result$Description == "HALLMARK_G2M_CHECKPOINT",],
+                 REACTOME_GSEA_selected.result[REACTOME_GSEA_selected.result$Description == "REACTOME_MAPK6_MAPK4_SIGNALING",],
+                 REACTOME_GSEA_selected.result[REACTOME_GSEA_selected.result$Description == "REACTOME_SIGNALING_BY_NOTCH4",],
+                 WIKIPATH_GSEA_selected.result[WIKIPATH_GSEA_selected.result$Description == "WP_INSULIN_SIGNALING",],
+                 HM_GSEA_selected.result[HM_GSEA_selected.result$Description == "HALLMARK_TNFA_SIGNALING_VIA_NFKB",],
+                 HM_GSEA_selected.result[HM_GSEA_selected.result$Description == "HALLMARK_TGF_BETA_SIGNALING",],
+                 GOBP_GSEA_selected.result[GOBP_GSEA_selected.result$Description == "GOBP_REGULATION_OF_JNK_CASCADE",],
+                 seurat_reactome_selected.result[seurat_reactome_selected.result$Description == "REACTOME_SIGNALING_BY_THE_B_CELL_RECEPTOR_BCR",],
+                 REACTOME_GSEA_selected.result[REACTOME_GSEA_selected.result$Description == "REACTOME_RAF_ACTIVATION",],
+                 REACTOME_GSEA_selected.result[REACTOME_GSEA_selected.result$Description == "REACTOME_SIGNALING_BY_FGFR3",],
+                 REACTOME_GSEA_selected.result[REACTOME_GSEA_selected.result$Description == "REACTOME_SIGNALING_BY_FGFR4",],
+                 REACTOME_GSEA_selected.result[REACTOME_GSEA_selected.result$Description == "REACTOME_INTERLEUKIN_17_SIGNALING",],
+                 REACTOME_GSEA_selected.result[REACTOME_GSEA_selected.result$Description == "REACTOME_FOXO_MEDIATED_TRANSCRIPTION",],
+                 REACTOME_GSEA_selected.result[REACTOME_GSEA_selected.result$Description == "REACTOME_SIGNALING_BY_EGFR",],
+                 REACTOME_GSEA_selected.result[REACTOME_GSEA_selected.result$Description == "REACTOME_SIGNALING_BY_MET",],
+                 REACTOME_GSEA_selected.result[REACTOME_GSEA_selected.result$Description == "REACTOME_MYD88_INDEPENDENT_TLR4_CASCADE",],
+                 REACTOME_GSEA_selected.result[REACTOME_GSEA_selected.result$Description == "REACTOME_TOLL_LIKE_RECEPTOR_9_TLR9_CASCADE",],
+                 WIKIPATH_GSEA_selected.result[WIKIPATH_GSEA_selected.result$Description == "WP_IL1_SIGNALING",]
+)
+
+gsea_bp$Description <- gsub("HALLMARK_", "", gsea_bp$Description)
+gsea_bp$Description <- gsub("GOBP_", "", gsea_bp$Description)
+gsea_bp$Description <- gsub("KEGG_", "", gsea_bp$Description)
+gsea_bp$Description <- gsub("REACTOME_", "", gsea_bp$Description)
+gsea_bp$Description <- gsub("WP_", "", gsea_bp$Description)
+gsea_bp$Description <- gsub("_V1", "", gsea_bp$Description)
+gsea_bp$Description <- gsub("SIGNALING_BY_NOTCH4", "NOTCH4_SIGNALING", gsea_bp$Description)
+gsea_bp$Description <- gsub("SIGNALING_BY_FGFR3", "FGFR3_SIGNALING", gsea_bp$Description)
+gsea_bp$Description <- gsub("SIGNALING_BY_FGFR4", "FGFR4_SIGNALING", gsea_bp$Description)
+gsea_bp$Description <- gsub("SIGNALING_BY_EGFR", "EGFR_SIGNALING", gsea_bp$Description)
+gsea_bp$Description <- gsub("SIGNALING_BY_MET", "MET_SIGNALING", gsea_bp$Description)
+gsea_bp$Description <- gsub("TOLL_LIKE_RECEPTOR_9_TLR9_CASCADE", "TLR9_CASCADE", gsea_bp$Description)
+gsea_bp$Description <- gsub("REGULATION_OF_JNK_CASCADE", "JNK_CASCADE_REGULATION", gsea_bp$Description)
+gsea_bp$Description <- gsub("SIGNALING_BY_THE_B_CELL_RECEPTOR_BCR", "BCR_SIGNALING", gsea_bp$Description)
+gsea_bp$Description <- gsub("_", " ", gsea_bp$Description)
+
+gsea_bp$Description <- factor(gsea_bp$Description, levels = gsea_bp$Description)
+gsea_bp$Direction <- "Up"
+gsea_bp$Direction[gsea_bp$NES<0] <- "Down"
+
+gsea_bar.plt <- ggplot(gsea_bp, aes(x=Description, y=NES, fill=Direction)) +
+  geom_bar(stat = "identity", color="black", width = 0.75) +  
+  theme_classic() +
+  theme(
+    axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1, color = "black"),
+    plot.margin = margin(t = 10, r = 10, b = 100, l = 65, unit = "pt"),
+    legend.position = "none"
+  ) +
+  geom_hline(yintercept = 0) + 
+  ylab("NES") + xlab(NULL) + 
+  scale_fill_manual(values=c("#357EBD", "#D43F3A"))
+
+gsea_bar.plt
+```
+
+```{r, message=FALSE, warning=FALSE, fig.height=30, fig.width=13}
+# GSEA plots
+terms_of_interest <- c("HALLMARK_OXIDATIVE_PHOSPHORYLATION", "HALLMARK_FATTY_ACID_METABOLISM", "HALLMARK_ADIPOGENESIS",
+                       "HALLMARK_CHOLESTEROL_HOMEOSTASIS", "HALLMARK_GLYCOLYSIS", "KEGG_PYRUVATE_METABOLISM",
+                       "REACTOME_DNA_REPAIR", "GOBP_MITOCHONDRIAL_TRANSLATION", "GOBP_CELL_CYCLE_PHASE_TRANSITION",
+                       "WP_NRF2_PATHWAY", "HALLMARK_MTORC1_SIGNALING", "HALLMARK_IL2_STAT5_SIGNALING", "HALLMARK_MYC_TARGETS_V1",
+                       "HALLMARK_MYC_TARGETS_V2", "HALLMARK_E2F_TARGETS", "HALLMARK_G2M_CHECKPOINT", "REACTOME_MAPK6_MAPK4_SIGNALING",
+                       "REACTOME_SIGNALING_BY_NOTCH4", "WP_INSULIN_SIGNALING", "HALLMARK_TNFA_SIGNALING_VIA_NFKB", 
+                       "HALLMARK_TGF_BETA_SIGNALING", "REACTOME_SIGNALING_BY_THE_B_CELL_RECEPTOR_BCR",
+                       "GOBP_REGULATION_OF_JNK_CASCADE", "REACTOME_RAF_ACTIVATION", "REACTOME_SIGNALING_BY_FGFR3",
+                       "REACTOME_SIGNALING_BY_FGFR4", "REACTOME_INTERLEUKIN_17_SIGNALING", "REACTOME_FOXO_MEDIATED_TRANSCRIPTION",
+                       "REACTOME_SIGNALING_BY_EGFR", "REACTOME_SIGNALING_BY_MET", "REACTOME_MYD88_INDEPENDENT_TLR4_CASCADE",
+                       "REACTOME_TOLL_LIKE_RECEPTOR_9_TLR9_CASCADE", "WP_IL1_SIGNALING"
+                       )
+
+gsea_plot.lst <- lapply(terms_of_interest, function(term){
+  term_system <- strsplit(term, split = "_")[[1]][1]
+  
+  adapted_term <- term %>% 
+    str_remove("^(HALLMARK|GOBP|KEGG|REACTOME|WP)_") %>%
+    str_replace("SIGNALING_BY_NOTCH4", "NOTCH4_SIGNALING") %>%
+    str_replace("SIGNALING_BY_FGFR3", "FGFR3_SIGNALING") %>%
+    str_replace("SIGNALING_BY_FGFR4", "FGFR4_SIGNALING") %>%
+    str_replace("SIGNALING_BY_EGFR", "EGFR_SIGNALING") %>%
+    str_replace("SIGNALING_BY_MET", "MET_SIGNALING") %>%
+    str_replace("TOLL_LIKE_RECEPTOR_9_TLR9_CASCADE", "TLR9_CASCADE") %>%
+    str_replace("REGULATION_OF_JNK_CASCADE", "JNK_CASCADE_REGULATION") %>%
+    str_replace("SIGNALING_BY_THE_B_CELL_RECEPTOR_BCR", "BCR_SIGNALING") %>%
+    str_replace_all("_", " ")
+  
+  if (grepl("BCR", term)){
+    gseaplot(seurat_reactome_result, 
+             by = "runningScore", 
+             title = adapted_term, 
+             geneSetID = term,
+             base_size = 10) + 
+      theme(axis.text.x = element_text(angle = 0, hjust = 1))
+  } else if (term_system == "HALLMARK"){
+    gseaplot(HM_gsea, 
+             by = "runningScore", 
+             title = adapted_term, 
+             geneSetID = term,
+             base_size = 10) + 
+      theme(axis.text.x = element_text(angle = 0, hjust = 1))
+  } else if (term_system == "GOBP"){
+    gseaplot(GOBP_gsea, 
+             by = "runningScore", 
+             title = adapted_term, 
+             geneSetID = term,
+             base_size = 10) + 
+      theme(axis.text.x = element_text(angle = 0, hjust = 1))
+  } else if (term_system == "KEGG") {
+    gseaplot(KEGG_gsea, 
+             by = "runningScore", 
+             title = adapted_term, 
+             geneSetID = term,
+             base_size = 10) + 
+      theme(axis.text.x = element_text(angle = 0, hjust = 1))
+  } else if (term_system == "REACTOME") {
+    gseaplot(REACTOME_gsea, 
+             by = "runningScore", 
+             title = adapted_term, 
+             geneSetID = term,
+             base_size = 10) + 
+      theme(axis.text.x = element_text(angle = 0, hjust = 1))
+  } else {
+    gseaplot(WIKIPATH_gsea, 
+             by = "runningScore", 
+             title = adapted_term, 
+             geneSetID = term,
+             base_size = 10) + 
+      theme(axis.text.x = element_text(angle = 0, hjust = 1))
+  }
+})
+
+gsea.plt <- wrap_plots(gsea_plot.lst, ncol=3)
+gsea.plt
+```
+
+```{r, eval=FALSE}
+# Save the figures
+ggsave(filename=paste0(path_to_save_figure, "/gsea.png"), plot=gsea_bar.plt, dpi=500, height=5, width=10)
+ggsave(filename=paste0(path_to_save_figure, "/gsea_plt.png"), plot=gsea.plt, dpi=500, height=30, width=13)
+```
+
+# Test overlapping with the common DEGs from the consistency evaluation
+
+We evaluated the integration and batch correction efficacy for our method by comparing the common DEGs from individual analysis. In theory, we should find the all common DEGs in the expression analysis results from the data merging and integration.
+
+```{r}
+# Load the common DEGs list from the previous analysis
+upregulated_common_degs <- read.table(here::here("scRNAseq/systematic_review/6-consistency_assessment/overlapping_genes/seurat/1.upregulated_common_degs.txt"))[,1]
+downregulated_common_degs <- read.table(here::here("scRNAseq/systematic_review/6-consistency_assessment/overlapping_genes/seurat/1.downregulated_common_degs.txt"))[,1]
+```
+
+## DEGs from Seurat
+
+```{r}
+# Load the seurat expression results
+seurat_dea.df <- readRDS(path_to_save_dea)
+```
+
+```{r}
+# Overlapping in upregulated DEGs
+seurat_up_degs <- seurat_dea.df %>%
+  dplyr::filter(p_val_adj < 0.05 & avg_log2FC > 0.25) %>%
+  dplyr::pull(gene)
+
+setdiff(upregulated_common_degs, seurat_up_degs)
+```
+
+```{r}
+# Overlapping in downregulated DEGs
+seurat_down_degs <- seurat_dea.df %>%
+  dplyr::filter(p_val_adj < 0.05 & avg_log2FC < (-0.25)) %>%
+  dplyr::pull(gene)
+
+setdiff(downregulated_common_degs, seurat_down_degs)
+```
+
+Although we detected some upregulated and downregulated common DEGs that were non-significant from the integrated data, the integrated data consisted of seven studies while the common DEGs came from only five studies. Then we extracted the five studies and performed pseudobulk analysis.
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Extract only five studies and perform pseudobulk analysis
+selected_studies_seurat <- subset(tumour_seurat, subset = !(ref %in% c("Rejeski_2022", "Parry_2023a"))) 
+selected_studies_seurat <- SCTransform(selected_studies_seurat, vst.flavor = "v2", method = "glmGamPoi", verbose = FALSE)
+selected_studies_seurat <- RunPCA(selected_studies_seurat)
+selected_studies_seurat <- RunUMAP(selected_studies_seurat, dims = 1:30, reduction = "harmony")
+Idents(selected_studies_seurat) <- "group" 
+selected_studies_seurat <- PrepSCTFindMarkers(selected_studies_seurat) # Prepare SCT assay for DE testing
+tumour.ge <- FindMarkers(
+  selected_studies_seurat,
+  ident.1 = "RT",
+  ident.2 = "CLL",
+  test.use = "wilcox",
+  only.pos = FALSE,
+  logfc.threshold = 0
+)
+dea.df <- cbind(gene = rownames(tumour.ge), tumour.ge)
+
+# Save the expression results
+path_to_save_selected_dea <- here::here("scRNAseq/meta_analysis/R_objects/gene_exprs/selected_study_tumour_dea.rds")
+saveRDS(dea.df, path_to_save_selected_dea)
+write.csv(dea.df, here::here("scRNAseq/meta_analysis/supplm_file/selected_study_tumour_dea.csv"))
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Load the five study seurat expression results 
+path_to_save_selected_dea <- here::here("scRNAseq/meta_analysis/R_objects/gene_exprs/selected_study_tumour_dea.rds")
+five_seurat_dea.df <- readRDS(path_to_save_selected_dea)
+DT::datatable(five_seurat_dea.df, options = list(scrollX = TRUE))
+```
+
+```{r}
+# Overlapping in upregulated DEGs
+five_seurat_up_degs <- five_seurat_dea.df %>%
+  dplyr::filter(p_val_adj < 0.05 & avg_log2FC > 0.25) %>%
+  dplyr::pull(gene)
+
+setdiff(upregulated_common_degs, five_seurat_up_degs)
+```
+
+```{r}
+# Plot a Venn diagram
+library(ggvenn)
+
+up_degs_venn.plt <- ggvenn(
+  list("Common\nUpregulated DEGs" = upregulated_common_degs,
+       "Integrated\nupregulated DEGs" = five_seurat_up_degs),
+  fill_color = c("#0073C2FF", "#EFC000FF"),
+  stroke_size = 0.5,
+  set_name_size = 6,   # Size of the outside labels (Default is 6)
+  text_size = 6        # Size of the numbers inside the diagram (Default is 4)
+)
+
+up_degs_venn.plt
+```
+
+```{r}
+# Overlapping in downregulated DEGs
+five_seurat_down_degs <- five_seurat_dea.df %>%
+  dplyr::filter(p_val_adj < 0.05 & avg_log2FC < (-0.25)) %>%
+  dplyr::pull(gene)
+
+setdiff(downregulated_common_degs, five_seurat_down_degs)
+```
+
+```{r}
+# Plot a Venn diagram
+down_degs_venn.plt <- ggvenn(list("Common\ndownregulated DEGs" = downregulated_common_degs,
+                                "Integrated\ndownregulated DEGs" = five_seurat_down_degs),
+                           fill_color = c("#0073C2FF", "#EFC000FF"),
+                           stroke_size = 0.5, 
+  set_name_size = 6,   # Size of the outside labels (Default is 6)
+  text_size = 6        # Size of the numbers inside the diagram (Default is 4)
+)
+
+down_degs_venn.plt
+```
+
+```{r, eval=FALSE}
+# Save the figures
+ggsave(filename=paste0(path_to_save_figure, "/venn_up_degs.png"), plot=up_degs_venn.plt, dpi=500, height=4.5, width=7)
+ggsave(filename=paste0(path_to_save_figure, "/venn_down_degs.png"), plot=down_degs_venn.plt, dpi=500, height=4.5, width=7)
+```
+
+Although our analysis included five studies and largely aligned with common DEG findings, we observed notable discrepancies. Among the candidate upregulated genes, ALKBH7, UFC1, and ATP5PO reached statistical significance but displayed marginal effect sizes (log2FC < 0.25). Furthermore, EIF3K failed to show significant upregulation, exhibiting a non-significant trend toward downregulation (negative log2FC). 
+
+Additionally, for common downregulated DEGs, RPL21 and CCNI were significant but did not pass the expression cut-point while MDM4 and SRRM2 were slightly upregulated in the integrated results.
+
+In summary, pseudobulk results derived from SCT-normalized matrices based on the integrated data were unreliable due to the discordance with the common DEGs from individual studies. Consequently, we adopted a DESeq2-based pseudobulk approach using raw counts, explicitly modeling batch effects within the experimental design. The DEGs identified through this robust pipeline were selected for all subsequent analyses.
+
+## DEGs from DESeq2
+
+```{r}
+# Load the DESeq2 expression result
+deseq2_dea.df <- readRDS(path_to_save_deseq2_dea)
+```
+
+```{r}
+# Overlapping in upregulated DEGs
+deseq2_up_degs <- deseq2_dea.df %>%
+  dplyr::filter(padj < 0.05 & log2FoldChange > 0.25) %>%
+  tibble::rownames_to_column(var = "gene") %>%
+  dplyr::pull(gene)
+
+setdiff(upregulated_common_degs, deseq2_up_degs)
+```
+
+```{r}
+# Overlapping in downregulated DEGs
+deseq2_down_degs <- deseq2_dea.df %>%
+  dplyr::filter(padj < 0.05 & log2FoldChange < (-0.25)) %>%
+  tibble::rownames_to_column(var = "gene") %>%
+  dplyr::pull(gene)
+
+setdiff(downregulated_common_degs, deseq2_down_degs)
+```
+
+We also identified the consensus DEGs between the common DEGs from individual data analysis and DESeq2-based pseudobulk analysis from the integrated data.
+
+```{r}
+# Upregulated consensus DEGs
+intersect(upregulated_common_degs, deseq2_up_degs)
+```
+
+```{r}
+# Downregulated consensus DEGs
+intersect(downregulated_common_degs, deseq2_down_degs)
+```
+
+# Heatmap of gene expression for DESeq2
+
+```{r, message=FALSE, warning=FALSE}
+# Import the relevant packages
+library(ComplexHeatmap)
+library(circlize)
+```
+
+```{r}
+# Define known up- and downregulated DEGs from previous publications
+gene_categories <- list(
+  # Upregulated DEGs
+  Cell_Cycle_Up = c("MKI67", "PCNA", "CDK1", "CDK2", "CDK4", "CDK5", "CDK6", "CCND2", "CCND3", "CDKN2A", "CDKN3", "CKS1B", "E2F7", 
+                    "ANP32B"),
+  Mitosis_Up = c("FOXM1", "PLK1", "PLK4", "AURKA", "AURKB", "TUBB", "TUBA1C", "STMN1", "TPX2", "HMMR", "KIF14", "KIF18B", "BUB1", 
+                 "UBE2C", "UBE2S", "BIRC5"),
+  DNA_Repair_Up = c("POLH", "POLQ", "POLE2", "TERT", "BRCA1", "XRCC2", "AICDA", "TOP2A", "NPM1"),
+  Oncogenes_Wnt_Up = c("MYC", "MYCBP", "EZH2", "PRMT5", "WNT3", "WNT5A", "WNT6", "WNT10A", "GAS5"),
+  Immune_Surface_Up = c("TLR8", "TLR9", "TLR10", "CD24", "CD70", "LTB", "MS4A1", "BID"),
+  
+  # Downregulated DEGs
+  Apoptosis_Down = c("BAX", "BAK1", "BAD", "BMF", "HRK", "BBC3", "PMAIP1", "BCL2L11"),
+  Chromatin_TumorSup_Down = c("CDKN1B", "CREBBP", "EP300", "CHD2", "CHD7", "ARID1A", "ARID4B", "ARID5B", "SPEN", "BAZ2A"),
+  B_Identity_MHC_Down = c("PAX5", "CD79A", "CD74", "CD37", "CD83", "CD99", "IGHV3-7", "IGLC7", "HLA-A", "HLA-B"),
+  Signaling_Homing_Down = c("CXCR4", "ITGB1", "LYN", "TRAF3", "TRAF5", "NFKBIA", "WNT16", "CDK17"),
+  Transcription_Stress_Down = c("FOS", "FOSB", "JUN", "JUNB", "ZFP36", "BTG1", "UBC")
+)
+
+known_degs <- unlist(gene_categories)
+
+# Define common DEGs from our analysis
+common_degs <- c(upregulated_common_degs, downregulated_common_degs)
+
+# Define genes of interest
+genes_of_interest <- c("MKI67", "CDK1", "AURKB", "PRMT5", "CDKN3", "CDKN1B", "CREBBP", "CHD7", "TYMS", "SF1", "NPM1", "TOP2A",
+                       "TPX2", "UBE2C", "BIRC5", "KIF14", "LDHA", "MTHFD2", "HMGA1", "CKS2", "RAD51", "FASN", "CCNB1", 
+                       "CCNB2", "CDCA3", "CDCA5", "CDCA7", "CDCA8", "CYLD", "PTPRO", "EPC1", "EPC2", "KAT7", "JMJD1C", 
+                       "MAP3K1", "USP3", "USP15")
+
+# Import mouse DEGs
+all_mouse_up_degs <- readRDS(here::here("scRNAseq/meta_analysis/R_objects/gene_exprs/all_mouse_up_degs.rds"))
+all_mouse_down_degs <- readRDS(here::here("scRNAseq/meta_analysis/R_objects/gene_exprs/all_mouse_down_degs.rds"))
+mouse_expr.df <- readRDS(here::here("scRNAseq/meta_analysis/R_objects/all_mouse_gene_expr.rds")) %>%
+  dplyr::select(gene_name, Hacken_direction, Hing_direction, Iyer_direction, Rompietti_direction) %>%
+  dplyr::mutate(gene_name = case_when(
+    gene_name == "GATD3"  ~ "GATD3B",
+    gene_name == "BLTP3B" ~ "UHRF1BP1L",
+    TRUE ~ gene_name  # This is the 'default' in case_when
+  ))
+```
+
+```{r, message=FALSE, warning=FALSE, fig.height=8, fig.width=12}
+# Plot the heatmap
+
+sample_order <- c("1_Penter_CLL", "2_Penter_CLL", "3_Penter_CLL", "4_Penter_CLL", "5_Penter_CLL", "6_Penter_CLL", "7_Penter_CLL", 
+                  "8_Penter_CLL", "9_Penter_CLL", "12_Nadeu_CLL", "19_Nadeu_CLL", "3299_Nadeu_CLL", "365_Nadeu_CLL", "1_Hing_CLL", 
+                  "2_Hing_CLL", "MDAC-ACC-17_Parry_CLL", "MDAC-ACC-18_Parry_CLL", "MDAC-ACC-29_Parry_CLL", "14_Rigo_CLL", 
+                  "9_Penter_RT", "12_Nadeu_RT", "19_Nadeu_RT", "3299_Nadeu_RT", "365_Nadeu_RT", "1_Rejeski_RT", "1_Hing_RT", 
+                  "2_Hing_RT", "4_Parry_RT", "10_Parry_RT", "43_Parry_RT", "DFCI-5448_Parry_RT", "MDAC-ACC-09_Parry_RT", 
+                  "MDAC-ACC-14_Parry_RT", "14_Rigo_RT"
+                 )
+
+# 1. Generate the scaled expression matrix
+scaled_expr_mat <- t(scale(t(vs_mat))) # Generate the scaled expression matrix
+colnames(scaled_expr_mat) <- sub("^case-(.+)-([^-]+)-([^-]+)-([^-]+)$", "\\1_\\2_\\4", colnames(scaled_expr_mat))
+scaled_expr_deg_mat <- scaled_expr_mat[rownames(scaled_expr_mat) %in% c(up_degs, down_degs),] # Select only DEGs
+scaled_expr_deg_mat <- scaled_expr_deg_mat[, match(sample_order, colnames(scaled_expr_deg_mat))] # Reorder samples
+
+# 2. Generate sample_data for heatmap
+sample_data_heatmap <- colData
+sample_data_heatmap$condition <- factor(sample_data_heatmap$condition, level = c("CLL", "RT"))
+sample_data_heatmap$samples <- sub("^case-(.+)-([^-]+)-([^-]+)-([^-]+)$", "\\1_\\2_\\4", sample_data_heatmap$samples)
+sample_data_heatmap <- sample_data_heatmap[match(sample_order, sample_data_heatmap$samples),]
+
+sample_data_heatmap$included_dea <- "Yes"
+sample_data_heatmap$included_dea[sample_data_heatmap$samples == "2_Hing_CLL"] <- "No"
+sample_data_heatmap$included_dea <- factor(sample_data_heatmap$included_dea, level = c("Yes", "No"))
+
+# 3. Heatmap annotations (columns)
+heatmap_anno_col <- HeatmapAnnotation(Condition = sample_data_heatmap$condition, DEA = sample_data_heatmap$included_dea, 
+                        Study = sample_data_heatmap$study, 
+                        col = list(Condition = c("CLL" = "#E6E6E6", "RT" = "#E15759"), 
+                                   DEA = c("Yes" = "#FFE099", "No" = "#E6E6E6"), 
+                                   Study = c("Penter (2021)" = "#1f77b4", "Nadeu (2022)" = "#ff7f0e", "Rejeski (2022)" = "#9632B8",
+                                             "Hing (2023)" = "#D43F3A", "Parry (2023a)" = "#5CB85C", "Parry (2023b)" = "#FFB900",
+                                             "Rigo (2024)" = "#46B8DA")
+                                   ),
+                        show_legend = TRUE, border = TRUE, show_annotation_name = TRUE
+                        )
+
+# 4. Heatmap annotations (rows)
+deg_data_heatmap <- deseq2_dea.df %>%
+  dplyr::filter(direction != "NS") %>%
+  dplyr::select(direction) %>%
+  tibble::rownames_to_column(var = "gene") %>%
+  dplyr::mutate(
+    known_deg  = ifelse(gene %in% known_degs, "Yes", "No"),
+    common_deg = ifelse(gene %in% common_degs, "Yes", "No"),
+    mouse_deg = dplyr::case_when(
+      direction == "Up"   & gene %in% all_mouse_up_degs   ~ "Yes",
+      direction == "Down" & gene %in% all_mouse_down_degs ~ "Yes",
+      TRUE ~ "No" 
+    )
+  ) %>%
+  dplyr::left_join(mouse_expr.df, by = c("gene" = "gene_name")) %>%
+  dplyr::mutate(across(ends_with("_direction"), ~tidyr::replace_na(.x, "NA")))
+
+deg_data_heatmap <- deg_data_heatmap[match(rownames(scaled_expr_deg_mat), deg_data_heatmap$gene, ),] 
+deg_data_heatmap$direction <- factor(deg_data_heatmap$direction, level = c("Up", "Down"))
+
+heatmap_anno_row <- rowAnnotation(foo = anno_mark(at = which(deg_data_heatmap$gene %in% genes_of_interest), 
+                                                  labels = deg_data_heatmap$gene[which(deg_data_heatmap$gene %in% genes_of_interest)],
+                                                  labels_gp = gpar(fontsize = 6)))
+
+# 5. Plot the heatmap
+heatmap.plt  <- Heatmap(scaled_expr_deg_mat, cluster_rows = TRUE, show_row_dend = FALSE, split = 2, show_row_names = FALSE,
+                        cluster_columns = FALSE, column_order = sample_order, top_annotation = heatmap_anno_col, 
+                        show_column_names = TRUE, column_split = c(rep(1, 19), rep(2, 15)), column_names_rot = 45,
+                        row_title = c(paste0("n=", length(up_degs)), paste0("n=", length(down_degs))), row_title_rot = 0, 
+                        border="black", col = colorRamp2(c(-3, -1, 0, 1, 3), c("#053061", "#2171B5", "white", "#FFD92F", "#A50F15")),
+                        row_names_gp = gpar(fontsize = 4), heatmap_legend_param = list(title = "Gene z-scores")
+                        ) 
+
+heatmap.plt <- heatmap.plt +
+  Heatmap(deg_data_heatmap$direction, name = "Direction", width = unit(0.1, "cm"), 
+          border = TRUE, col = c("Down"="#343A8F", "Up"="#D63027")) +
+  Heatmap(deg_data_heatmap$known_deg, name = "Previously reported DEG", width = unit(0.5, "cm"), border = TRUE, 
+          col = c("Yes"="#0B652E", "No"="#FFFFBF")) +
+  Heatmap(deg_data_heatmap$common_deg, name = "Common DEG", width = unit(0.5, "cm"), border = TRUE, 
+          col = c("Yes"="#0B652E", "No"="#FFFFBF"), right_annotation = heatmap_anno_row)
+
+heatmap.plt
+```
+
+```{r, eval=FALSE}
+# Save the figure
+png(filename = paste0(path_to_save_figure, "/deseq2_heatmap.png"), width=14, height=8, units="in", res=500)
+print(heatmap.plt)
+dev.off()
+```
+
+We also plotted the heatmap for the unique DEGs found only in the integrated data (See in Consistency_bulk_vs_sc_RNAseq section). 
+
+```{r}
+# List the unique degs
+unique_integrated_up_degs <- c("PDPN", "CYTOR", "LINC00884", "SLC25A4", "AC002467.1", "LRTOMT", "IPO4", "GINS2", "CST3", "GATD3B", "AC133644.2", 
+                               "CPVL", "FAH", "C1orf74", "HIST1H3B", "HIST1H4I", "HYKK", "AL355076.2")
+unique_integrated_down_degs <- c("LINC01781", "EDRF1", "SENP1", "KANSL2", "UHRF1BP1L", "COG3", "KAT7", "RBM39", "P2RY14", "ZSWIM5")
+unique_integrated_degs <- c(unique_integrated_up_degs, unique_integrated_down_degs)
+
+# List the common DEGs between DESeq2 and Seurat (See the next section)
+seurat_deseq2_common_degs.df <- read.csv(here::here("scRNAseq/meta_analysis/supplm_file/seurat_deseq2_integrated_common_degs.csv"))
+seurat_deseq2_common_degs <- c(seurat_deseq2_common_degs.df$UpDEGs, seurat_deseq2_common_degs.df$DownDEGs)
+seurat_deseq2_common_degs <- seurat_deseq2_common_degs[seurat_deseq2_common_degs != ""]
+```
+
+```{r, message=FALSE, warning=FALSE, fig.height=6, fig.width=11}
+# Plot the heatmap for unique degs
+# 1. Extract the unique genes from the main scaled matrix 
+sample_data_heatmap_sorted <- sample_data_heatmap[match(sample_order, sample_data_heatmap$samples), ]
+unique_deg_mat <- scaled_expr_mat[rownames(scaled_expr_mat) %in% unique_integrated_degs, , drop=FALSE]
+unique_deg_mat <- unique_deg_mat[ , sample_order] 
+
+# 2. Annotation
+heatmap_anno_col <- HeatmapAnnotation(
+  Condition = sample_data_heatmap_sorted$condition, 
+  DEA = sample_data_heatmap_sorted$included_dea,
+  Study = sample_data_heatmap_sorted$study,
+  col = list(
+    Condition = c("CLL" = "#E6E6E6", "RT" = "#E15759"),
+    DEA = c("Yes" = "#FFE099", "No" = "#E6E6E6"),
+    Study = c("Penter (2021)" = "#1f77b4", "Nadeu (2022)" = "#ff7f0e", 
+              "Rejeski (2022)" = "#9632B8", "Hing (2023)" = "#D43F3A", 
+              "Parry (2023a)" = "#5CB85C", "Parry (2023b)" = "#FFB900",
+              "Rigo (2024)" = "#46B8DA")
+  ),
+  show_legend = TRUE, 
+  border = TRUE, 
+  show_annotation_name = TRUE
+)
+
+unique_deg_data_heatmap <- deg_data_heatmap[match(rownames(unique_deg_mat), deg_data_heatmap$gene), ] %>%
+  dplyr::mutate(seurat_deg = ifelse(gene %in% seurat_deseq2_common_degs, "Yes", "No"))
+unique_deg_data_heatmap$direction <- factor(unique_deg_data_heatmap$direction, levels = c("Up", "Down"))
+unique_deg_data_heatmap$Hacken_direction <- factor(unique_deg_data_heatmap$Hacken_direction, levels = c("Up", "Down", "NA"))
+
+unique_heatmap_anno_row <- rowAnnotation(
+  foo = anno_mark(at = 1:nrow(unique_deg_data_heatmap), 
+                  labels = unique_deg_data_heatmap$gene,
+                  labels_gp = gpar(fontsize = 8))
+)
+
+# 3. Plot
+n_up_shown <- sum(unique_deg_data_heatmap$direction == "Up", na.rm = TRUE)
+n_down_shown <- sum(unique_deg_data_heatmap$direction == "Down", na.rm = TRUE)
+
+unique_degs_heatmap.plt <- Heatmap(
+  unique_deg_mat, 
+  cluster_rows = TRUE, 
+  show_row_dend = FALSE, 
+  split = unique_deg_data_heatmap$direction, 
+  cluster_row_slices = FALSE,
+  show_row_names = FALSE, 
+  cluster_columns = FALSE, 
+  show_column_names = TRUE, 
+  column_split = c(rep(1, 19), rep(2, 15)), 
+  column_names_rot = 45,
+  column_names_gp = gpar(fontsize = 8),
+  top_annotation = heatmap_anno_col, 
+  row_title = c(paste0("n=", n_up_shown), paste0("n=", n_down_shown)), 
+  row_title_rot = 0, 
+  border = "black", 
+  col = colorRamp2(c(-3, -1, 0, 1, 3), c("#053061", "#2171B5", "white", "#FFD92F", "#A50F15")),
+  heatmap_legend_param = list(title = "Gene z-scores")
+) 
+
+# 4. Add the annotation bars
+dir_cols <- c("Down" = "#343A8F", "Up" = "#D63027", "NA" = "#D0D0D0")
+direction_annos <- rowAnnotation(
+  "Integrated dataset" = unique_deg_data_heatmap$direction,
+  "Hing (2023)"       = unique_deg_data_heatmap$Hing_direction,
+  "Ten Hacken (2023)" = unique_deg_data_heatmap$Hacken_direction,
+  "Iyer (2024)"       = unique_deg_data_heatmap$Iyer_direction,
+  "Rompietti (2025)"  = unique_deg_data_heatmap$Rompietti_direction,
+  col = list(
+    "Integrated dataset" = dir_cols, "Hing (2023)" = dir_cols, 
+    "Ten Hacken (2023)" = dir_cols, "Iyer (2024)" = dir_cols, "Rompietti (2025)" = dir_cols
+  ),
+  gap = unit(1.5, "mm"),
+  show_legend = c(FALSE, FALSE, TRUE, FALSE, FALSE), # ONLY show the first one
+  annotation_legend_param = list(
+    "Ten Hacken (2023)" = list(title = "Expression Direction")
+  ),
+  simple_anno_size = unit(0.3, "cm"),
+  border = TRUE
+)
+
+unique_degs_heatmap.plt <- unique_degs_heatmap.plt + 
+                           direction_annos + 
+                           unique_heatmap_anno_row
+
+draw(unique_degs_heatmap.plt, merge_legend = TRUE)
+```
+
+```{r, eval=FALSE}
+# Save the figure
+png(filename = paste0(path_to_save_figure, "/novel_and_mouse_degs_heatmap.png"), width=11, height=6, units="in", res=500)
+draw(unique_degs_heatmap.plt, merge_legend = TRUE)
+dev.off()
+```
+
+# Consistenct assessment between DESeq2- and Seurat-based expression analyses
+
+In this section we evaluated the consistency of the gene expression between the two different approaches.
+
+```{r}
+# Rename the columns from the seurat results comparable to the DESeq2 form
+seurat_dea.df <- seurat_dea.df %>%
+      dplyr::rename(
+       pvalue = "p_val",
+       padj = "p_val_adj",
+       log2FoldChange = "avg_log2FC"
+      )
+
+# Convert the rowname in DESeq2 result to be a column
+deseq2_dea.df <- deseq2_dea.df %>%
+  dplyr::mutate(gene = rownames(deseq2_dea.df))
+```
+
+## Overlapping between DEGs
+
+```{r}
+# Upregulated DEGs
+seurat_up_degs <- seurat_dea.df %>% 
+  dplyr::filter(!is.na(gene)) %>%
+  dplyr::filter(!is.na(padj)) %>%
+  dplyr::filter(padj < 0.05, log2FoldChange > 0.25) %>%
+  pull(gene)
+
+deseq2_up_degs <- deseq2_dea.df %>% 
+  dplyr::filter(!is.na(gene)) %>%
+  dplyr::filter(!is.na(padj)) %>%
+  dplyr::filter(padj < 0.05, log2FoldChange > 0.25) %>%
+  pull(gene)
+
+# Plot a Venn diagram
+seurat_deseq2_up_degs_venn.plt <- ggvenn(
+  list("DESeq2-based\nupregulated DEGs" = deseq2_up_degs,
+       "Seurat-based\nupregulated DEGs" = seurat_up_degs),
+  fill_color = c("#0073C2FF", "#EFC000FF"),
+  stroke_size = 0.5,
+  set_name_size = 6,   # Size of the outside labels (Default is 6)
+  text_size = 6        # Size of the numbers inside the diagram (Default is 4)
+)
+
+seurat_deseq2_up_degs_venn.plt
+```
+
+```{r}
+# Show the overlapped upregulated DEGs
+seurat_deseq2_common_up_degs <- intersect(deseq2_up_degs, seurat_up_degs)
+seurat_deseq2_common_up_degs
+```
+
+```{r}
+# Downregulated DEGs
+seurat_down_degs <- seurat_dea.df %>% 
+  dplyr::filter(!is.na(gene)) %>%
+  dplyr::filter(!is.na(padj)) %>%
+  dplyr::filter(padj < 0.05, log2FoldChange < (-0.25)) %>%
+  pull(gene)
+
+deseq2_down_degs <- deseq2_dea.df %>% 
+  dplyr::filter(!is.na(gene)) %>%
+  dplyr::filter(!is.na(padj)) %>%
+  dplyr::filter(padj < 0.05, log2FoldChange < (-0.25)) %>%
+  pull(gene)
+
+# Plot a Venn diagram
+seurat_deseq2_down_degs_venn.plt <- ggvenn(
+  list("DESeq2-based\ndownregulated DEGs" = deseq2_down_degs,
+       "Seurat-based\ndownregulated DEGs" = seurat_down_degs),
+  fill_color = c("#0073C2FF", "#EFC000FF"),
+  stroke_size = 0.5,
+  set_name_size = 6,   # Size of the outside labels (Default is 6)
+  text_size = 6        # Size of the numbers inside the diagram (Default is 4)
+)
+
+seurat_deseq2_down_degs_venn.plt
+```
+
+```{r}
+# Show the overlapped downregulated DEGs
+seurat_deseq2_common_down_degs <- intersect(deseq2_down_degs, seurat_down_degs)
+seurat_deseq2_common_down_degs
+```
+
+```{r, eval=FALSE}
+# Save the figures
+ggsave(filename=paste0(path_to_save_figure, "/seurat_deseq2_up_degs_venn.png"), 
+       plot=seurat_deseq2_up_degs_venn.plt, dpi=500, height=4.5, width=7)
+ggsave(filename=paste0(path_to_save_figure, "/seurat_deseq2_down_degs_venn.png"), 
+       plot=seurat_deseq2_down_degs_venn.plt, dpi=500, height=4.5, width=7)
+```
+
+```{r, eval=FALSE}
+# Save the results as a csv file
+# 1. Pad the lists to the same length with NAs
+max_len <- max(length(seurat_deseq2_common_up_degs), length(seurat_deseq2_common_down_degs))
+length(seurat_deseq2_common_up_degs) <- max_len 
+length(seurat_deseq2_common_down_degs) <- max_len
+
+# 2. Combine into a Data Frame and set your Column Names here
+seurat_deseq2_integrated_common_degs <- data.frame(
+  "UpDEGs" = seurat_deseq2_common_up_degs,   
+  "DownDEGs" = seurat_deseq2_common_down_degs
+)
+
+# 3. Save as CSV
+write.csv(
+  seurat_deseq2_integrated_common_degs, 
+  file = here::here("scRNAseq/meta_analysis/supplm_file/seurat_deseq2_integrated_common_degs.csv"), 
+  row.names = FALSE,   # Removes the row numbers 
+  na = ""              # Makes empty cells blank instead of writing "NA"
+)
+```
+
+## Numerical metric assessment
+
+### All significant genes
+
+```{r}
+# Generate the log2FC dataframe for both methods
+seurat_deseq2_common_sig_genes.df <- list(
+  "Seurat approach" = seurat_dea.df, 
+  "DESeq2 approach" = deseq2_dea.df
+) %>%
+  purrr::map_dfr(~ .x, .id = "approach") %>%
+  dplyr::filter(padj < 0.05) %>%                       # 1. Filter significant genes first (Efficiency)
+  dplyr::group_by(gene) %>%
+  dplyr::filter(n_distinct(approach) == 2) %>%         # 2. Keep genes present in BOTH (Safety: use n_distinct)
+  dplyr::ungroup() %>%
+  dplyr::select(gene, log2FoldChange, approach) %>%
+  tidyr::pivot_wider(names_from = approach, values_from = log2FoldChange)
+
+head(seurat_deseq2_common_sig_genes.df)
+```
+
+```{r}
+# Show the metric results
+expr_mat <- seurat_deseq2_common_sig_genes.df %>% 
+  tibble::column_to_rownames("gene") %>% 
+  as.matrix()
+
+similarity_summary.df <- tibble::tibble(
+  Metric = c("Pearson Correlation", "Spearman Correlation", "Cosine Similarity", "Euclidean Similarity"),
+  Value = c(
+    cor(expr_mat, method = "pearson")[1, 2],
+    cor(expr_mat, method = "spearman")[1, 2],
+    lsa::cosine(expr_mat)[1, 2],
+    1 / (1 + dist(t(expr_mat), method = "euclidean")[1]) # dist returns a single value for 2 cols
+  )
+)
+
+similarity_summary.df
+```
+
+### Upregulated genes
+
+```{r}
+# Generate the log2FC dataframe for both methods
+seurat_deseq2_common_up_degs.df <- list(
+  "Seurat approach" = seurat_dea.df, 
+  "DESeq2 approach" = deseq2_dea.df
+) %>%
+  purrr::map_dfr(~ .x, .id = "approach") %>%
+  dplyr::filter(padj < 0.05 & log2FoldChange > 0.25) %>%      # 1. Filter significant genes first (Efficiency)
+  dplyr::group_by(gene) %>%
+  dplyr::filter(n_distinct(approach) == 2) %>%                # 2. Keep genes present in BOTH (Safety: use n_distinct)
+  dplyr::ungroup() %>%
+  dplyr::select(gene, log2FoldChange, approach) %>%
+  tidyr::pivot_wider(names_from = approach, values_from = log2FoldChange)
+
+head(seurat_deseq2_common_up_degs.df)
+```
+
+```{r}
+# Show the metric results
+expr_mat <- seurat_deseq2_common_up_degs.df %>% 
+  tibble::column_to_rownames("gene") %>% 
+  as.matrix()
+
+similarity_summary.df <- tibble::tibble(
+  Metric = c("Pearson Correlation", "Spearman Correlation", "Cosine Similarity", "Euclidean Similarity"),
+  Value = c(
+    cor(expr_mat, method = "pearson")[1, 2],
+    cor(expr_mat, method = "spearman")[1, 2],
+    lsa::cosine(expr_mat)[1, 2],
+    1 / (1 + dist(t(expr_mat), method = "euclidean")[1]) # dist returns a single value for 2 cols
+  )
+)
+
+similarity_summary.df
+```
+
+### Downregulated genes
+
+```{r}
+# Generate the log2FC dataframe for both methods
+seurat_deseq2_common_down_degs.df <- list(
+  "Seurat approach" = seurat_dea.df, 
+  "DESeq2 approach" = deseq2_dea.df
+) %>%
+  purrr::map_dfr(~ .x, .id = "approach") %>%
+  dplyr::filter(padj < 0.05 & log2FoldChange < (-0.25)) %>%      # 1. Filter significant genes first (Efficiency)
+  dplyr::group_by(gene) %>%
+  dplyr::filter(n_distinct(approach) == 2) %>%                # 2. Keep genes present in BOTH (Safety: use n_distinct)
+  dplyr::ungroup() %>%
+  dplyr::select(gene, log2FoldChange, approach) %>%
+  tidyr::pivot_wider(names_from = approach, values_from = log2FoldChange)
+
+head(seurat_deseq2_common_down_degs.df)
+```
+
+```{r}
+# Show the metric results
+expr_mat <- seurat_deseq2_common_down_degs.df %>% 
+  tibble::column_to_rownames("gene") %>% 
+  as.matrix()
+
+similarity_summary.df <- tibble::tibble(
+  Metric = c("Pearson Correlation", "Spearman Correlation", "Cosine Similarity", "Euclidean Similarity"),
+  Value = c(
+    cor(expr_mat, method = "pearson")[1, 2],
+    cor(expr_mat, method = "spearman")[1, 2],
+    lsa::cosine(expr_mat)[1, 2],
+    1 / (1 + dist(t(expr_mat), method = "euclidean")[1]) # dist returns a single value for 2 cols
+  )
+)
+
+similarity_summary.df
+```
+
+# Session Information
+
+```{r}
+sessionInfo()
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

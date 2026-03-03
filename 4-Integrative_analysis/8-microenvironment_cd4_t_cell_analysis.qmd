@@ -1,0 +1,1618 @@
+---
+title: "Microenvironment_CD4+_T_cell_analysis"
+author: "Pakorn Sagulkoo"
+format:
+  html:
+    toc: true
+    toc-location: left
+    embed-resources: true
+editor: visual
+---
+
+In this analysis, we focused on CD4+ T cells, from the integrated dataset by performing pseudobulk analysis between RT and CLL in this cell type. Moreover, we also annotated level-2 subtypes of these cells.
+
+# Import the relevant packages and set working path directory
+
+```{r, setup, message=FALSE, warning=FALSE}
+# Attach the packages you will need for the analysis.
+library(Seurat)
+library(harmony)
+library(dplyr)
+library(tibble)
+library(SingleR)
+library(celldex)
+library(sctransform)
+library(cowplot)
+library(DT)
+```
+
+```{r}
+# Check root path
+here::here()
+```
+
+# Define paths
+
+```{r}
+# Define paths to load and save 
+path_to_tcell_obj <- here::here("scRNAseq/meta_analysis/R_objects/t_seu.rds")
+path_to_save_filtered_tcell_obj <- here::here("scRNAseq/meta_analysis/R_objects/filtered_tcell_seu.rds")
+path_to_save_filtered_tcell_markers <- here::here("scRNAseq/meta_analysis/R_objects/filtered_tcell_markers.rds")
+path_to_save_cd4_obj <- here::here("scRNAseq/meta_analysis/R_objects/cd4_seu.rds")
+path_to_save_cd8_obj <- here::here("scRNAseq/meta_analysis/R_objects/cd8_seu.rds")
+path_to_save_figure <- here::here("figures")
+```
+
+```{r}
+# Thresholds
+min_log2FC <- 0.25
+alpha <- 0.001
+```
+
+```{r}
+# Set seed for reproducibility
+set.seed(1)
+```
+
+# Load data and functions
+
+```{r, message=FALSE, warning=FALSE}
+# Source functions
+source(here::here("bin/utils.R"))
+```
+
+```{r, eval=FALSE}
+# Load the t cell object
+tcell_seurat <- readRDS(path_to_tcell_obj)
+```
+
+# Filtering out non-T celll contamination
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# T cell purification
+
+# 1.Calculate Percentages of Contaminants
+# RBC (Hemoglobin)
+tcell_seurat[["percent.rbc"]] <- PercentageFeatureSet(tcell_seurat, pattern = "^HB[AB]")
+# B cells (Immunoglobulins) 
+tcell_seurat[["percent.ig"]] <- PercentageFeatureSet(tcell_seurat, pattern = "^IG[HKL]")
+# Platelets
+platelet_genes <- c("PF4", "PPBP", "TUBB1")
+tcell_seurat[["percent.platelet"]] <- PercentageFeatureSet(tcell_seurat, features = platelet_genes)
+
+# 2.Filter out RBCs, platelets, and high immunoglobulin (plasma/B cell) noise
+filtered_tcell_seurat <- subset(tcell_seurat, 
+                            subset = percent.rbc < 1 & 
+                                     percent.ig < 1 & 
+                                     percent.platelet < 1) 
+
+# 3.Filter out contaminated B cells and NK cells
+filtered_tcell_seurat <- subset(filtered_tcell_seurat, subset = MS4A1 < 1 & KLRF1 < 1)
+
+# 4.Filter out contaminated monocytes
+filtered_tcell_seurat <- subset(filtered_tcell_seurat, subset = CD14 < 1 & LYZ < 2 & S100A9 < 1) 
+
+# 5.Reanalysis 
+filtered_tcell_seurat <- SCTransform(filtered_tcell_seurat, vst.flavor = "v2", method = "glmGamPoi", verbose = FALSE) 
+filtered_tcell_seurat <- RunPCA(filtered_tcell_seurat)
+filtered_tcell_seurat <- RunUMAP(filtered_tcell_seurat, dims = 1:30, reduction = "harmony") 
+filtered_tcell_seurat <- FindNeighbors(filtered_tcell_seurat, dims = 1:30, reduction = "harmony")        
+filtered_tcell_seurat <- FindClusters(
+  filtered_tcell_seurat,
+  random.seed = 12345,
+  verbose = FALSE,
+  resolution = seq(0.1, 2, by = 0.1)
+)
+
+# 6. Save the object
+saveRDS(filtered_tcell_seurat, path_to_save_filtered_tcell_obj)
+```
+
+```{r, fig.height=7, fig.width=12, warning=FALSE, message=FALSE}
+# Plot based on cell biomarker expression
+filtered_tcell_seurat <- readRDS(path_to_save_filtered_tcell_obj)
+FeaturePlot(filtered_tcell_seurat, 
+            features = c("HBM", "HBA1", "CD79A", "CD14", "CD3D", "CD3E", 
+                         "CD4", "CD8A", "CD8B", "KLRF1", "FCGR3A", "TYROBP"),
+            reduction = "umap") 
+```
+
+```{r, message=FALSE, warning=FALSE, fig.height=4, fig.width=13}
+# Cluster visualisation
+group_by <- c("SCT_snn_res.0.1", "SCT_snn_res.0.2", "SCT_snn_res.0.3")
+umap_plots <- lapply(group_by, function (group){
+  DimPlot(filtered_tcell_seurat, 
+          reduction = "umap", 
+          group.by = group, 
+          pt.size = 2,
+          repel=TRUE,
+          raster=TRUE, 
+          label=TRUE) +
+    labs(y= "UMAP 2", x = "UMAP 1")
+})
+
+tcell_umap.plt <- wrap_plots(umap_plots, ncol=3)
+tcell_umap.plt
+```
+
+```{r, message=FALSE, warning=FALSE, fig.height=4, fig.width=9}
+# Dot plot for biomarker expressions 
+features <- c("HBM", "HBA1", "CD79A", "CD14", "CD3D", "CD3E", 
+              "CD4", "CD8A", "CD8B", "KLRF1", "FCGR3A", "TYROBP")
+colour_pal <- colorRampPalette(c("#053061", "#2171B5", "white", "#FFD92F", "#A50F15"))(100)
+
+tcell_markers.plt <- DotPlot(filtered_tcell_seurat, features=features, group.by = "SCT_snn_res.0.1") +
+  RotatedAxis() +
+  scale_colour_gradientn(colours = colour_pal) +
+  labs(
+    colour = "Average\nExpression",
+    size = "Percent\nExpressed"
+  )
+
+tcell_markers.plt
+```
+
+# Differentiate CD4+ and CD8+ T cells
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Calculate markers
+Idents(filtered_tcell_seurat) <- "SCT_snn_res.0.1"
+markers <- FindAllMarkers(filtered_tcell_seurat, only.pos = TRUE, logfc.threshold = min_log2FC)
+markers <- markers %>%
+  mutate(cluster = as.character(cluster)) %>%
+  filter(p_val_adj < alpha) %>%
+  arrange(cluster) %>%
+  group_by(cluster) %>%
+  arrange(desc(avg_log2FC), .by_group = TRUE)
+
+# Save the marker results
+saveRDS(markers, path_to_save_filtered_tcell_markers)
+write.csv(markers, here::here("scRNAseq/meta_analysis/text_files/filtered_tcell_markers.csv"), row.names = FALSE)
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Show the marker results
+markers <- readRDS(path_to_save_filtered_tcell_markers)
+DT::datatable(markers, options = list(scrollX = TRUE))
+```
+
+From the marker identification we found that cluster 1 and 2 were CD4+ T cells while cluster 0, 3, and 6 were CD8+ T cells. We then extracted them for further analysis.
+
+```{r, warning=FALSE, message=FALSE, eval=FALSE}
+# Extract CD4+ T cells with reanalysis
+cd4_seurat <- subset(filtered_tcell_seurat, subset = SCT_snn_res.0.1 %in% c(1, 2))
+cd4_seurat <- subset(cd4_seurat, subset = CD4 > 0 & CD8A < 1 & CD8B < 1 & TRDC < 1) # Filter out CD8+ and Gamma-Delta T cells
+cd4_seurat <- SCTransform(cd4_seurat, vst.flavor = "v2", method = "glmGamPoi", verbose = FALSE)
+cd4_seurat <- RunPCA(cd4_seurat)
+cd4_seurat <- RunUMAP(cd4_seurat, dims = 1:30, reduction = "harmony")
+cd4_seurat <- FindNeighbors(cd4_seurat, dims = 1:30, reduction = "harmony")        
+cd4_seurat <- FindClusters(
+  cd4_seurat,
+  random.seed = 12345,
+  verbose = FALSE,
+  resolution = seq(0.1, 2, by = 0.1)
+)
+
+# Save the object
+saveRDS(cd4_seurat, path_to_save_cd4_obj)
+```
+
+```{r, warning=FALSE, message=FALSE, eval=FALSE}
+# Extract CD8+ T cells with reanalysis
+cd8_seurat <- subset(filtered_tcell_seurat, subset = SCT_snn_res.0.1 %in% c(0, 3, 6))
+cd8_seurat <- subset(cd8_seurat, subset = (CD8A > 0 | CD8B > 0) & CD4 < 1) # Filter out CD4+ T cells
+cd8_seurat <- SCTransform(cd8_seurat, vst.flavor = "v2", method = "glmGamPoi", verbose = FALSE)
+cd8_seurat <- RunPCA(cd8_seurat)
+cd8_seurat <- RunUMAP(cd8_seurat, dims = 1:30, reduction = "harmony")
+cd8_seurat <- FindNeighbors(cd8_seurat, dims = 1:30, reduction = "harmony")        
+cd8_seurat <- FindClusters(
+  cd8_seurat,
+  random.seed = 12345,
+  verbose = FALSE,
+  resolution = seq(0.1, 2, by = 0.1)
+)
+
+# Save the object
+saveRDS(cd8_seurat, path_to_save_cd8_obj)
+```
+
+# CD4+ T cell purification
+
+```{r}
+# Define paths to load and save 
+path_to_save_cd4_markers <- here::here("scRNAseq/meta_analysis/R_objects/cd4_marker.rds")
+path_to_save_filtered_cd4_obj <- here::here("scRNAseq/meta_analysis/R_objects/filtered_cd4_seu.rds")
+path_to_save_filtered_cd4_markers <- here::here("scRNAseq/meta_analysis/R_objects/filtered_cd4_marker.rds")
+path_to_save_filtered2_cd4_obj <- here::here("scRNAseq/meta_analysis/R_objects/filtered2_cd4_seu.rds")
+path_to_save_filtered2_cd4_markers <- here::here("scRNAseq/meta_analysis/R_objects/filtered2_cd4_marker.rds")
+path_to_save_pure_cd4_obj <- here::here("scRNAseq/meta_analysis/R_objects/pure_cd4_seu.rds")
+path_to_save_pure_cd4_markers <- here::here("scRNAseq/meta_analysis/R_objects/pure_cd4_marker.rds")
+```
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Calculate markers
+Idents(cd4_seurat) <- "SCT_snn_res.1.2"
+markers <- FindAllMarkers(cd4_seurat, only.pos = TRUE, logfc.threshold = min_log2FC)
+markers <- markers %>%
+  mutate(cluster = as.character(cluster)) %>%
+  filter(p_val_adj < alpha) %>%
+  arrange(cluster) %>%
+  group_by(cluster) %>%
+  arrange(desc(avg_log2FC), .by_group = TRUE)
+
+# Save the marker results
+saveRDS(markers, path_to_save_cd4_markers)
+write.csv(markers, here::here("scRNAseq/meta_analysis/text_files/cd4_markers.csv"), row.names = FALSE)
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Show the marker results
+markers <- readRDS(path_to_save_cd4_markers)
+DT::datatable(markers, options = list(scrollX = TRUE))
+```
+
+We found that cluster 2, 10, and 14 were contaminated cells (B cell, RBC, and platelets).
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Keep only the CD4+ T cell clusters with reprocessing
+filtered_cd4_seurat <- subset(cd4_seurat, idents = c(2, 10, 14), invert = TRUE)
+filtered_cd4_seurat <- SCTransform(filtered_cd4_seurat, vst.flavor = "v2", method = "glmGamPoi", verbose = FALSE)
+filtered_cd4_seurat <- RunPCA(filtered_cd4_seurat)
+filtered_cd4_seurat <- RunUMAP(filtered_cd4_seurat, dims = 1:30, reduction = "harmony")
+filtered_cd4_seurat <- FindNeighbors(filtered_cd4_seurat, dims = 1:30, reduction = "harmony")        
+filtered_cd4_seurat <- FindClusters(
+  filtered_cd4_seurat,
+  random.seed = 12345,
+  verbose = FALSE,
+  resolution = seq(0.1, 2, by = 0.1)
+)
+
+# Save the object
+saveRDS(filtered_cd4_seurat, path_to_save_filtered_cd4_obj)
+```
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Calculate markers
+Idents(filtered_cd4_seurat) <- "SCT_snn_res.2"
+markers <- FindAllMarkers(filtered_cd4_seurat, only.pos = TRUE, logfc.threshold = min_log2FC)
+markers <- markers %>%
+  mutate(cluster = as.character(cluster)) %>%
+  filter(p_val_adj < alpha) %>%
+  arrange(cluster) %>%
+  group_by(cluster) %>%
+  arrange(desc(avg_log2FC), .by_group = TRUE)
+
+# Save the marker results
+saveRDS(markers, path_to_save_filtered_cd4_markers)
+write.csv(markers, here::here("scRNAseq/meta_analysis/text_files/filtered_cd4_markers.csv"), row.names = FALSE)
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Show the marker results
+markers <- readRDS(path_to_save_filtered_cd4_markers)
+DT::datatable(markers, options = list(scrollX = TRUE))
+```
+
+We found contaminated cells from cluster 3, 4, 7, 8, 9, 10, 11, 14, 15, 16, 19, and 26. We then removed them.
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Keep only the CD4+ T cell clusters with reprocessing
+filtered2_cd4_seurat <- subset(filtered_cd4_seurat, idents = c(3, 4, 7, 8, 9, 10, 11, 14, 15, 16, 19, 26), invert = TRUE)
+filtered2_cd4_seurat <- SCTransform(filtered2_cd4_seurat, vst.flavor = "v2", method = "glmGamPoi", verbose = FALSE)
+filtered2_cd4_seurat <- RunPCA(filtered2_cd4_seurat)
+filtered2_cd4_seurat <- RunUMAP(filtered2_cd4_seurat, dims = 1:30, reduction = "harmony")
+filtered2_cd4_seurat <- FindNeighbors(filtered2_cd4_seurat, dims = 1:30, reduction = "harmony")        
+filtered2_cd4_seurat <- FindClusters(
+  filtered2_cd4_seurat,
+  random.seed = 12345,
+  verbose = FALSE,
+  resolution = seq(0.1, 2, by = 0.1)
+)
+
+# Save the object
+saveRDS(filtered2_cd4_seurat, path_to_save_filtered2_cd4_obj)
+```
+
+In conclusion, we removed and processed the CD4+ cell object for 2 times till we obtained the pure CD4+ T cell object for further analysis.
+
+# Subtype annotation
+
+```{r, eval=FALSE}
+# Change the obeject name
+pure_cd4_seurat <- filtered2_cd4_seurat
+saveRDS(pure_cd4_seurat, path_to_save_pure_cd4_obj)
+```
+
+```{r, message=FALSE, warning=FALSE, fig.height=4, fig.width=13}
+# Visualise the clusters
+pure_cd4_seurat <- readRDS(path_to_save_pure_cd4_obj)
+group_by <- c("SCT_snn_res.0.4", "SCT_snn_res.0.5", "SCT_snn_res.0.6")
+umap_plots <- lapply(group_by, function (group){
+  DimPlot(pure_cd4_seurat, 
+          reduction = "umap", 
+          group.by = group, 
+          pt.size = 4,
+          repel=TRUE,
+          raster=TRUE, 
+          label=TRUE) +
+    labs(y= "UMAP 2", x = "UMAP 1")
+})
+
+pure_cd4_umap.plt <- wrap_plots(umap_plots, ncol=3)
+pure_cd4_umap.plt
+```
+
+```{r, message=FALSE, warning=FALSE, fig.height=4, fig.width=13}
+# Visualise the umap
+group_by <- c("ref", "tissue", "group")
+umap_plots <- lapply(group_by, function (group){
+  DimPlot(pure_cd4_seurat, 
+          reduction = "umap", 
+          group.by = group, 
+          pt.size = 4,
+          repel=TRUE,
+          raster=TRUE, 
+          label=TRUE) +
+    labs(y= "UMAP 2", x = "UMAP 1")
+})
+
+pure_cd4_umap.plt <- wrap_plots(umap_plots, ncol=3)
+pure_cd4_umap.plt
+```
+
+```{r, message=FALSE, warning=FALSE, fig.height=5, fig.width=10}
+# Visualise the cases
+pure_cd4_seurat$patient <- paste0(pure_cd4_seurat$case, "_", pure_cd4_seurat$ref)
+case_cd4.plt <- DimPlot(pure_cd4_seurat, 
+                       reduction = "umap", 
+                       group.by = "patient", 
+                       pt.size = 3,
+                       repel=TRUE,
+                       raster=TRUE, 
+                       label=TRUE) + 
+  labs(y= "UMAP 2", x = "UMAP 1")
+
+case_cd4.plt
+```
+
+Based on Parry (2023b), although the original clinical condition for cases MDAC-ACC-17_Parry_2023b, MDAC-ACC-18_Parry_2023b, and MDAC-ACC-29_Parry_2023b was CLL, their tumour cells were annotated as CCND2hi RT based on RT-associated marker expression and predominant S-phase cell-cycle scores (see Tumour Subtype Annotation section).
+
+Similarly, in Penter (2021), tumour cells from case 1 were annotated as BCAT1hiCCND2hi RT, with high G2/M-phase cell-cycle scores. Accordingly, we reclassified the clinical condition of these samples from CLL to RT for downstream analyses.
+
+```{r, eval=FALSE}
+# Change the new condition for case MDAC-ACC-17_Parry_2023b, MDAC-ACC-18_Parry_2023b, and MDAC-ACC-29_Parry_2023b
+selected_cases <- c("MDAC-ACC-17_Parry_2023b", "MDAC-ACC-18_Parry_2023b", "MDAC-ACC-29_Parry_2023b", "1_Penter_2021")
+pure_cd4_seurat$new_cond <- pure_cd4_seurat$group
+pure_cd4_seurat@meta.data[pure_cd4_seurat$patient %in% selected_cases, "new_cond"] <- "RT"
+```
+
+```{r, message=FALSE, warning=FALSE, fig.height=5, fig.width=6}
+# Visualise the adapted condition
+new_cond_cd4.plt <- DimPlot(pure_cd4_seurat, 
+                       reduction = "umap", 
+                       group.by = "new_cond", 
+                       pt.size = 3,
+                       repel=TRUE,
+                       raster=TRUE, 
+                       label=TRUE) + 
+  labs(y= "UMAP 2", x = "UMAP 1")
+
+new_cond_cd4.plt
+```
+
+```{r, fig.height=7, fig.width=12, warning=FALSE, message=FALSE}
+# Plot based on cell biomarker expression
+FeaturePlot(pure_cd4_seurat, 
+            features = c("CD3D", "CD4", "TCF7", "CXCR3", "NKG7", "CCR8", "CDKN1A",
+                         "BACH2", "CXCR5", "CCR4", "HAVCR2", "MKI67"),
+            reduction = "umap") 
+```
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Calculate markers
+Idents(pure_cd4_seurat) <- "SCT_snn_res.0.6"
+markers <- FindAllMarkers(pure_cd4_seurat, only.pos = TRUE, logfc.threshold = min_log2FC)
+markers <- markers %>%
+  mutate(cluster = as.character(cluster)) %>%
+  filter(p_val_adj < alpha) %>%
+  arrange(cluster) %>%
+  group_by(cluster) %>%
+  arrange(desc(avg_log2FC), .by_group = TRUE)
+
+# Save the marker results
+saveRDS(markers, path_to_save_pure_cd4_markers)
+write.csv(markers, here::here("scRNAseq/meta_analysis/text_files/pure_cd4_markers.csv"), row.names = FALSE)
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Show the marker results
+markers <- readRDS(path_to_save_pure_cd4_markers)
+DT::datatable(markers, options = list(scrollX = TRUE))
+```
+
+We annotated the myeloid subtypes as literature below:
+
+- [Role of CD4+ T cells in cancer immunity: a single-cell sequencing exploration of tumor microenvironment](https://link.springer.com/article/10.1186/s12967-025-06167-1)
+- [Selective addition of CXCR3+CCR4-CD4+ Th1 cells enhances generation of cytotoxic T cells by dendritic cells in vitro](https://www.nature.com/articles/emm200920)
+- [GATA-3 promotes Th2 responses through three different mechanisms: induction of Th2 cytokine production, selective growth of Th2 cells and inhibition of Th1 cell-specific factors](https://www.nature.com/articles/7310002)
+- [Bcl6-Mediated Transcriptional Regulation of Follicular Helper T cells (TFH)](https://www.cell.com/trends/immunology/fulltext/S1471-4906(21)00026-0?_returnURL=https%3A%2F%2Flinkinghub.elsevier.com%2Fretrieve%2Fpii%2FS1471490621000260%3Fshowall%3Dtrue)
+- [BACH2 drives quiescence and maintenance of resting Treg cells to promote homeostasis and cancer immunosuppression](https://rupress.org/jem/article/217/9/e20190711/151846/BACH2-drives-quiescence-and-maintenance-of-resting)
+- [CDKN1A and cellular senescence are associated with immune resistance in advanced lung adenocarcinoma](https://link.springer.com/article/10.1007/s10238-025-01926-2)
+- [A Multi-Omics Analysis of an Exhausted T Cells’ Molecular Signature in Pan-Cancer](https://www.mdpi.com/2075-4426/14/7/765)
+- [Intratumoral CD4+ T Cells Mediate Anti-tumor Cytotoxicity in Human Bladder Cancer](https://www.sciencedirect.com/science/article/pii/S0092867420306127)
+- [Inhibition of topoisomerase IIA (Top2α) induces telomeric DNA damage and T cell dysfunction during chronic viral infection](https://www.nature.com/articles/s41419-020-2395-2?utm_source=researchgate.net&utm_medium=article)
+- [A Population of Tumor-Infiltrating CD4+ T Cells Co-Expressing CD38 and CD39 Is Associated with Checkpoint Inhibitor Resistance](https://aacrjournals.org/clincancerres/article-abstract/29/20/4242/729426/A-Population-of-Tumor-Infiltrating-CD4-T-Cells-Co?redirectedFrom=fulltext)
+- [Stem-like progenitor and terminally differentiated TFH-like CD4+ T cell exhaustion in the tumor microenvironment](https://www.cell.com/cell-reports/fulltext/S2211-1247(24)00125-6)
+- [Discovery and validation of proliferative exhausted T cells as a favorable prognostic biomarker in esophageal squamous cell carcinoma](https://www.nature.com/articles/s41598-025-25535-x#Sec2)
+
+| Cluster | Markers                                              | Annotation                |
+|---------|------------------------------------------------------|---------------------------|
+| 0       | CXCR3                                                | Th1                       |
+| 1       | NKG7, GZMA, GZMK                                     | CD4+ CTL                  |
+| 2       | TCF7, LEF1, SELL                                     | Tn                        |
+| 3       | FOXP3                                                | Treg                      |
+| 4       | BACH2, CDKN1A                                        | BACH2hi quiescent CD4+ T  |
+| 5       | CCR4, GATA3                                          | Th2                       |
+| 6       | CXCR5, BCL6                                          | Tfh                       |
+| 7       | HAVCR2, LAG3, PDCD1, TIGIT, CD38, GZMH               | Tex                       |
+| 8       | MKI67, PCNA, TOP2A, CD38, CXCL13, GZMH, CDK4, ESCO2  | Prolif-like Tex           |
+
+Abbreviations: Tn, naive T cell; Th, helper T cell; Treg, regulatory T cell; Tfh, T follicular helper cell; Tex, exhausted T cell; Prolif-like Tex, proliferative-like Tex; 
+
+```{r, message=FALSE, warning=FALSE, fig.height=4.5, fig.width=7}
+# Plot UMAP for CD4+ T cell subtypes
+
+# 1. Map Seurat clusters and create the annotation column
+cluster_to_annotation <- c(
+  "0" = "Th1", "1" = "CD4+ CTL", "2" = "Tn", "3" = "Treg", "4" = "BACH2hi quiescent CD4+ T", 
+  "5" = "Th2", "6" = "Tfh", "7" = "Tex", "8" = "Prolif-like Tex"
+  )
+
+pure_cd4_seurat$level2_annotate <- 
+  as.vector(cluster_to_annotation[as.character(pure_cd4_seurat$SCT_snn_res.0.6)])
+
+# 2. Set level order
+new_levels <- c(
+  # Group1: naive, helper, and cytotoxic CD4+  
+  "Tn", "Th1", "Th2", "CD4+ CTL", "Tfh",
+  
+  # Group2: regulatory and quiescent CD4+  
+  "Treg", "BACH2hi quiescent CD4+ T",     
+
+  # Group3: exhausted CD4+  
+  "Tex", "Prolif-like Tex" 
+)
+
+pure_cd4_seurat$level2_annotate <- factor(
+  pure_cd4_seurat$level2_annotate,
+  levels = new_levels
+) 
+
+# 3. Define colours and labels
+new_colours <- c(
+  "#B3B3B3", "#1F78B4", "#33A02C", "#008080", "#C28BCD",  # Group 1 (5 colours)
+  "#FDBF6F", "#FFD92F",                                   # Group 2 (2 colours)
+  "#E25644", "#B04968"                                    # Group 3 (2 colours)
+) 
+
+custom_labels <- list(
+  bquote("Tn"), bquote("Th1"), bquote("Th2"), bquote("CD4+ CTL"), bquote("Tfh"),
+  bquote("Treg"), bquote(BACH2^hi~"quiescent CD4+ T"), 
+  bquote("Tex"), bquote("Prolif-like Tex")
+  )
+
+# 4. Plot UMAP
+cd4_subtype.plt <- DimPlot(pure_cd4_seurat, 
+                          group.by = "level2_annotate", 
+                          label = FALSE,
+                          repel = TRUE,
+                          pt.size = 1,
+                          alpha = 1,
+                          raster = FALSE
+                          ) +
+  scale_color_manual(
+    values = new_colours,
+    breaks = new_levels,
+    labels = custom_labels
+  ) +
+  labs(y = "UMAP 2", x = "UMAP 1") +
+  ggtitle("CD4+ T cell subtypes")
+
+cd4_subtype.plt
+```
+
+```{r, message=FALSE, warning=FALSE, fig.height=4, fig.width=13}
+# Dot plot for biomarker expressions based on annotated cells
+features <- c("TCF7", "LEF1", "SELL", "CXCR3", "CCR4", "GATA3", "NKG7", "GZMA", "GZMK",
+              "CXCR5", "BCL6", "FOXP3", "BACH2", "CDKN1A", "HAVCR2", "LAG3", "PDCD1", "TIGIT", 
+              "CD38", "GZMH", "CXCL13", "CDK4", "ESCO2", "MKI67", "PCNA", "TOP2A"
+              )
+colour_pal <- colorRampPalette(c("#053061", "#2171B5", "white", "#FFD92F", "#A50F15"))(100)
+
+cd4_markers.plt <- DotPlot(pure_cd4_seurat, features=features, group.by = "level2_annotate") +
+  RotatedAxis() +
+  scale_colour_gradientn(colours = colour_pal) +
+  scale_y_discrete(
+      limits = rev(new_levels),
+      labels = rev(custom_labels)
+    ) +
+  labs(
+    colour = "Average\nExpression",
+    size = "Percent\nExpressed"
+  )
+
+cd4_markers.plt
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Plot subtype population based on tissue and condition
+proportion_tissue_df <- pure_cd4_seurat@meta.data %>%
+  dplyr::mutate(level2_annotate = factor(level2_annotate, levels = new_levels)) %>%
+  dplyr::count(tissue, level2_annotate) %>%
+  dplyr::group_by(tissue) %>%
+  dplyr::mutate(proportion = n / sum(n)) %>%
+  dplyr::ungroup() %>%
+  dplyr::select(-n) # Remove n column
+
+proportion_cond_df <- pure_cd4_seurat@meta.data %>%
+  dplyr::mutate(level2_annotate = factor(level2_annotate, levels = new_levels)) %>%
+  dplyr::count(new_cond, level2_annotate) %>%
+  dplyr::group_by(new_cond) %>%
+  dplyr::mutate(proportion = n / sum(n)) %>%
+  dplyr::ungroup() %>%
+  dplyr::select(-n) # Remove n column
+
+tissue_cell_pop.plt <- ggplot(proportion_tissue_df, aes(x = tissue, 
+                                                    y = proportion, 
+                                                    fill = level2_annotate)) +
+  geom_col(position = "stack", width = 0.7) +
+  scale_fill_manual(
+    values = new_colours,
+    breaks = new_levels,
+    name = "CD4+ T cell subtype" # Set legend title
+  ) +
+  labs(
+    y = "Cell proportion",
+    x = "Tissue", 
+    title = "Tissue"
+  ) +
+  theme_bw() +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    axis.text.x = element_text(angle = 45, hjust = 1), # Rotate x-axis labels 
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank()
+  )
+
+cond_cell_pop.plt <- ggplot(proportion_cond_df, aes(x = new_cond, 
+                                                    y = proportion, 
+                                                    fill = level2_annotate)) +
+  geom_col(position = "stack", width = 0.5) +
+  scale_fill_manual(
+    values = new_colours,
+    breaks = new_levels,
+    name = "CD4+ T cell subtype" # Set legend title
+  ) +
+  labs(
+    y = "Cell proportion",
+    x = "Condition", 
+    title = "Condition"
+  ) +
+  theme_bw() +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    axis.text.x = element_text(angle = 45, hjust = 1), # Rotate x-axis labels 
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank()
+  )
+
+# Combine the plots
+adapted_tissue_cell_pop.plt <- tissue_cell_pop.plt +
+  theme(legend.position = "none",
+        axis.title.x = element_blank()) 
+
+adapted_cond_cell_pop.plt <- cond_cell_pop.plt + 
+  theme(legend.position = "right", 
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks.y = element_blank()) 
+
+combined_cell_pop.plt <- adapted_tissue_cell_pop.plt + adapted_cond_cell_pop.plt
+combined_cell_pop.plt
+```
+
+```{r, eval=FALSE}
+# Save the CD4 T cell object
+saveRDS(pure_cd4_seurat, path_to_save_pure_cd4_obj)
+
+# Save the figures
+ggsave(filename=paste0(path_to_save_figure, "/cd4_umap.png"), plot=cd4_subtype.plt, dpi=500, height=4.5, width=7)
+ggsave(filename=paste0(path_to_save_figure, "/cd4_dot.png"), plot=cd4_markers.plt, dpi=500, height=4, width=13)
+ggsave(filename=paste0(path_to_save_figure, "/cd4_cell_pop.png"), plot=combined_cell_pop.plt , dpi=500, height=4, width=7)
+```
+
+# Trajectory analysis
+
+In this section, we used the Monocle 3 package to identify developmental trajectories of CD4+ T cells using naive T cell subtype as a root node.
+
+```{r, message=FALSE, warning=FALSE}
+# Import the relevant packages
+library(monocle3)
+library(igraph)
+library(SeuratWrappers)
+library(paletteer)
+```
+
+```{r}
+# Define path to save
+path_to_save_cd4_monocle_obj <- here::here("scRNAseq/meta_analysis/R_objects/cd4_monocle_cds.rds")
+path_to_save_cd4_monocle_dea <- here::here("scRNAseq/meta_analysis/R_objects/cd4_monocle_dea.rds")
+path_to_save_cd4_monocle_module <- here::here("scRNAseq/meta_analysis/R_objects/cd4_monocle_module.rds")
+path_to_save_cd4_monocle_agg_mat <- here::here("scRNAseq/meta_analysis/R_objects/cd4_monocle_agg_mat.rds")
+```
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Create monocle object and generate graph (use data from seurat)
+cds <- as.cell_data_set(pure_cd4_seurat) # Convert the seurat object to monocle object using SeuratWrappers
+cds <- preprocess_cds(cds)
+
+# Create gene_short_name
+rowData(cds)$gene_short_name <- row.names(rowData(cds))
+
+# Assign seurat clusters to monocle and create a partition
+cds <- monocle3::cluster_cells(cds, reduction_method = "UMAP", 
+                               cluster_method = "louvain", 
+                               resolution = 0.5)
+cds@clusters$UMAP$clusters <- pure_cd4_seurat$SCT_snn_res.0.6
+
+# Assign UMAP coordination
+cds@int_colData$reducedDims$UMAP <- pure_cd4_seurat@reductions$umap@cell.embeddings
+```
+
+```{r, eval=FALSE}
+# Set cluster 5 as partition 2 as Th2 cannot differenriate from CTL
+all_cells <- colnames(cds)
+assigned_partitions <- rep("1", length(all_cells))
+names(assigned_partitions) <- all_cells
+cluster5_cells <- colnames(pure_cd4_seurat)[pure_cd4_seurat$SCT_snn_res.0.6 == "5"]
+assigned_partitions[cluster5_cells] <- "2"
+cds@clusters$UMAP$partitions <- as.factor(assigned_partitions)
+```
+
+```{r, message=FALSE, warning=FALSE, fig.height=4, fig.width=17}
+# Monocle plot before trajectory analysis
+cds <- readRDS(path_to_save_cd4_monocle_obj)
+group_by <- c("cluster", "partition", "level2_annotate")
+umap_plots <- lapply(group_by, function (group){
+  plot_cells(cds, 
+             color_cells_by = group, 
+             label_groups_by_cluster = FALSE, 
+             group_label_size = 5,
+             cell_size = 0.7) +  
+    theme(legend.position = "right")
+})
+
+monocle_umap.plt <- wrap_plots(umap_plots, ncol=3)
+monocle_umap.plt
+```
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Learn trajectory
+cds <- learn_graph(cds, use_partition = TRUE, close_loop = FALSE,
+                   learn_graph_control = list(minimal_branch_len = 5, rann.k = 50))
+```
+
+```{r, fig.height=5, fig.width=7}
+# Plot after learning trajectory
+monocle_cluster.plt <- plot_cells(cds, 
+                                  color_cells_by = "cluster",
+                                  graph_label_size=5,
+                                  cell_size = 0.7,
+                                  show_trajectory_graph = TRUE
+                                  ) + 
+  ggtitle("Seurat clusters") +
+  theme(legend.position = "right",
+        plot.title = element_text(size = 16, face = "bold", hjust = 0.5)
+        )
+
+monocle_cluster.plt
+```
+
+```{r, fig.height=5, fig.width=7}
+# Plot root
+root.plt <- plot_cells(cds, label_principal_points = TRUE) + 
+  ggtitle("Root principal node") +
+  theme(legend.position = "right",
+        plot.title = element_text(size = 16, face = "bold", hjust = 0.5)
+        )
+
+root.plt
+```
+
+```{r, fig.height=9, fig.width=8, warning=FALSE, message=FALSE}
+# Plot based on cell biomarker expression
+FeaturePlot(pure_cd4_seurat, 
+            features = c("CCR7", "LEF1", "TCF7", "SELL", "BACH2", "GATA3"),
+            reduction = "umap") 
+```
+
+From the feature plots, we saw that Y_267 area showed the highest expression of CCR7, LEF1, TCf7, and SELL in the cluster 2. We then set this point as the root node. For cluster 5, we set Y_306 as the root node as it expressed the high BACH2 (from cluster 4) while lowest expressed in GATA3 (signature marker for Th2).
+
+## Calculate pseudotime
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Set a root to order cells in pseudotime
+cds <- order_cells(cds, reduction_method = "UMAP", root_pr_nodes = c("Y_267", "Y_306"))
+```
+
+```{r, fig.height=5, fig.width=7}
+# Plot the pseudotime
+monocle_pseudotime.plt <- plot_cells(cds, 
+                                     color_cells_by = "pseudotime",
+                                     label_cell_groups=FALSE,
+                                     label_leaves=FALSE,
+                                     label_branch_points=FALSE,
+                                     graph_label_size=1.5,
+                                     cell_size = 0.7) +
+  ggtitle("Pseudotime") +
+  theme(legend.position = "right",
+        plot.title = element_text(size = 16, face = "bold", hjust = 0.5)
+        )
+
+monocle_pseudotime.plt
+```
+
+```{r, fig.height=5, fig.width=5}
+# Plot the pseudotime with trajectory path with Seurat style
+
+# 1. Extract principal graph
+pg_aux <- principal_graph_aux(cds)$UMAP
+
+# 2. Convert to edge list
+edges <- as_data_frame(principal_graph(cds)$UMAP, what = "edges")
+nodes <- as.data.frame(t(pg_aux$dp_mst))
+nodes$name <- rownames(nodes)
+root_node <- cds@principal_graph_aux$UMAP$root_pr_nodes
+
+# 3. Merge edges with coordinates
+trajectory_df <- edges %>%
+  dplyr::left_join(nodes, by = c("from" = "name")) %>%
+  dplyr::rename(
+    UMAP_1_from = umap_1,
+    UMAP_2_from = umap_2
+  ) %>%
+  dplyr::left_join(nodes, by = c("to" = "name")) %>%
+  dplyr::rename(
+    UMAP_1_to = umap_1,
+    UMAP_2_to = umap_2
+  )
+
+seurat_df <- data.frame(
+  Embeddings(pure_cd4_seurat, "umap"),
+  pseudotime = pseudotime(cds)
+)
+
+root_df <- nodes %>%
+  dplyr::filter(name %in% root_node)
+
+# 4. Plot
+trajectory_no_annotate.plt <- ggplot(seurat_df, aes(umap_1, umap_2)) +
+  geom_point(aes(color = pseudotime), size = 1, alpha=1) +
+  geom_segment(
+    data = trajectory_df,
+    aes(
+      x = UMAP_1_from,
+      y = UMAP_2_from,
+      xend = UMAP_1_to,
+      yend = UMAP_2_to
+    ),
+    inherit.aes = FALSE,
+    colour = "black",
+    linewidth = 0.7
+  ) +
+  geom_point(
+    data = root_df,
+    aes(umap_1, umap_2),
+    inherit.aes = FALSE,
+    shape = 21,          # circle with fill
+    size = 6,
+    fill = "white",
+    colour = "black",
+    stroke = 1
+  ) +
+  geom_text(
+    data = root_df,
+    aes(umap_1, umap_2),
+    label = c("1", "2"),
+    inherit.aes = FALSE,
+    size = 5,
+    fontface = "bold"
+  ) +
+  scale_color_gradientn(
+    name = "Pseudotime",
+    colors = paletteer_c("grDevices::RdYlBu", 30, direction = -1)
+  ) +
+  theme_void() +
+  theme(
+    legend.position = "bottom" 
+  )  
+  
+annotate_trajectory.plt <- trajectory_no_annotate.plt +  
+  annotate("text", x = -5.5, y = -6.6, label = "Tn", 
+             color = "black", fontface = "plain", size = 4) +
+  annotate("text", x = -3, y = 5.5, label = "Treg", 
+             color = "black", fontface = "plain", size = 4) +
+  annotate("text", x = 2.8, y = 4.2, label = "Tex", 
+             color = "black", fontface = "plain", size = 4) +
+  annotate("text", x = 6.2, y = 5, label = "Prolif-like Tex", 
+             color = "black", fontface = "plain", size = 4) +
+  annotate("text", x = 8.3, y = -1.5, label = "Tfh", 
+             color = "black", fontface = "plain", size = 4) +
+  annotate("text", x = 8.3, y = 2.2, label = "Th2", 
+             color = "black", fontface = "plain", size = 4) +
+  annotate("text", x = 2.4, y = -2.8, label = "Quiescent", 
+             color = "black", fontface = "plain", size = 4) +
+  annotate("text", x = -0.5, y = -2.8, label = "Th1", 
+             color = "black", fontface = "plain", size = 4) +
+  annotate("text", x = 0.8, y = 3.7, label = "CTL", 
+             color = "black", fontface = "plain", size = 4)
+
+annotate_trajectory.plt
+```
+
+```{r, eval=FALSE}
+# Save the monocle object
+saveRDS(cds, path_to_save_cd4_monocle_obj)
+
+# Save the figure
+ggsave(filename=paste0(path_to_save_figure, "/cd4_trajectory.png"), plot=annotate_trajectory.plt, dpi=500, height=5, width=5)
+```
+
+## Gene expression across pseudotime
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Group genes into modules
+cd4_cds_pr_test_res <- monocle3::graph_test(cds, neighbor_graph = "principal_graph", cores = 4)
+monocle_degs <- row.names(subset(cd4_cds_pr_test_res, q_value < 0.05))
+gene_modules_df <- find_gene_modules(cds[monocle_degs,], resolution=4e-3)
+cell_group_df <- tibble::tibble(cell=row.names(colData(cds)), 
+                                cell_group=colData(cds)$level2_annotate)
+agg_mat <- aggregate_gene_expression(cds, gene_modules_df, cell_group_df)
+row.names(agg_mat) <- paste0("Module ", row.names(agg_mat))
+
+# Save the module results
+write.csv(cd4_cds_pr_test_res, here::here("scRNAseq/meta_analysis/supplm_file/cd4_trajectory_gene_expr.csv"))
+saveRDS(cd4_cds_pr_test_res, path_to_save_cd4_monocle_dea)
+saveRDS(gene_modules_df, path_to_save_cd4_monocle_module)
+saveRDS(agg_mat, path_to_save_cd4_monocle_agg_mat)
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Show the monocle dae
+monocle_dea <- readRDS(path_to_save_cd4_monocle_dea)
+DT::datatable(monocle_dea, options = list(scrollX = TRUE))
+```
+
+```{r, fig.height=9, fig.width=6}
+# Plot heatmap 
+library(pheatmap)
+gene_modules_df <- readRDS(path_to_save_cd4_monocle_module)
+agg_mat <- readRDS(path_to_save_cd4_monocle_agg_mat)
+colour_pal <- colorRampPalette(c("#053061", "#2171B5", "white", "#FFD92F", "#A50F15"))(100)
+pseudotime_heatmap.plt <- pheatmap::pheatmap(agg_mat, scale="column", fontsize = 11,
+                                             color = colour_pal,
+                                             angle_col = 45,
+                                             clustering_method="ward.D2")
+
+pseudotime_heatmap.plt
+```
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Test a range of resolutions to appropriate modules
+resolutions <- c(1e-3, 2e-3, 3e-3, 4e-3, 5e-3)
+
+for(res in resolutions){
+  modules <- find_gene_modules(cds[monocle_degs,], resolution = res)
+  num_mods <- length(unique(modules$module))
+  print(paste("Resolution:", res, "->", num_mods, "Modules"))
+}
+```
+
+```{r}
+# Collect gene signatures for fate subtypes based on gene modules
+treg_gene <- gene_modules_df %>% filter(module %in% c(18, 29)) %>% pull(id)
+tex_gene <- gene_modules_df %>% filter(module %in% c(11, 21, 26)) %>% pull(id)
+prolif_tex_gene <- gene_modules_df %>% filter(module %in% c(3, 12, 20, 27)) %>% pull(id)
+```
+
+```{r, message=FALSE, warning=FALSE, fig.height=8, fig.width=6}
+# Branch 1 Tn > Treg
+cells_types_of_interest <- c("Tn", "Treg")
+pseudotime_genes <- c("CTLA4", "FOXP3", "HLA-DRA", "PSAP", "VSIR", "DDIT4")
+
+treg_genes_pseudotime <- plot_expression_on_pseudotime(cds_ordered = cds, 
+                                                           genes = pseudotime_genes, 
+                                                           cell_annotations = cells_types_of_interest, 
+                                                           pseudotime_boundary = 20,
+                                                           facet_wrap_plot = TRUE) +
+  miller_discrete_scale(style = "bars") +
+  labs(title = "Tn to Treg") +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold", size = 16))
+
+treg_genes_pseudotime
+```
+
+During Treg development, we observed that this subtype exhibited high expression of HLA-DR genes, suggesting a highly suppressive and terminally differentiated phenotype. Additional TME-associated genes were also identified. For example, PSAP and VSIR have been implicated in CD8⁺ T cell suppression across various cancer types. DDIT4, a hypoxia-responsive gene, was also upregulated, consistent with TME-associated hypoxic conditions.
+
+```{r, message=FALSE, warning=FALSE, fig.height=8, fig.width=6}
+# Branch 2 Tn > Tex
+cells_types_of_interest <- c("Tn", "Th1", "CD4+ CTL", "Tex")
+pseudotime_genes <- c("PDCD1", "LGALS9", "ISG15", "STAT1", "XAF1", "GLS")
+
+tex_genes_pseudotime <- plot_expression_on_pseudotime(cds_ordered = cds, 
+                                                           genes = pseudotime_genes, 
+                                                           cell_annotations = cells_types_of_interest, 
+                                                           pseudotime_boundary = 21,
+                                                           facet_wrap_plot = TRUE) +
+  miller_discrete_scale(style = "bars") +
+  labs(title = "Tn to Tex") +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold", size = 16))
+
+tex_genes_pseudotime
+```
+
+For the Tex cell fate, upregulation of PDCD1, a canonical exhaustion marker, was observed. Additionally, LGALS9, an immune suppression–associated gene, was also upregulated. Increased expression of ISG15 and STAT1, classically associated with antiviral responses, has been implicated in immune regulation and tumour-promoting processes. Metabolic genes, including GLS, were also upregulated, suggesting metabolic adaptation and potential competition for energy resources within the TME.
+
+```{r, message=FALSE, warning=FALSE, fig.height=8, fig.width=6}
+# Branch 3 Tn > Prolif-like Tex.
+cells_types_of_interest <- c("Tn", "Th1", "CD4+ CTL", "Tex")
+pseudotime_genes <- c("LAG3", "PCNA", "BAD", "CKS2", "TNFRSF14", "ENO1")
+
+prolif_tex_genes_pseudotime <- plot_expression_on_pseudotime(cds_ordered = cds, 
+                                                           genes = pseudotime_genes, 
+                                                           cell_annotations = cells_types_of_interest, 
+                                                           pseudotime_boundary = 25,
+                                                           facet_wrap_plot = TRUE) +
+  miller_discrete_scale(style = "bars") +
+  labs(title = "Tn to Prolif-like Tex") +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold", size = 16))
+
+prolif_tex_genes_pseudotime
+```
+
+For the Prolif-like Tex fate, we observed increased expression of both exhaustion- and proliferation-associated genes, including LAG3 and PCNA. Concurrent upregulation of the pro-apoptotic gene BAD suggests elevated cellular turnover, potentially contributing to the relatively small population size. Moreover, immune suppression–associated genes, such as CKS2, TNFRSF14, and ENO1, were also upregulated.
+
+```{r, eval=FALSE}
+# Save the figures
+ggsave(filename=paste0(path_to_save_figure, "/cd4_treg_gene_flow.png"), plot=treg_genes_pseudotime, dpi=500, height=8, width=6)
+ggsave(filename=paste0(path_to_save_figure, "/cd4_tex_gene_flow.png"), plot=tex_genes_pseudotime, dpi=500, height=8, width=6)
+ggsave(filename=paste0(path_to_save_figure, "/cd4_prolif_tex_gene_flow.png"), plot=prolif_tex_genes_pseudotime, dpi=500, height=8, width=6)
+```
+
+# Pseudobulk gene expression analysis between RT versus CLL
+
+```{r, message=FALSE, warning=FALSE}
+# Import the related libraries in functional enrichment analysis
+library(DESeq2)
+library(limma)
+library(clusterProfiler)
+library(enrichplot)
+library(msigdbr)
+library(org.Hs.eg.db)
+library(EnhancedVolcano)
+library(ggpubr)
+```
+
+## Based on Seurat command
+
+```{r}
+# Define paths to save and load
+path_to_save_seurat_dea <- here::here("scRNAseq/meta_analysis/R_objects/gene_exprs/cd4_seurat_dea.rds")
+path_to_save_seurat_hm_gsea <- here::here("scRNAseq/meta_analysis/R_objects/gene_exprs/cd4_seurat_hm_gsea.rds")
+path_to_save_seurat_go_gsea <- here::here("scRNAseq/meta_analysis/R_objects/gene_exprs/cd4_seurat_go_gsea.rds")
+path_to_save_seurat_kegg_gsea <- here::here("scRNAseq/meta_analysis/R_objects/gene_exprs/cd4_seurat_kegg_gsea.rds")
+path_to_save_seurat_reactome_gsea <- here::here("scRNAseq/meta_analysis/R_objects/gene_exprs/cd4_seurat_reactome_gsea.rds")
+path_to_save_seurat_wikipath_gsea <- here::here("scRNAseq/meta_analysis/R_objects/gene_exprs/cd4_seurat_wikipath_gsea.rds")
+```
+
+### Find biomarkers of monocytes between RT and CLL conditions
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Find markers between CLL and RT conditions  
+Idents(pure_cd4_seurat) <- "new_cond" # we used this variable as it contains RT and CLL
+pure_cd4_seurat <- PrepSCTFindMarkers(pure_cd4_seurat) # Prepare SCT assay for DE testing
+cd4.ge <- FindMarkers(
+  pure_cd4_seurat,
+  ident.1 = "RT",
+  ident.2 = "CLL",
+  test.use = "wilcox",
+  only.pos = FALSE,
+  logfc.threshold = 0
+)
+dea.df <- cbind(gene = rownames(cd4.ge), cd4.ge)
+avg_exp <- AverageExpression(pure_cd4_seurat, features = dea.df$gene, assay = "SCT") # Calculate the average expression for the genes
+dea.df$baseMean <- rowMeans(avg_exp$SCT) # Calculate the mean across all relevant groups (e.g., global mean for the gene)
+
+# Save the expression results
+saveRDS(dea.df, path_to_save_seurat_dea)
+write.csv(dea.df, here::here("scRNAseq/meta_analysis/supplm_file/cd4_seurat_dea.csv"))
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Load the saved expression data
+dea.df <- readRDS(path_to_save_seurat_dea)
+DT::datatable(dea.df, options = list(scrollX = TRUE))
+```
+
+```{r, message=FALSE, warning=FALSE, fig.height=7, fig.width=10}
+# Volcano plot for Seurat pseudobulk analysis
+genes_of_interest <- c(
+  "TNFRSF9", "TIGIT", "PDCD1", "EOMES", "LAYN", "ENTPD1", "FOXP3", "CXCR6",         # RT CD4+ T cells: exhausted and Treg shifting                
+  "PTGDR2", "CCR4", "FOS", "JUN", "DUSP1", "TCF7"                                   # CLL CD4+ T cells: Th2, acute stress response, and stemness
+)
+
+non_zero_min_pval <- sort(unique(dea.df$p_val_adj), decreasing = FALSE)[2] # Find minimum p-value which is not 0
+dea.df$adapted_p_val <- ifelse(dea.df$p_val_adj == 0, non_zero_min_pval, dea.df$p_val_adj) # Change zero adj_p_val to non-zero minimum adj_p_val to avoid plotting error
+
+volcano.plt <- volcano_plot(dea.df, 
+                            FC=0.25, 
+                            x_col="avg_log2FC",
+                            y_col="adapted_p_val",
+                            xlim=c(-10,10), 
+                            ylim=c(-0.1,100), 
+                            genes_of_interest=genes_of_interest,
+                            boxedLabels = TRUE) 
+
+volcano.plt
+```
+
+```{r, message=FALSE, warning=FALSE}
+# MA plot for Seurat pseudobulk analysis
+ma_data <- dea.df
+colnames(ma_data)[colnames(ma_data) == "avg_log2FC"] <- "log2FoldChange"
+colnames(ma_data)[colnames(ma_data) == "p_val_adj"]  <- "padj"
+
+ma.plt <- ggmaplot(ma_data, 
+                   fdr = 0.05,            # Threshold for significance
+                   fc = 2,                # Threshold for FC
+                   size = 0.4,            # Dot size
+                   palette = c("#B31B21", "#1465AC", "darkgray"),
+                   genenames = as.vector(ma_data$gene),
+                   top = 0, label.select = genes_of_interest, # set top = 0, then specify genes using label.select argument
+                   legend = "right", 
+                   font.label = c("bold", 11), 
+                   label.rectangle = TRUE,
+                   font.legend = "bold",
+                   font.main = "bold",
+                   ggtheme = ggplot2::theme_minimal(),
+                   xlab = "Mean Expression",
+                   ylab = "Log2 Fold Change"
+                   )
+
+ma.plt
+```
+
+```{r, eval=FALSE}
+# Save the figure
+ggsave(filename=paste0(path_to_save_figure, "/seurat_cd4_volcano.png"), plot=volcano.plt, dpi=500, height=7, width=9)
+ggsave(filename=paste0(path_to_save_figure, "/seurat_cd4_ma.png"), plot=ma.plt, dpi=500, height=3.5, width=5)
+```
+
+Overall, the gene expression analysis indicates that RT CD4⁺ T cells predominantly shift towards exhausted and regulatory subtypes, whereas CLL CD4⁺ T cells are primarily characterised by Th2, acute stress response, and stem-like or memory-precursor phenotypes.
+
+### GSEA
+
+```{r}
+# Manipulate the expression data
+lfc_vector <- dea.df$avg_log2FC # Create a named vector ranked based on the log2 fold change
+names(lfc_vector) <- dea.df$gene
+lfc_vector <- na.omit(lfc_vector) # Omit any NA values
+lfc_vector <- sort(lfc_vector, decreasing = TRUE) # Sort the log2 fold change in descending order
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Hallmark
+HM_gsea <- HM_GSEA(lfc_vector)
+
+# Collect the HM GSEA result
+HM_GSEA.result <- HM_gsea@result
+HM_GSEA_selected.result <- HM_GSEA.result %>%
+  as_tibble() %>%
+  dplyr::select(c(Description, NES, pvalue, p.adjust))
+
+DT::datatable(HM_GSEA_selected.result, options = list(scrollX = TRUE))
+```
+
+```{r, message=FALSE, warning=FALSE}
+# GO:BP
+GOBP_gsea <- GO_GSEA(lfc_vector)
+
+# Collect the GSEA result
+GOBP_GSEA.result <- GOBP_gsea@result
+GOBP_GSEA_selected.result <- GOBP_GSEA.result %>%
+  as_tibble() %>%
+  dplyr::select(c(Description, NES, pvalue, p.adjust))
+
+DT::datatable(GOBP_GSEA_selected.result, options = list(scrollX = TRUE))
+```
+
+```{r, message=FALSE, warning=FALSE}
+# KEGG pathway
+KEGG_gsea <- KEGG_GSEA(lfc_vector)
+
+# Collect the HM GSEA result
+KEGG_GSEA.result <- KEGG_gsea@result
+KEGG_GSEA_selected.result <- KEGG_GSEA.result %>%
+  as_tibble() %>%
+  dplyr::select(c(Description, NES, pvalue, p.adjust))
+
+DT::datatable(KEGG_GSEA_selected.result, options = list(scrollX = TRUE))
+```
+
+```{r, message=FALSE, warning=FALSE}
+# REACTOME
+REACTOME_gsea <- REACTOME_GSEA(lfc_vector)
+
+# Collect the HM GSEA result
+REACTOME_GSEA.result <- REACTOME_gsea@result
+REACTOME_GSEA_selected.result <- REACTOME_GSEA.result %>%
+  as_tibble() %>%
+  dplyr::select(c(Description, NES, pvalue, p.adjust))
+
+DT::datatable(REACTOME_GSEA_selected.result, options = list(scrollX = TRUE))
+```
+
+```{r, message=FALSE, warning=FALSE}
+# WikiPath
+WIKIPATH_gsea <- WIKIPATH_GSEA(lfc_vector)
+
+# Collect the HM GSEA result
+WIKIPATH_GSEA.result <- WIKIPATH_gsea@result
+WIKIPATH_GSEA_selected.result <- WIKIPATH_GSEA.result %>%
+  as_tibble() %>%
+  dplyr::select(c(Description, NES, pvalue, p.adjust))
+
+DT::datatable(WIKIPATH_GSEA_selected.result, options = list(scrollX = TRUE))
+```
+
+### GSEA summary
+
+We then summarised the common terms found from Hallmark, GO:BP, and canonical pathways.
+
+```{r, message=FALSE, warning=FALSE}
+# Bar plot of GSEA 
+gsea_bp <- rbind(
+  GOBP_GSEA_selected.result[GOBP_GSEA_selected.result$Description == "GOBP_T_CELL_MEDIATED_IMMUNITY",],
+  GOBP_GSEA_selected.result[GOBP_GSEA_selected.result$Description == "GOBP_REGULATION_OF_LYMPHOCYTE_MEDIATED_IMMUNITY",],
+  KEGG_GSEA_selected.result[KEGG_GSEA_selected.result$Description == "KEGG_CYTOKINE_CYTOKINE_RECEPTOR_INTERACTION",],
+  GOBP_GSEA_selected.result[GOBP_GSEA_selected.result$Description == "GOBP_CELL_GROWTH",],
+  KEGG_GSEA_selected.result[KEGG_GSEA_selected.result$Description == "KEGG_MAPK_SIGNALING_PATHWAY",],
+  HM_GSEA_selected.result[HM_GSEA_selected.result$Description == "HALLMARK_TNFA_SIGNALING_VIA_NFKB",],
+  WIKIPATH_GSEA_selected.result[WIKIPATH_GSEA_selected.result$Description == "WP_IL1_SIGNALING",],
+  WIKIPATH_GSEA_selected.result[WIKIPATH_GSEA_selected.result$Description == "WP_IL4_SIGNALING",],
+  WIKIPATH_GSEA_selected.result[WIKIPATH_GSEA_selected.result$Description == "WP_RANKLRANK_SIGNALING",]
+)
+
+gsea_bp$Description <- gsub("HALLMARK_", "", gsea_bp$Description)
+gsea_bp$Description <- gsub("GOBP_", "", gsea_bp$Description)
+gsea_bp$Description <- gsub("KEGG_", "", gsea_bp$Description)
+gsea_bp$Description <- gsub("REACTOME_", "", gsea_bp$Description)
+gsea_bp$Description <- gsub("WP_", "", gsea_bp$Description)
+gsea_bp$Description <- gsub("_V1", "", gsea_bp$Description)
+gsea_bp$Description <- gsub("T_CELL_MEDIATED_IMMUNITY", "T_CELL_IMMUNITY", gsea_bp$Description)
+gsea_bp$Description <- gsub("REGULATION_OF_LYMPHOCYTE_MEDIATED_IMMUNITY", "LYMPHOCYTE_REGULATION", gsea_bp$Description)
+gsea_bp$Description <- gsub("CYTOKINE_CYTOKINE_RECEPTOR_INTERACTION", "CYTOKINE_INTERACTION", gsea_bp$Description)
+gsea_bp$Description <- gsub("TNFA_SIGNALING_VIA_NFKB", "TNFA_SIGNALING", gsea_bp$Description)
+gsea_bp$Description <- gsub("RANKLRANK_SIGNALING", "RANKL-RANK_SIGNALING", gsea_bp$Description)
+gsea_bp$Description <- gsub("MAPK_SIGNALING_PATHWAY", "MAPK_SIGNALING", gsea_bp$Description)
+gsea_bp$Description <- gsub("_", " ", gsea_bp$Description)
+
+gsea_bp$Description <- factor(gsea_bp$Description, levels = gsea_bp$Description)
+gsea_bp$Direction <- "Up"
+gsea_bp$Direction[gsea_bp$NES<0] <- "Down"
+
+gsea_bar.plt <- ggplot(gsea_bp, aes(x=Description, y=NES, fill=Direction)) +
+  geom_bar(stat = "identity", color="black", width = 0.75) +  
+  theme_classic() +
+  theme(
+    axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1, color = "black"),
+    plot.margin = margin(t = 10, r = 10, b = 100, l = 65, unit = "pt"),
+    legend.position = "none"
+  ) +
+  geom_hline(yintercept = 0) + 
+  ylab("NES") + xlab(NULL) + 
+  scale_fill_manual(values=c("#357EBD", "#D43F3A"))
+
+gsea_bar.plt
+```
+
+```{r, message=FALSE, warning=FALSE, fig.height=8, fig.width=12}
+# GSEA plots
+terms_of_interest <- c(
+  "GOBP_T_CELL_MEDIATED_IMMUNITY", "GOBP_REGULATION_OF_LYMPHOCYTE_MEDIATED_IMMUNITY", "KEGG_CYTOKINE_CYTOKINE_RECEPTOR_INTERACTION",
+  "GOBP_CELL_GROWTH", "KEGG_MAPK_SIGNALING_PATHWAY", "HALLMARK_TNFA_SIGNALING_VIA_NFKB",
+  "WP_IL1_SIGNALING", "WP_IL4_SIGNALING", "WP_RANKLRANK_SIGNALING"
+  )
+
+gsea_plot.lst <- lapply(terms_of_interest, function(term){
+  term_system <- strsplit(term, split = "_")[[1]][1]
+
+  adapted_term <- term %>% 
+    str_remove("^(HALLMARK|GOBP|KEGG|REACTOME|WP)_") %>%
+    str_replace("T_CELL_MEDIATED_IMMUNITY", "T_CELL_IMMUNITY") %>%
+    str_replace("REGULATION_OF_LYMPHOCYTE_MEDIATED_IMMUNITY", "LYMPHOCYTE_REGULATION") %>%
+    str_replace("CYTOKINE_CYTOKINE_RECEPTOR_INTERACTION", "CYTOKINE_INTERACTION") %>%
+    str_replace("TNFA_SIGNALING_VIA_NFKB", "TNFA_SIGNALING") %>%
+    str_replace("RANKLRANK_SIGNALING", "RANKL-RANK_SIGNALING") %>%
+    str_replace("MAPK_SIGNALING_PATHWAY", "MAPK_SIGNALING") %>%
+    str_replace_all("_", " ")
+  
+  if (term_system == "HALLMARK"){
+    gseaplot(HM_gsea, 
+             by = "runningScore", 
+             title = adapted_term, 
+             geneSetID = term,
+             base_size = 10) + 
+      theme(axis.text.x = element_text(angle = 0, hjust = 1))
+  } else if (term_system == "GOBP"){
+    gseaplot(GOBP_gsea, 
+             by = "runningScore", 
+             title = adapted_term, 
+             geneSetID = term,
+             base_size = 10) + 
+      theme(axis.text.x = element_text(angle = 0, hjust = 1))
+  } else if (term_system == "KEGG") {
+    gseaplot(KEGG_gsea, 
+             by = "runningScore", 
+             title = adapted_term, 
+             geneSetID = term,
+             base_size = 10) + 
+      theme(axis.text.x = element_text(angle = 0, hjust = 1))
+  } else if (term_system == "REACTOME") {
+    gseaplot(REACTOME_gsea, 
+             by = "runningScore", 
+             title = adapted_term, 
+             geneSetID = term,
+             base_size = 10) + 
+      theme(axis.text.x = element_text(angle = 0, hjust = 1))
+  } else {
+    gseaplot(WIKIPATH_gsea, 
+             by = "runningScore", 
+             title = adapted_term, 
+             geneSetID = term,
+             base_size = 10) + 
+      theme(axis.text.x = element_text(angle = 0, hjust = 1))
+  }
+})
+
+gsea.plt <- wrap_plots(gsea_plot.lst, ncol=3)
+gsea.plt
+```
+
+```{r, eval=FALSE}
+# Save GSEA results
+saveRDS(HM_gsea, path_to_save_seurat_hm_gsea)
+saveRDS(GOBP_gsea, path_to_save_seurat_go_gsea)
+saveRDS(KEGG_gsea, path_to_save_seurat_kegg_gsea)
+saveRDS(REACTOME_gsea, path_to_save_seurat_reactome_gsea)
+saveRDS(WIKIPATH_gsea, path_to_save_seurat_wikipath_gsea)
+
+# Save as data frames
+write.csv(HM_GSEA.result, here::here("scRNAseq/meta_analysis/supplm_file/cd4_seurat_hm_gsea.csv"))
+write.csv(GOBP_GSEA.result, here::here("scRNAseq/meta_analysis/supplm_file/cd4_seurat_go_gsea.csv"))
+write.csv(KEGG_GSEA.result, here::here("scRNAseq/meta_analysis/supplm_file/cd4_seurat_kegg_gsea.csv"))
+write.csv(REACTOME_GSEA.result, here::here("scRNAseq/meta_analysis/supplm_file/cd4_seurat_reactome_gsea.csv"))
+write.csv(WIKIPATH_GSEA.result, here::here("scRNAseq/meta_analysis/supplm_file/cd4_seurat_wikipath_gsea.csv"))
+
+# Save the figures
+ggsave(filename=paste0(path_to_save_figure, "/cd4_gsea.png"), plot=gsea_bar.plt, dpi=500, height=5, width=7)
+ggsave(filename=paste0(path_to_save_figure, "/cd4_gsea_plt.png"), plot=gsea.plt, dpi=500, height=8, width=12)
+```
+
+## Based on DESeq2
+
+```{r}
+# Define paths to save the results
+path_to_save_deseq2_dea <- here::here("scRNAseq/meta_analysis/R_objects/gene_exprs/cd4_deseq2_dea.rds")
+path_to_save_deseq2_hm_gsea <- here::here("scRNAseq/meta_analysis/R_objects/gene_exprs/cd4_deseq2_hm_gsea.rds")
+path_to_save_deseq2_go_gsea <- here::here("scRNAseq/meta_analysis/R_objects/gene_exprs/cd4_deseq2_go_gsea.rds")
+path_to_save_deseq2_kegg_gsea <- here::here("scRNAseq/meta_analysis/R_objects/gene_exprs/cd4_deseq2_kegg_gsea.rds")
+path_to_save_deseq2_reactome_gsea <- here::here("scRNAseq/meta_analysis/R_objects/gene_exprs/cd4_deseq2_reactome_gsea.rds")
+path_to_save_deseq2_wikipath_gsea <- here::here("scRNAseq/meta_analysis/R_objects/gene_exprs/cd4_deseq2_wikipath_gsea.rds")
+```
+
+### Create an DESeq2 object
+
+```{r, message=FALSE, warning=FALSE}
+# Prepare single-cell meta-data for DESeq2
+pure_cd4_seurat$ref[pure_cd4_seurat$ref == "Hing_2022"] <- "Hing_2023" # Update reference name
+pure_cd4_seurat$patient_cond <- paste0("case_", pure_cd4_seurat$case, "_", pure_cd4_seurat$ref, "_", pure_cd4_seurat$new_cond) 
+patient_cond_cls <- unique(pure_cd4_seurat$patient_cond)
+RT_subjects <- patient_cond_cls[grep("RT", patient_cond_cls)]
+RT_subjects <- gsub(pattern = "_", replacement = "-", x=RT_subjects) # change "_" to "-" as DESeq2 converted sample names from "_" to "-"
+
+# Create pseudocount matrix for tumour cell object
+cts <- AggregateExpression(pure_cd4_seurat, 
+                           group.by = "patient_cond",
+                           assays = "RNA",
+                           slot = "counts",
+                           resturn.seurat = FALSE) 
+cts <- cts$RNA
+pseudo_count.mat <- as.data.frame(cts)
+
+# Create metadata for DESeq2 object
+batch_map <- c("Penter (2021)" = "1", "Nadeu (2022)" = "2", "Rejeski (2022)" = "3", "Hing (2023)" = "4", "Parry (2023a)" = "5", 
+               "Parry (2023b)" = "6", "Rigo (2024)" = "7")
+colData <- data.frame(samples = colnames(pseudo_count.mat))
+colData$condition <- ifelse(colData$samples %in% RT_subjects, "RT", "CLL")
+colData$study <- stringr::word(colData$samples, start = -3, end = -2, sep = fixed("-"))
+colData$study <- sub("^(.*)-([0-9].*)$", "\\1 (\\2)", colData$study) # Substitiute string like "Parry-2023b" to "Parry (2023b)"
+colData$study <- factor(colData$study, level = c("Penter (2021)", "Nadeu (2022)", "Rejeski (2022)", "Hing (2023)", 
+                                                 "Parry (2023a)", "Parry (2023b)", "Rigo (2024)"))
+colData$batch <- batch_map[colData$study]
+colData$batch <- factor(colData$batch)
+rownames(colData) <- colData$samples
+
+# Create a DESeq2 object
+dds <- DESeqDataSetFromMatrix(countData = pseudo_count.mat, 
+                              colData = colData,
+                              design = ~ batch + condition)
+
+# Keep genes with at least 10 counts across all samples
+keep <- rowSums(counts(dds)) >= 10
+dds <- dds[keep,]
+```
+
+### Plot the PCA based on the expression data
+
+```{r, message=FALSE, warning=FALSE, fig.height=4.5, fig.width=6.5}
+# Variance stabilised transformation
+vsdata <- vst(dds, blind = FALSE)
+
+# Extract matrix
+vs_mat <- assay(vsdata)
+
+# Adjust for batch (assume batch info is in colData(dds)$batch)
+design_matrix <- model.matrix(~ condition, data = colData(dds))
+vs_mat_corrected <- limma::removeBatchEffect(
+  vs_mat, 
+  batch = colData(dds)$batch, 
+  design = design_matrix 
+)
+
+# PCA on corrected data
+pca <- prcomp(t(vs_mat_corrected))
+
+# Calculate % variance explained
+pca_var <- pca$sdev^2               # variance of each PC
+pca_var_percent <- pca_var / sum(pca_var) * 100
+
+# Make a dataframe for ggplot
+pca_df <- data.frame(pca$x,
+                     condition = colData(dds)$condition,
+                     study = colData(dds)$study)
+
+# Plot PCA
+pca.plt <- ggplot(pca_df, aes(PC1, PC2, color = study, shape = condition)) +
+  geom_point(size = 3) +
+  xlab(paste0("PC1 (", round(pca_var_percent[1], 1), "%)")) +
+  ylab(paste0("PC2 (", round(pca_var_percent[2], 1), "%)")) +
+  scale_color_manual(values = c(
+    "Penter (2021)" = "#1f77b4", 
+    "Nadeu (2022)" = "#ff7f0e",
+    "Rejeski (2022)" = "#9632B8" ,
+    "Hing (2023)" = "#D43F3A" ,
+    "Parry (2023a)" = "#5CB85C",
+    "Parry (2023b)" = "#FFB900",
+    "Rigo (2024)" = "#46B8DA")) +
+  scale_shape_manual(values = c("CLL" = 16, "RT" = 17)) +
+  guides(
+    color = guide_legend(title = "Study"),
+    shape = guide_legend(title = "Condition")
+  ) +
+  theme_bw() +
+  theme(
+    legend.title = element_text(size = 12, face = "bold"),
+    legend.text = element_text(size = 11),
+    axis.title = element_text(size = 13, face = "bold"),
+    axis.text = element_text(size = 11)
+  )
+
+pca.plt
+```
+
+```{r, eval=FALSE}
+# Save the figure
+ggsave(filename=paste0(path_to_save_figure, "/deseq2_cd4_pca.png"), plot=pca.plt, dpi=500, height=4.5, width=6.5)
+```
+
+### Run DESeq2
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Run DESeq2 for the data after outlier removal
+keep <- rowSums(counts(dds) >= 10) >= 3 # Keep genes with at least 10 counts in at least 3 samples
+noise_genes <- c(
+  grep("^IG[HKL][VDJ]", rownames(dds), value = TRUE),  # Ig genes
+  grep("^HLA-", rownames(dds), value = TRUE),          # Patient ID (HLA)
+  grep("^MT-", rownames(dds), value = TRUE),           # Mitochondrial stress
+  "XIST", "RPS4Y1", "KDM5D", "UTY", "DDX3Y",           # Sex genes
+  "S100A8", "S100A9", "S100A12", "CXCL8"               # Acute stress response
+)
+
+dds <- dds[keep & (!rownames(dds) %in% noise_genes), ]
+dds$condition <- relevel(dds$condition, ref = "CLL")
+dds <- DESeq(dds)
+
+# Generate a table for gene expression
+res <- results(dds, contrast = c("condition", "RT", "CLL"), independentFiltering = FALSE)
+res <- lfcShrink(dds, contrast = c("condition", "RT", "CLL"), res = res, type = "normal")
+res$direction <- "NS"
+res$direction[res$padj < 0.05 & res$log2FoldChange > 0.25] <- "Up"
+res$direction[res$padj < 0.05 & res$log2FoldChange < (-0.25)] <- "Down"
+dea.df <- as.data.frame(res)
+
+# Save the expression results
+saveRDS(dea.df, path_to_save_deseq2_dea)
+write.csv(dea.df, here::here("scRNAseq/meta_analysis/supplm_file/cd4_deseq2_dea.csv"))
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Show the expression results
+dea.df <- readRDS(path_to_save_deseq2_dea)
+DT::datatable(dea.df, options = list(scrollX = TRUE))
+```
+
+```{r, message=FALSE, warning=FALSE, fig.height=7, fig.width=10}
+# Volcano plot
+genes_of_interest <- c(
+  "BATF", "GIMAP4", "RAC2", "LBH",        # RT CD4+ T cells: exhausted and Treg shifting                
+  "GADD45B"                               # CLL CD4+ T cells: Th2, acute stress response, and stemness
+)
+
+volcano.plt <- volcano_plot(dea.df, 
+                            FC=0.25, 
+                            x_col="log2FoldChange",
+                            y_col="padj",
+                            xlim=c(-1.6,1.6), 
+                            ylim=c(-0.1,2), 
+                            genes_of_interest=genes_of_interest,
+                            boxedLabels = TRUE) 
+
+volcano.plt
+```
+
+```{r, message=FALSE, warning=FALSE}
+# MA plot 
+ma_data <- dea.df
+
+ma.plt <- ggmaplot(ma_data, 
+                   fdr = 0.05,            # Threshold for significance
+                   fc = 1.19,                # Threshold for FC
+                   size = 0.4,            # Dot size
+                   palette = c("#B31B21", "#1465AC", "darkgray"),
+                   genenames = as.vector(ma_data$gene),
+                   top = 0, label.select = genes_of_interest, # set top = 0, then specify genes using label.select argument
+                   legend = "right", 
+                   font.label = c("bold", 11), 
+                   label.rectangle = TRUE,
+                   font.legend = "bold",
+                   font.main = "bold",
+                   ggtheme = ggplot2::theme_minimal(),
+                   xlab = "Mean Expression",
+                   ylab = "Log2 Fold Change"
+                   )
+
+ma.plt
+```
+
+### GSEA
+
+```{r}
+# Manipulate the expression data
+lfc_vector <- dea.df$log2FoldChange # Create a named vector ranked based on the log2 fold change
+names(lfc_vector) <- rownames(dea.df) 
+lfc_vector <- na.omit(lfc_vector) # Omit any NA values
+lfc_vector <- sort(lfc_vector, decreasing = TRUE) # Sort the log2 fold change in descending order
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Hallmark
+HM_gsea <- HM_GSEA(lfc_vector)
+
+# Collect the HM GSEA result
+HM_GSEA.result <- HM_gsea@result
+HM_GSEA_selected.result <- HM_GSEA.result %>%
+  as_tibble() %>%
+  dplyr::select(c(Description, NES, pvalue, p.adjust))
+
+DT::datatable(HM_GSEA_selected.result, options = list(scrollX = TRUE))
+```
+
+```{r, message=FALSE, warning=FALSE}
+# GO:BP
+GOBP_gsea <- GO_GSEA(lfc_vector)
+
+# Collect the GSEA result
+GOBP_GSEA.result <- GOBP_gsea@result
+GOBP_GSEA_selected.result <- GOBP_GSEA.result %>%
+  as_tibble() %>%
+  dplyr::select(c(Description, NES, pvalue, p.adjust))
+
+DT::datatable(GOBP_GSEA_selected.result, options = list(scrollX = TRUE))
+```
+
+```{r, message=FALSE, warning=FALSE}
+# KEGG pathway
+KEGG_gsea <- KEGG_GSEA(lfc_vector)
+
+# Collect the HM GSEA result
+KEGG_GSEA.result <- KEGG_gsea@result
+KEGG_GSEA_selected.result <- KEGG_GSEA.result %>%
+  as_tibble() %>%
+  dplyr::select(c(Description, NES, pvalue, p.adjust))
+
+DT::datatable(KEGG_GSEA_selected.result, options = list(scrollX = TRUE))
+```
+
+```{r, message=FALSE, warning=FALSE}
+# REACTOME
+REACTOME_gsea <- REACTOME_GSEA(lfc_vector)
+
+# Collect the HM GSEA result
+REACTOME_GSEA.result <- REACTOME_gsea@result
+REACTOME_GSEA_selected.result <- REACTOME_GSEA.result %>%
+  as_tibble() %>%
+  dplyr::select(c(Description, NES, pvalue, p.adjust))
+
+DT::datatable(REACTOME_GSEA_selected.result, options = list(scrollX = TRUE))
+```
+
+```{r, message=FALSE, warning=FALSE}
+# WikiPath
+WIKIPATH_gsea <- WIKIPATH_GSEA(lfc_vector)
+
+# Collect the HM GSEA result
+WIKIPATH_GSEA.result <- WIKIPATH_gsea@result
+WIKIPATH_GSEA_selected.result <- WIKIPATH_GSEA.result %>%
+  as_tibble() %>%
+  dplyr::select(c(Description, NES, pvalue, p.adjust))
+
+DT::datatable(WIKIPATH_GSEA_selected.result, options = list(scrollX = TRUE))
+```
+
+```{r, eval=FALSE}
+# Save the enrichment results
+saveRDS(HM_gsea, path_to_save_deseq2_hm_gsea)
+saveRDS(GOBP_gsea, path_to_save_deseq2_go_gsea)
+saveRDS(KEGG_gsea, path_to_save_deseq2_kegg_gsea)
+saveRDS(REACTOME_gsea, path_to_save_deseq2_reactome_gsea)
+saveRDS(WIKIPATH_gsea, path_to_save_deseq2_wikipath_gsea)
+
+# Save as data frames
+write.csv(HM_GSEA.result, here::here("scRNAseq/meta_analysis/supplm_file/cd4_deseq2_hm_gsea.csv"))
+write.csv(GOBP_GSEA.result, here::here("scRNAseq/meta_analysis/supplm_file/cd4_deseq2_go_gsea.csv"))
+write.csv(KEGG_GSEA.result, here::here("scRNAseq/meta_analysis/supplm_file/cd4_deseq2_kegg_gsea.csv"))
+write.csv(REACTOME_GSEA.result, here::here("scRNAseq/meta_analysis/supplm_file/cd4_deseq2_reactome_gsea.csv"))
+write.csv(WIKIPATH_GSEA.result, here::here("scRNAseq/meta_analysis/supplm_file/cd4_deseq2_wikipath_gsea.csv"))
+```
+
+# Session Information
+
+```{r}
+sessionInfo()
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+

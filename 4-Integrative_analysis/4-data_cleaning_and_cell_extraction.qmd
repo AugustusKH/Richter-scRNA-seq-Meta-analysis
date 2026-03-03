@@ -1,0 +1,633 @@
+---
+title: "Data_cleaning_and_cell_extraction"
+author: "Pakorn Sagulkoo"
+format:
+  html:
+    toc: true
+    toc-location: left
+    embed-resources: true
+editor: visual
+---
+
+This source code we cleaned the integrated data sets from several CLL and RT studies by removing some noises or ambient cells. Moreover. we extracted tumour and microenvironmental cells for further analysis,
+
+# Import the relevant packages and set working path directory
+
+```{r, setup, message=FALSE, warning=FALSE}
+# Attach the packages you will need for the analysis.
+library(Seurat)
+library(harmony)
+library(dplyr)
+library(tidyr)
+library(SingleR)
+library(celldex)
+library(sctransform)
+library(cowplot)
+```
+
+```{r}
+# Check root path
+here::here()
+```
+
+# Define paths
+
+```{r}
+# Define paths to load and save 
+path_to_integrated_obj <- here::here("scRNAseq/meta_analysis/R_objects/integrated_seu.rds")
+path_to_save_filtered_obj <- here::here("scRNAseq/meta_analysis/R_objects/filtered_seu.rds")
+path_to_save_tumour_obj <- here::here("scRNAseq/meta_analysis/R_objects/tumour_seu.rds")
+path_to_save_microenvir_obj <- here::here("scRNAseq/meta_analysis/R_objects/microenvir_seu.rds")
+path_to_save_figure <- here::here("figures")
+```
+
+# Load data and functions
+
+```{r, message=FALSE, warning=FALSE}
+# Source functions
+source(here::here("bin/utils.R"))
+```
+
+```{r}
+# Load the integrated seurat object
+seurat <- readRDS(path_to_integrated_obj)
+seurat$patient <- paste0(seurat$case, "_", seurat$ref)
+seurat$adapted_ref <- sub("^(.*)_([0-9].*)$", "\\1 (\\2)", seurat$ref) # Substitiute string like "Parry-2023b" to "Parry (2023b)"
+seurat$adapted_ref <- factor(seurat$adapted_ref, level = c("Penter (2021)", "Nadeu (2022)", "Rejeski (2022)", "Hing (2023)", 
+                                                 "Parry (2023a)", "Parry (2023b)", "Rigo (2024)"))
+#seurat$group <- ifelse(grepl("CLL", seurat$cond), "CLL", "RT")
+```
+
+# Data visualisation
+
+```{r, message=FALSE, warning=FALSE}
+# Plot summarisation for cell population
+
+study_data <- data.frame(
+  Study = c("Penter (2021)", "Nadeu (2022)", "Rejeski (2022)", 
+            "Hing (2023) Human", "Hing (2023) Mouse", 
+            "Parry (2023a)", "Parry (2023b)", "Rigo (2024)"),
+  Total_Cells = c(309282, 18676, 24596, 27257, 81954, 44541, 186939, 7072),
+  Avg_Cells = c(11454, 1098, 12298, 4542, 4097, 1310, 5341, 3536)
+)
+study_data$Study <- factor(study_data$Study, levels = study_data$Study) # Reorder the Factor 
+
+study_long <- study_data %>% # Reshape to "Long" format for easy plotting with ggplot
+  pivot_longer(cols = c("Total_Cells", "Avg_Cells"), 
+               names_to = "Metric", 
+               values_to = "Count") %>%
+  mutate(Metric_Label = ifelse(Metric == "Total_Cells", "Total Cells", "Avg Cells / Sample"))
+
+cell_bar.plt <- ggplot(study_long, aes(x = Study, y = Count, fill = Study)) +
+  geom_bar(stat = "identity", width = 0.7, color = "black") +
+  facet_wrap(~Metric_Label, scales = "free_y") +
+  geom_text(aes(label = round(Count)), vjust = -0.5, size = 3) +
+  theme_minimal() +
+  labs(title = "Summary of Single-Cell Datasets",
+       y = "Number of Cells",
+       x = "") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, face = "bold"),
+        strip.text = element_text(size = 12, face = "bold"),
+        legend.position = "none") + # Hide legend since x-axis labels are sufficient
+  scale_fill_brewer(palette = "Set3")
+
+cell_bar.plt
+```
+
+```{r, eval=FALSE}
+# Save the figure
+ggsave(filename=paste0(path_to_save_figure, "/study_cell_pop.png"), plot=cell_bar.plt, dpi=500, height=5, width=10)
+```
+
+```{r, message=FALSE, warning=FALSE, fig.height=5, fig.width=10}
+# Plot based on case
+case.plt <- DimPlot(seurat, reduction = "umap", group.by = "patient", raster=TRUE) +                        
+  labs(y= "UMAP 2", x = "UMAP 1")
+case.plt
+```
+
+```{r, message=FALSE, warning=FALSE, fig.height=7, fig.width=9}
+# Plot based on reference, conditions, tissues, and cell types
+group_by <- c("adapted_ref", "cond", "tissue", "singleR.labels_main")
+umap_plots <- lapply(group_by, function (group){
+  DimPlot(seurat, reduction = "umap", group.by = group, raster=TRUE) +
+    labs(y= "UMAP 2", x = "UMAP 1")
+})
+integrated_umap.plt <- wrap_plots(umap_plots, ncol=2)
+integrated_umap.plt
+```
+
+We can see from the UMAP plots that harmony removed batches and integrated all data sets clearly as no case or study were grouped separately. The clusters were separated based on the cell types.
+
+```{r, fig.height=10, fig.width=10, warning=FALSE, message=FALSE}
+# Visualise the varied clusters
+varied_clusters.plt <- plot_varying_cluster_resolution(seurat)
+varied_clusters.plt
+```
+
+```{r, fig.height=7, fig.width=9, warning=FALSE, message=FALSE}
+# Plot based on gene expression
+FeaturePlot(seurat, 
+            features = c("HBM", "HBA1", "CD3D", "CD8A", "CD4", "CD19", "CD79A", "CD14", "NKG7"),
+            reduction = "umap") 
+```
+
+```{r, fig.height=8, fig.width=9}
+cluster.plt <- DimPlot(seurat, 
+                       reduction = "umap", 
+                       group.by = "SCT_snn_res.0.3", 
+                       repel=TRUE,
+                       raster=TRUE, 
+                       label=TRUE) + 
+  labs(y= "UMAP 2", x = "UMAP 1")
+
+cluster.plt
+```
+
+```{r, fig.height=8, fig.width=9}
+cell.plt <- DimPlot(seurat, 
+                    reduction = "umap", 
+                    group.by = "singleR.labels_main", 
+                    repel=TRUE, 
+                    raster=TRUE, 
+                    label=TRUE) + 
+  labs(y= "UMAP 2", x = "UMAP 1")
+
+cell.plt
+```
+
+# Cell noise removal
+
+We detected erythrocytes (cluster 28 at SCT_snn_res.0.3) and other ambient cells (cluster 18, 31, 34, and 36). Then we removed them.
+
+```{r, eval=FALSE}
+# Remove ambient cells and processing after noise removal
+filtered_seurat <- subset(seurat, subset = !(SCT_snn_res.0.3 %in% c(18, 28, 31, 34, 36)))
+filtered_seurat <- SCTransform(filtered_seurat, vst.flavor = "v2", method = "glmGamPoi", verbose = FALSE)
+filtered_seurat <- RunPCA(filtered_seurat)
+filtered_seurat <- RunUMAP(filtered_seurat, dims = 1:30, reduction = "harmony")
+filtered_seurat <- FindNeighbors(filtered_seurat, dims = 1:30, reduction = "harmony") 
+filtered_seurat <- FindClusters(
+  filtered_seurat,
+  random.seed = 12345,
+  verbose = FALSE,
+  resolution = seq(0.1, 0.9, by = 0.1)
+)
+
+# Save the object
+saveRDS(filtered_seurat, path_to_save_filtered_obj)
+```
+
+# Visualisation for integrated data
+
+```{r}
+# Read the dbs filtered object for visualisation
+filtered_seurat <- readRDS(path_to_save_filtered_obj)
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Plot UMAP for cell annotation
+
+cell_to_annotation <- c(
+  "B cells" = "B cell",
+  "Monocytes" = "Monocyte/Macrophage",
+  "NK cells" = "NK cell",
+  "T cells, CD4+" = "CD4+ T cell",
+  "T cells, CD8+" = "CD8+ T cell"
+)
+
+filtered_seurat$cell_annotate <- 
+  as.vector(cell_to_annotation[as.character(filtered_seurat$singleR.labels_main)])
+
+new_levels <- c(
+  "B cell",
+  "Monocyte/Macrophage",
+  "NK cell",
+  "CD4+ T cell",
+  "CD8+ T cell"
+)
+
+filtered_seurat$cell_annotate <- factor(
+  filtered_seurat$cell_annotate,
+  levels = new_levels
+)
+
+new_colours <- c(
+  "#D43F3A", 
+  "#EEA236",
+  "#5CB85C",
+  "#357EBD",
+  "#46B8DA"
+)
+
+cell.plt <- DimPlot(filtered_seurat, 
+                    group.by = "cell_annotate", 
+                    pt.size = 0.05,
+                    raster = FALSE) +
+  scale_color_manual(
+    values = new_colours,
+    breaks = new_levels
+  ) +
+  labs(y = "UMAP 2", 
+       x = "UMAP 1",
+       title = "Harmony integration",
+       subtitle = "(n=593,424)") +
+  theme(
+    plot.title = element_text(hjust = 0.5), # Center title
+    plot.subtitle = element_text(hjust = 0.5)
+  ) +
+  coord_fixed(ratio = 1)
+
+cell.plt
+```
+
+```{r, eval=FALSE}
+# Save the figure
+ggsave(filename=paste0(path_to_save_figure, "/harmony_cell_umap.png"), plot=cell.plt, dpi=500, height=7, width=7)
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Plot cells by spliting the condition 
+filtered_seurat$group <- ifelse(grepl("CLL", filtered_seurat$cond), "CLL", "RT")
+filtered_seurat$group_label <- ifelse(grepl("CLL", filtered_seurat$cond), "CLL (n=361,266)", "RT (n=232,158)")
+cell_split.plt <- DimPlot(filtered_seurat, 
+                             reduction = "umap", 
+                             group.by = "cell_annotate", 
+                             split.by = "group_label") +
+  NoLegend() +
+  labs(y = "UMAP 2", 
+       x = "UMAP 1",
+       title = "") +
+  scale_color_manual(
+    values = new_colours,
+    breaks = new_levels
+  ) +
+  coord_fixed(ratio = 1)
+
+cell_split.plt 
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Plot cells by spliting the tissues 
+filtered_seurat$tissue_label <- ifelse(grepl("LN", filtered_seurat$tissue), "LN (n=42,359)", 
+                                       ifelse(grepl("PB", filtered_seurat$tissue), "PB (n=340,431)", "BM (n=210,634)"))
+
+tissue_split.plt <- DimPlot(filtered_seurat, 
+                             reduction = "umap", 
+                             group.by = "cell_annotate", 
+                             split.by = "tissue_label") +
+  NoLegend() +
+  labs(y = "UMAP 2", 
+       x = "UMAP 1",
+       title = "") +
+  scale_color_manual(
+    values = new_colours,
+    breaks = new_levels
+  ) +
+  coord_fixed(ratio = 1)
+
+tissue_split.plt 
+```
+
+```{r, eval=FALSE}
+# Save the figure
+ggsave(filename=paste0(path_to_save_figure, "/harmony_cell_split.png"), plot=cell_split.plt , dpi=500, height=7, width=7)
+ggsave(filename=paste0(path_to_save_figure, "/harmony_tissue_split.png"), plot=tissue_split.plt , dpi=500, height=7, width=7)
+```
+
+```{r}
+# Plot cell population
+
+proportion_study_df <- filtered_seurat@meta.data %>%
+  dplyr::mutate(cell_annotate = factor(cell_annotate, levels = new_levels)) %>%
+  dplyr::count(adapted_ref, cell_annotate) %>%
+  dplyr::group_by(adapted_ref) %>%
+  dplyr::mutate(proportion = n / sum(n)) %>%
+  dplyr::ungroup() %>%
+  dplyr::select(-n) # Remove n column
+
+proportion_group_df <- filtered_seurat@meta.data %>%
+  dplyr::mutate(cell_annotate = factor(cell_annotate, levels = new_levels)) %>%
+  dplyr::count(group, cell_annotate) %>%
+  dplyr::group_by(group) %>%
+  dplyr::mutate(proportion = n / sum(n)) %>%
+  dplyr::ungroup() %>%
+  dplyr::select(-n)
+
+proportion_tissue_df <- filtered_seurat@meta.data %>%
+  dplyr::mutate(cell_annotate = factor(cell_annotate, levels = new_levels)) %>%
+  dplyr::count(tissue, cell_annotate) %>%
+  dplyr::group_by(tissue) %>%
+  dplyr::mutate(proportion = n / sum(n)) %>%
+  dplyr::ungroup() %>%
+  dplyr::select(-n)
+
+study_cell_pop.plt <- ggplot(proportion_study_df, aes(x = adapted_ref, 
+                                                    y = proportion, 
+                                                    fill = cell_annotate)) +
+  geom_col(position = "stack", width = 0.7) +
+  scale_fill_manual(
+    values = new_colours,
+    breaks = new_levels,
+    name = "Main cell type" # Set legend title
+  ) +
+  labs(
+    y = "Cell proportion",
+    x = "Study", 
+    title = "Study"
+  ) +
+  theme_bw() +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    axis.text.x = element_text(angle = 45, hjust = 1), # Rotate x-axis labels 
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank()
+  )
+
+study_cell_pop.plt
+
+cond_cell_pop.plt <- ggplot(proportion_group_df, aes(x = group, 
+                                                    y = proportion, 
+                                                    fill = cell_annotate)) +
+  geom_col(position = "stack", width = 0.4) +
+  scale_fill_manual(
+    values = new_colours,
+    breaks = new_levels,
+    name = "Main cell type" # Set legend title
+  ) +
+  labs(
+    y = "Cell proportion",
+    x = "Condition", 
+    title = "Condition"
+  ) +
+  theme_bw() +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    axis.text.x = element_text(angle = 45, hjust = 1), # Rotate x-axis labels 
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank()
+  )
+
+cond_cell_pop.plt
+
+tissue_cell_pop.plt <- ggplot(proportion_tissue_df, aes(x = tissue, 
+                                                    y = proportion, 
+                                                    fill = cell_annotate)) +
+  geom_col(position = "stack", width = 0.4) +
+  scale_fill_manual(
+    values = new_colours,
+    breaks = new_levels,
+    name = "Main cell type" # Set legend title
+  ) +
+  labs(
+    y = "Cell proportion",
+    x = "Tissue", 
+    title = "Tissue"
+  ) +
+  theme_bw() +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    axis.text.x = element_text(angle = 45, hjust = 1), # Rotate x-axis labels 
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank()
+  )
+
+tissue_cell_pop.plt
+```
+
+```{r}
+# Plot cell population based tissues split conditions
+proportion_tissue_cond_df <- filtered_seurat@meta.data %>%
+  dplyr::mutate(cell_annotate = factor(cell_annotate, levels = new_levels)) %>%
+  dplyr::count(tissue, group, cell_annotate) %>%
+  dplyr::group_by(tissue, group) %>%
+  dplyr::mutate(proportion = n / sum(n)) %>%
+  dplyr::ungroup() %>%
+  dplyr::select(-n)
+
+tissue_cond_cell_pop.plt <- ggplot(proportion_tissue_cond_df, 
+                                   aes(x = group, 
+                                       y = proportion, 
+                                       fill = cell_annotate)) +
+  
+  geom_col(position = "stack", width = 0.8) + # Increased width slightly for readability
+  facet_wrap(~tissue, scales = "free_x") + # Use free_x if tissues have different numbers of bars
+  scale_fill_manual(
+    values = new_colours,
+    breaks = new_levels,
+    name = "Main cell type"
+  ) +
+  labs(
+    y = "Cell proportion",
+    x = "Condition", # The x-axis is now the condition
+    title = "Condition within Tissue"
+  ) +
+  theme_bw() +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    strip.background = element_rect(fill = "grey90", color = NA),
+    strip.text = element_text(face = "bold"),
+    axis.text.x = element_text(angle = 45, hjust = 1), 
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank()
+  )
+
+tissue_cond_cell_pop.plt
+```
+
+```{r}
+# Plot cell population based cases
+
+proportion_patient_df <- filtered_seurat@meta.data %>%
+  dplyr::mutate(cell_annotate = factor(cell_annotate, levels = new_levels)) %>%
+  dplyr::count(patient, cell_annotate) %>%
+  dplyr::group_by(patient) %>%
+  dplyr::mutate(proportion = n / sum(n)) %>%
+  dplyr::ungroup() %>%
+  dplyr::select(-n)
+
+patient_cell_pop.plt <- ggplot(proportion_patient_df, aes(x = patient, 
+                                                    y = proportion, 
+                                                    fill = cell_annotate)) +
+  geom_col(position = "stack", width = 0.7) +
+  scale_fill_manual(
+    values = new_colours,
+    breaks = new_levels,
+    name = "Main cell type" # Set legend title
+  ) +
+  labs(
+    y = "Cell proportion",
+    x = "Case", 
+    title = "Case"
+  ) +
+  theme_bw() +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    axis.text.x = element_text(angle = 45, hjust = 1), # Rotate x-axis labels 
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank()
+  )
+
+patient_cell_pop.plt
+```
+
+```{r}
+# Combined bar plots
+adapted_study_cell_pop_no_legend.plt <- study_cell_pop.plt + theme(legend.position = "none", axis.title.x = element_blank())
+
+adapted_cond_cell_pop.plt <- cond_cell_pop.plt + 
+  theme(legend.position = "bottom", 
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks.y = element_blank()) 
+
+adapted_tissue_cell_pop.plt <- tissue_cell_pop.plt +
+  theme(legend.position = "none",
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks.y = element_blank()) 
+
+combined_cell_pop.plt <- adapted_study_cell_pop_no_legend.plt + adapted_cond_cell_pop.plt + adapted_tissue_cell_pop.plt
+combined_cell_pop.plt
+```
+
+```{r, eval=FALSE}
+# Save the figures and object
+ggsave(filename=paste0(path_to_save_figure, "/cell_pop_study.png"), plot=study_cell_pop.plt , dpi=500, height=4, width=5)
+ggsave(filename=paste0(path_to_save_figure, "/cell_pop_cond.png"), plot=cond_cell_pop.plt , dpi=500, height=4, width=5)
+ggsave(filename=paste0(path_to_save_figure, "/cell_pop_tissue.png"), plot=tissue_cell_pop.plt , dpi=500, height=4, width=5)
+ggsave(filename=paste0(path_to_save_figure, "/cell_pop_case.png"), plot=patient_cell_pop.plt , dpi=500, height=4, width=10)
+ggsave(filename=paste0(path_to_save_figure, "/cell_pop_combined.png"), plot=combined_cell_pop.plt , dpi=500, height=4, width=7)
+ggsave(filename=paste0(path_to_save_figure, "/cell_pop_tissue_cond.png"), plot=tissue_cond_cell_pop.plt , dpi=500, height=4, width=7)
+saveRDS(filtered_seurat, path_to_save_filtered_obj)
+```
+
+```{r, fig.height=7, fig.width=9, warning=FALSE, message=FALSE}
+# Plot based on gene expression
+FeaturePlot(filtered_seurat, 
+            features = c("HBM", "HBA1", "CD3D", "CD8A", "CD4", "CD19", "CD79A", "CD14", "NKG7"),
+            reduction = "umap") 
+```
+
+# Cell biomarkers
+
+```{r, message=FALSE, warning=FALSE}
+# Dot plot for cell biomarkers
+Idents(filtered_seurat) <- filtered_seurat$cell_annotate
+features <- c("CD3D", "CD4", "IL7R", "CD8A", "CD8B", "CD19", "CD79A", "MS4A1", "NCAM1", "NKG7", "CD14", "CD16", "FCGR3A", "CD68")
+colour_pal <- colorRampPalette(c("#053061", "#2171B5", "white", "#FFD92F", "#A50F15"))(100)
+
+biomark.plt <- DotPlot(filtered_seurat, features=features) +
+  RotatedAxis() +
+  scale_colour_gradientn(colours = colour_pal)
+
+biomark.plt
+```
+
+```{r, eval=FALSE}
+# Save the figure
+ggsave(filename=paste0(path_to_save_figure, "/harmony_marker_dot.png"), plot=biomark.plt, dpi=500, height=4, width=8)
+```
+
+```{r, message=FALSE, warning=FALSE, fig.height=14, fig.width=12}
+# Visualise cell biomarker expression
+DefaultAssay(filtered_seurat) <- "SCT"
+features <- c("CD3D", "CD4", "IL7R", "CD8A", "CD8B", "CD19", "CD79A", "MS4A1", "NKG7", "CD14", "FCGR3A", "CD68")
+feature_plots <- lapply(features, function(gene) {
+  FeaturePlot(filtered_seurat, 
+              features = gene, 
+              reduction = "umap", 
+              pt.size = 2,
+              slot = "data",
+              order = TRUE) +
+    scale_colour_gradientn(colours=colour_pal, limits=c(0, 2)) +
+    coord_fixed(ratio = 1) +
+    labs(y = "UMAP 2", x = "UMAP 1") +
+    ggtitle(gene) 
+})
+
+# Combine all plots (patchwork automatically combines lists)
+exprs_umap_pre.plt <- wrap_plots(feature_plots, ncol = 3)  
+exprs_umap_pre.plt
+```
+
+```{r, message=FALSE, warning=FALSE, fig.height=14, fig.width=8}
+# Visualise cell biomarker expression for publication
+DefaultAssay(filtered_seurat) <- "SCT"
+feature_plots <- lapply(features, function(gene) {
+  FeaturePlot(filtered_seurat, 
+              features = gene, 
+              reduction = "umap", 
+              pt.size = 2,
+              slot = "data",
+              order = TRUE) +
+    scale_colour_gradientn(colours=colour_pal, limits=c(0, 2)) +
+    coord_fixed(ratio = 1) +
+    theme_void() +
+    theme(legend.position="none",
+          plot.title = element_text(size = 16, face = "bold", hjust = 0.5)
+          ) +
+    labs(y = "UMAP 2", x = "UMAP 1") +
+    ggtitle(gene) 
+})
+
+# Combine all plots (patchwork automatically combines lists)
+exprs_umap.plt <- wrap_plots(feature_plots, ncol = 3)  
+exprs_umap.plt
+```
+
+```{r, eval=FALSE}
+# Save the figure
+ggsave(filename=paste0(path_to_save_figure, "/harmony_exprs_umap.png"), plot=exprs_umap.plt, dpi=500, height=12, width=8)
+ggsave(filename=paste0(path_to_save_figure, "/harmony_pre_exprs_umap.png"), plot=exprs_umap_pre.plt, dpi=500, height=12, width=10)
+```
+
+# Cell extraction
+
+## Tumour cell extraction
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Extract tumour cell with processing
+tumour_seurat <- subset(filtered_seurat, subset = singleR.labels_main == "B cells")
+tumour_seurat <- SCTransform(tumour_seurat, vst.flavor = "v2", method = "glmGamPoi", verbose = FALSE)
+tumour_seurat <- RunPCA(tumour_seurat)
+tumour_seurat <- RunUMAP(tumour_seurat, dims = 1:30, reduction = "harmony")
+tumour_seurat <- FindNeighbors(tumour_seurat, dims = 1:30, reduction = "harmony") 
+tumour_seurat <- FindClusters(
+  tumour_seurat,
+  random.seed = 12345,
+  verbose = FALSE,
+  resolution = seq(0.1, 0.9, by = 0.1)
+)
+
+# Save the object
+saveRDS(tumour_seurat, path_to_save_tumour_obj)
+```
+
+## Microenvironmental cell extraction
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Extract non-tumour cell with processing
+microenvir_seurat <- subset(filtered_seurat, subset = singleR.labels_main != "B cells")
+microenvir_seurat <- SCTransform(microenvir_seurat, vst.flavor = "v2", method = "glmGamPoi", verbose = FALSE)
+microenvir_seurat <- RunPCA(microenvir_seurat)
+microenvir_seurat <- RunUMAP(microenvir_seurat, dims = 1:30, reduction = "harmony")
+microenvir_seurat <- FindNeighbors(microenvir_seurat, dims = 1:30, reduction = "harmony")        
+microenvir_seurat <- FindClusters(
+  microenvir_seurat,
+  random.seed = 12345,
+  verbose = FALSE,
+  resolution = seq(0.1, 0.9, by = 0.1)
+)
+
+# Save the object
+saveRDS(microenvir_seurat, path_to_save_microenvir_obj)
+```
+
+# Session Information
+
+```{r}
+sessionInfo()
+```
