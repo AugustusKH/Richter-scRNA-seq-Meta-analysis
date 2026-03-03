@@ -1,0 +1,280 @@
+---
+title: "Rejeski_2022_GSE201704_preprocessing_analysis"
+author: "Pakorn Sagulkoo"
+format:
+  html:
+    toc: true
+    toc-location: left
+    embed-resources: true
+editor: visual
+---
+
+This source code we generated Seurat objects for single-cell RNA-seq datasets for a RT patient from [Rejeski et. al. (2022)](https://ashpublications.org/blood/article/140/20/2175/485763/Oligoclonal-T-cell-expansion-in-a-patient-with). This study contains two multiplexed data sets such as before and after CD19 CAR-T therapy.
+
+# Import the relevant packages and set working path directory
+
+```{r, setup, message=FALSE, warning=FALSE}
+# Attach the packages you will need for the analysis.
+library(Seurat)
+library(harmony)
+library(dplyr)
+library(DoubletFinder)
+library(SingleR)
+library(celldex)
+library(sctransform)
+```
+
+```{r}
+# Check root path
+here::here()
+```
+
+# Define paths
+
+```{r}
+# Define paths to load and save 
+path_to_count_matrices <- here::here("scRNAseq/GSE201704/GSM6069857")
+path_to_save_obj_lst <- here::here("scRNAseq/GSE201704/GSM6069857/R_objects/Rejeski_2022_GSE201704_seu_lst.rds")
+path_to_save_merged_obj <- here::here("scRNAseq/GSE201704/GSM6069857/R_objects/Rejeski_2022_GSE201704_merged_seu.rds")
+path_to_save_integrated_obj <- here::here("scRNAseq/GSE201704/GSM6069857/R_objects/Rejeski_2022_GSE201704_integrated_seu.rds")
+path_to_save_tumour_obj <- here::here("scRNAseq/GSE201704/GSM6069857/R_objects/Rejeski_2022_GSE201704_tumour_seu.rds")
+```
+
+# Load data and functions
+
+```{r, message=FALSE, warning=FALSE}
+# Source functions
+source(here::here("bin/utils.R"))
+```
+
+We will import count matrices, demultiplex, and convert them to Seurat objects with quality control and pre-processing.
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Create objects with demultiplexing and then collect as a list
+sample_lst <- c("CMO305", "CMO306")
+path_to_download <- str_c(path_to_count_matrices, "/", sample_lst, "/count_matrices/count/filtered_feature_bc_matrix")
+seurat.lst <- purrr::pmap(
+  list(path_to_download, sample_lst),
+  function(path, sample){
+    count_matrix <- Read10X(path)
+    seurat.obj <- CreateSeuratObject(count_matrix[["Gene Expression"]], min.cells=10) %>% 
+      RenameCells(add.cell.id = sample)
+    seurat.obj[["ref"]] <- "Rejeski_2022"
+    seurat.obj[["case_id"]] <- "GSM6069857"
+    seurat.obj[["case"]] <- 1
+    seurat.obj[["sample_id"]] <- sample
+    seurat.obj[["cond"]] <- "RT"
+    seurat.obj[["tissue"]] <- "PB"
+    seurat.obj <- seurat_quality_control(seurat.obj)
+    seurat.obj <- seurat_preprocess(seurat.obj)
+    seurat.obj <- doublet_filter(seurat.obj, sct=FALSE)
+    return(seurat.obj)
+  }
+)
+names(seurat.lst) <- sample_lst
+```
+
+```{r, eval=FALSE}
+# Explore objects in the list
+seurat.lst
+```
+
+```{r, eval=FALSE}
+# Save the list
+saveRDS(seurat.lst, path_to_save_obj_lst)
+```
+
+# Merge and integrate the objects
+
+```{r, eval=FALSE}
+# Merge the objects
+seurat <- seurat.lst[[1]]
+for (i in 2:length(seurat.lst)) {
+  seurat <- merge(x = seurat, y = seurat.lst[[i]])
+  seurat.lst[[i]] <- NA
+}
+rm(seurat.lst)
+```
+
+```{r, eval=FALSE}
+# Save the merged object
+saveRDS(seurat, path_to_save_merged_obj)
+```
+
+We used Harmony package for data integration and batch correction, and annotated the cell types using SingleR package.
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Reanalysis after merging and data integration 
+DefaultAssay(seurat) <- "RNA"
+seurat <- JoinLayers(seurat)
+seurat <- SCTransform(seurat, vst.flavor = "v2", method = "glmGamPoi", verbose = FALSE)
+seurat <- RunPCA(seurat)
+seurat <- RunHarmony(seurat, group.by.vars = "sample_id", dims = 1:30) 
+seurat <- RunUMAP(seurat, dims = 1:30, reduction = "harmony")
+seurat <- FindNeighbors(seurat, dims = 1:30)              
+seurat <- FindClusters(
+    seurat,
+    random.seed = 12345,
+    verbose = FALSE,
+    resolution = seq(0.1, 0.9, by = 0.1)
+  )
+seurat <- singleR_cell_annotation(seurat) 
+```
+
+```{r, eval=FALSE}
+# Save the integrated object
+saveRDS(seurat, path_to_save_integrated_obj)
+```
+
+# Visualisation after data integration
+
+```{r}
+# Define path
+path_to_obj <- path_to_save_integrated_obj
+
+# Load the data
+seurat <- readRDS(path_to_obj)
+```
+
+```{r, message=FALSE, warning=FALSE, fig.height=4, fig.width=11}
+# Plot based on sample_id and cell types
+sample_id.plt <- DimPlot(seurat, reduction = "umap", group.by = "sample_id") + 
+  labs(y= "UMAP 2", x = "UMAP 1")
+
+cell.plt <- DimPlot(seurat, reduction = "umap", group.by = "singleR.labels_main") +
+  labs(y= "UMAP 2", x = "UMAP 1")
+
+(sample_id.plt + cell.plt) 
+```
+
+```{r, fig.height=7, fig.width=9, warning=FALSE, message=FALSE}
+# Plot based on gene expression
+FeaturePlot(seurat, 
+            features = c("HBM", "HBA1", "CD3D", "CD8A", "CD4", "CD19", "CD79A", "CD14", "NKG7"),
+            reduction = "umap") 
+```
+
+```{r, fig.height=10, fig.width=10, warning=FALSE, message=FALSE}
+# Visualise the varied clusters
+varied_clusters.plt <- plot_varying_cluster_resolution(seurat)
+varied_clusters.plt
+```
+
+# Tumour cell extraction
+
+```{r, message=FALSE, warning=FALSE}
+# Extract tumour cells
+tumour_seurat <- subset(seurat, subset = SCT_snn_res.0.1 == 2)
+tumour_seurat <- SCTransform(tumour_seurat, vst.flavor = "v2", method = "glmGamPoi", verbose = FALSE)
+tumour_seurat <- RunPCA(tumour_seurat)
+tumour_seurat <- FindNeighbors(tumour_seurat, dims = 1:30)              
+tumour_seurat <- FindClusters(tumour_seurat, resolution=0.25)
+```
+
+```{r, message=FALSE, warning=FALSE, fig.height=4, fig.width=5}
+# Plot based on clusters
+cluster.plt <- DimPlot(tumour_seurat, reduction = "umap", group.by = "seurat_clusters") +
+  labs(y= "UMAP 2", x = "UMAP 1")
+
+cluster.plt
+```
+
+# Annotate the RT cells
+
+```{r fig.height=5, fig.width=15}
+# Visualise co-expression of CD5 and CD23(FCER2)
+features <- c("CD5", "FCER2")
+feature_plots <- lapply(features, function(gene) {
+  FeaturePlot(tumour_seurat, features = gene, reduction = "umap", pt.size = 1) +
+    scale_color_viridis_c(option = "magma") +
+    labs(y = "UMAP 2", x = "UMAP 1") +
+    ggtitle(gene) 
+})
+
+# Combine all plots (patchwork automatically combines lists)
+wrap_plots(feature_plots, ncol = 3)  
+```
+
+From the plots, all B cell clusters co-expressed in both CD5 and CD23. These B cells are all CLL cells. Next step we will differentiate tumour cells into CLL and RT cells. We have known that RT cells have higher cell proliferation activity than CLL cells. Therefore, we will calculate cell cycle score to each of cluster.
+
+```{r, message=FALSE, warning=FALSE, fig.height=5, fig.width=18}
+# Consider cell cycle genes based on cell cycle upregulation is a hallmark of Richter transformation
+tumour_seurat <- CellCycleScoring(
+  tumour_seurat,
+  s.features = cc.genes$s.genes,
+  g2m.features = cc.genes$g2m.genes,
+  set.ident = FALSE
+)
+
+cell_cycle.plt <- DimPlot(tumour_seurat, group.by = "Phase", pt.size = 1) + labs(y= "UMAP 2", x = "UMAP 1")
+
+umap_s_score <- FeaturePlot(tumour_seurat, features = "S.Score", pt.size = 1) +
+  scale_color_viridis_c(option = "magma") +
+  labs(title = "S Score", y= "UMAP 2", x = "UMAP 1") 
+  
+umap_g2m_score <- FeaturePlot(tumour_seurat, features = "G2M.Score", pt.size = 1) +
+  scale_color_viridis_c(option = "magma") +
+  labs(title = "G2M Score", y= "UMAP 2", x = "UMAP 1") 
+
+cell_cycle.plt + umap_s_score + umap_g2m_score
+```
+
+From the cell cycle scoring, we suspect that all clusters could be RT cells due to moderate-to-high cell cycle scores in G2M and S phases. Moreover, we will use our identified biomarkers resulted from our systematic review to confirm if the cluster contains RT cells. We have sets of up- and downregulated DEGs with rank-consistence between RT and CLL conditions. We will show their feature plots.
+
+```{r, message=FALSE, warning=FALSE, fig.height=14, fig.width=17}
+# Visualise downregulated genes that we found from the systematic review
+features <- c("HMGA1", "VDAC1", "PPA1", "LDHA", "GGCT", "HSPD1", "IMPDH2", "PAICS", "NME1")
+feature_plots <- lapply(features, function(gene) {
+  FeaturePlot(tumour_seurat, features = gene, reduction = "umap", pt.size = 1) +
+    scale_color_viridis_c(option = "magma") +
+    labs(y = "UMAP 2", x = "UMAP 1") +
+    ggtitle(gene) 
+})
+
+# Combine all plots (patchwork automatically combines lists)
+wrap_plots(feature_plots, ncol = 3)  
+```
+
+We also visualised upregulated genes obtained from the intersection between common DEGs and RS-rank consistent genes.
+
+```{r, message=FALSE, warning=FALSE, fig.height=14, fig.width=17}
+# Visualise downregulated genes that we found from the systematic review
+features <- c("COX5A", "SELENOH", "PRDX5", "ATP5PD", "NPM1", "NME2", "HSPA8", "MIF", "STMN1")
+feature_plots <- lapply(features, function(gene) {
+  FeaturePlot(tumour_seurat, features = gene, reduction = "umap", pt.size = 1) +
+    scale_color_viridis_c(option = "magma") +
+    labs(y = "UMAP 2", x = "UMAP 1") +
+    ggtitle(gene) 
+})
+
+# Combine all plots (patchwork automatically combines lists)
+wrap_plots(feature_plots, ncol = 3)  
+```
+
+In downregulated genes, we visualised from both RP- and RP-rank consistent genes overlapping with common downregulated DEGs.
+
+```{r, message=FALSE, warning=FALSE, fig.height=14, fig.width=17}
+# Visualise downregulated genes that we found from the systematic review
+features <- c("PNRC1", "OTUD1", "IGKC", "RPL21", "SF1", "VAMP2", "MDM4", "SRRM2", "SRSF7")
+feature_plots <- lapply(features, function(gene) {
+  FeaturePlot(tumour_seurat, features = gene, reduction = "umap", pt.size = 1) +
+    scale_color_viridis_c(option = "magma") +
+    labs(y = "UMAP 2", x = "UMAP 1") +
+    ggtitle(gene) 
+})
+
+# Combine all plots (patchwork automatically combines lists)
+wrap_plots(feature_plots, ncol = 3)  
+```
+
+```{r, eval=FALSE}
+# Save the tumour object
+saveRDS(tumour_seurat, path_to_save_tumour_obj)
+```
+
+# Session Information
+
+```{r}
+sessionInfo()
+```
+
