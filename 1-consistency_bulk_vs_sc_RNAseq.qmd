@@ -1,0 +1,6055 @@
+---
+title: "Consistency_bulk_vs_sc_RNAseq"
+author: "Pakorn Sagulkoo"
+format:
+  html:
+    toc: true
+    toc-location: left
+    embed-resources: true
+editor: visual
+---
+
+This code we will evaluate the consistency of gene expression and functional enrichment analysis from our tumour integrated results and bulk transcriptomic data from both human and mouse studies. For human bulk transcriptomes, we used the data from [Nadeu et al. (2022)](https://www.nature.com/articles/s41591-022-01927-8) and [Parry et al. (2023a)](https://www.nature.com/articles/s41591-022-02113-6) while for mouse bulk transcriptomes, the data came from [Hing et al. (2023)](https://www.nature.com/articles/s41467-022-35778-1), [Ten Hacken et. al. (2023)](https://aacrjournals.org/bloodcancerdiscov/article/4/2/150/718388/In-Vivo-Modeling-of-CLL-Transformation-to-Richter), [Iyer et al. (2024)](https://www.science.org/doi/10.1126/scitranslmed.adg7915), and [Rompietti et al. (2025)](https://www.nature.com/articles/s41375-025-02557-y)
+
+# Import the relevant packages and set working path directory
+
+```{r, setup, message=FALSE, warning=FALSE}
+# Import the relavant packages
+library(UpSetR)
+library(ggvenn)
+library(dplyr)
+library(tidyr)
+library(tibble)
+library(stringr)
+library(ggplot2)
+library(ggrepel)
+library(lsa)
+library(pheatmap)
+library(viridis)
+```
+
+```{r}
+# Check root path
+here::here()
+```
+
+# Define paths
+
+```{r}
+# Define paths to load and save files
+path_to_bulk_analysis <- here::here("RNAseq/systematic_review")
+path_to_single_cell_analysis <- here::here("scRNAseq/systematic_review")
+path_to_sc_integrated_data <- here::here("scRNAseq/meta_analysis/R_objects/gene_exprs")
+path_to_save_figure <- here::here("figures")
+```
+
+# Load data and functions
+
+```{r, message=FALSE, warning=FALSE}
+# Source functions
+source(here::here("bin/utils.R"))
+```
+
+```{r}
+# List file names of all studies
+study.lst <- c("1-Hacken_2023_GSE186137", "1-Nadeu_2022", "2-Iyer_2024_GSE263238", "2-Parry_2023a", 
+               "3-Rompietti_2025", "5-Hing_2023_GSE183427")
+study.lst
+```
+
+```{r}
+# Create names for list later
+names.lst <- sub(
+  "^\\d+-([A-Za-z]+)_([0-9]{4}[A-Za-z]?).*$",  # capture name and year
+  "\\1(\\2)",                         # output as Name(Year)
+  study.lst
+)
+
+names.lst[length(names.lst) + 1] <- "Integrated scRNA-seq"
+names.lst
+```
+
+```{r}
+# Extract only name of studies
+study_names <- sub("^\\d+-([^_0-9]+).*", "\\1", study.lst)
+study_names
+```
+
+## Data from gene expression using DESeq2
+
+```{r, message=FALSE, warning=FALSE}
+# Load expression results in each study and collect in a list
+path_to_dea_download <- str_c(path_to_bulk_analysis, "/", study.lst, "/expression_data/", study_names, "_dea.rds")
+path_to_dea_download[3] <- "/mnt/hp-storage/users/pakorns/RNAseq/systematic_review/2-Iyer_2024_GSE263238/expression_data/Iyer_RT_vs_CLL_dea.rds" # Iyer was used in different file name
+path_to_dea_download[6] <- "/mnt/hp-storage/users/pakorns/RNAseq/systematic_review/5-Hing_2023_GSE183427/expression_data/Hing_GSE183427_dea.rds" # Hing was used in different file name
+path_to_dea_download[length(path_to_dea_download) + 1] <- str_c(path_to_sc_integrated_data, "/tumour_deseq2_dea.rds") # add path for integrated dea
+
+dea.lst <- purrr::pmap(
+  list(path_to_dea_download), 
+  function(path){
+    expr.mat <- readRDS(path)
+    return(expr.mat)
+  }
+)
+
+names(dea.lst) <- names.lst
+
+# Convert some DESeq results to data frames
+dea.lst$`Nadeu(2022)` <- as.data.frame(dea.lst$`Nadeu(2022)`)
+dea.lst$`Parry(2023a)` <- as.data.frame(dea.lst$`Parry(2023a)`)
+```
+
+```{r}
+# Clean the dea especially for column gene names to be consistent across all studies
+names(dea.lst$`Hacken(2023)`)[names(dea.lst$`Hacken(2023)`) == "Gene.name"] <- "gene_name"
+names(dea.lst$`Iyer(2024)`)[names(dea.lst$`Iyer(2024)`) == "Gene.name"] <- "gene_name"
+names(dea.lst$`Rompietti(2025)`)[names(dea.lst$`Rompietti(2025)`) == "Gene.name"] <- "gene_name"
+names(dea.lst$`Hing(2023)`)[names(dea.lst$`Hing(2023)`) == "Gene.name"] <- "gene_name"
+dea.lst$`Integrated scRNA-seq`$gene_name <- rownames(dea.lst$`Integrated scRNA-seq`)
+```
+
+### Upregulated DEGs list
+
+```{r}
+# Extract adjusted significant upregulated genes and collect in a list
+sig_upreg_gene.lst <- purrr::pmap(
+  list(dea.lst),
+  function(dea){
+    dea <- dea[!is.na(dea$padj), ] # remove genes with padj = NA
+    selected_gene <- dea[dea$log2FoldChange > 0.25 & 
+                         dea$padj < 0.05 & 
+                         !is.na(dea$gene_name) & 
+                         dea$gene_name != "", "gene_name"]
+    return(selected_gene)
+  }
+)
+
+# Drop empty ones
+sig_upreg_gene.lst <- sig_upreg_gene.lst %>%
+  purrr::discard(~ length(.x) == 0) 
+```
+
+### Downregulated DEGs list
+
+```{r}
+# Extract adjusted significant downregulated genes and collect in a list
+sig_downreg_gene.lst <- purrr::pmap(
+  list(dea.lst),
+  function(dea){
+    dea <- dea[!is.na(dea$padj), ] # remove genes with padj = NA
+    selected_gene <- dea[dea$log2FoldChange < (-0.25) & 
+                         dea$padj < 0.05 & 
+                         !is.na(dea$gene_name) & 
+                         dea$gene_name != "", "gene_name"]
+    return(selected_gene)
+  }
+)
+
+# Drop empty ones
+sig_downreg_gene.lst <- sig_downreg_gene.lst %>%
+  purrr::discard(~ length(.x) == 0) 
+```
+
+## Data from GSEA
+
+```{r}
+# Hallmark
+path_to_gsea_download <- str_c(path_to_bulk_analysis, "/", study.lst, "/enrichment_data/", study_names)
+path_to_gsea_download[6] <- "/mnt/hp-storage/users/pakorns/RNAseq/systematic_review/5-Hing_2023_GSE183427/enrichment_data/Hing_GSE183427" # Hing was used in different file name
+path_to_gsea_download[length(path_to_gsea_download) + 1] <- str_c(path_to_sc_integrated_data, "/tumour_deseq2") # add path for integrated gsea
+path_to_hm <- str_c(path_to_gsea_download, "_hm_gsea.rds")
+  
+hm_gsea.lst <- purrr::pmap(
+  list(path_to_hm), 
+  function(path){
+    gsea <- readRDS(path)
+    return(gsea)
+  }
+)
+
+names(hm_gsea.lst) <- names.lst
+
+# GO:BP
+path_to_go <- str_c(path_to_gsea_download, "_go_gsea.rds")
+  
+go_gsea.lst <- purrr::pmap(
+  list(path_to_go), 
+  function(path){
+    gsea <- readRDS(path)
+    return(gsea)
+  }
+)
+
+names(go_gsea.lst) <- names.lst
+
+# KEGG
+path_to_kegg <- str_c(path_to_gsea_download, "_kegg_gsea.rds")
+  
+kegg_gsea.lst <- purrr::pmap(
+  list(path_to_kegg), 
+  function(path){
+    gsea <- readRDS(path)
+    return(gsea)
+  }
+)
+
+names(kegg_gsea.lst) <- names.lst
+
+# Reactome
+path_to_reactome <- str_c(path_to_gsea_download, "_reactome_gsea.rds")
+  
+reactome_gsea.lst <- purrr::pmap(
+  list(path_to_reactome), 
+  function(path){
+    gsea <- readRDS(path)
+    return(gsea)
+  }
+)
+
+names(reactome_gsea.lst) <- names.lst
+
+# WikiPath
+path_to_wikipath <- str_c(path_to_gsea_download, "_wikipath_gsea.rds")
+  
+wikipath_gsea.lst <- purrr::pmap(
+  list(path_to_wikipath), 
+  function(path){
+    gsea <- readRDS(path)
+    return(gsea)
+  }
+)
+
+names(wikipath_gsea.lst) <- names.lst
+```
+
+# Mouse bulk RNA-seq consistency analysis
+
+This section we evaluated the consistency of gene expression in mouse data sets.
+
+## Direction consistency of the known DEGs
+
+In this method, we showed the consistecy of expression direction of the known DEGs previously reported from the literature.
+
+```{r, message=FALSE, warning=FALSE}
+# Extract all expressed genes without considering significance 
+mouse_studies <- c("Hacken(2023)", "Iyer(2024)", "Hing(2023)", "Rompietti(2025)")
+
+common_mouse_genes <- purrr::map(
+  dea.lst[mouse_studies],
+  ~ .x %>%
+    dplyr::filter(!is.na(`Mouse.gene.name`)) %>%
+    pull(`Mouse.gene.name`)
+) %>%
+  Reduce(intersect, .)
+
+common_mouse_gene_expr.df <- purrr::map_dfr(
+  mouse_studies,
+  function(study_name){
+    dea <- dea.lst[[study_name]]
+    gene_expr <- dea %>%
+      dplyr::filter(`Mouse.gene.name` %in% common_mouse_genes) %>%
+      dplyr::select(`Mouse.gene.name`, log2FoldChange) %>%
+      dplyr::mutate(study = study_name) 
+    return(gene_expr)
+  }
+)
+
+# Change the data frame to wider form
+common_mouse_gene_expr.df <- common_mouse_gene_expr.df %>%
+  tidyr::pivot_wider(
+    names_from = study,
+    values_from = log2FoldChange
+  ) 
+
+DT::datatable(common_mouse_gene_expr.df, options = list(scrollX = TRUE))
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Extract all genes found in all study
+all_mouse_gene_expr.df <- purrr::map_dfr(
+  mouse_studies,
+  function(study_name){
+    dea <- dea.lst[[study_name]]
+    gene_expr <- dea %>%
+      dplyr::select(`Mouse.gene.name`, gene_name, log2FoldChange) %>%
+      dplyr::mutate(study = study_name) 
+    return(gene_expr)
+  }
+)
+
+# Change the data frame to wider form
+all_mouse_gene_expr.df <- all_mouse_gene_expr.df %>%
+  tidyr::pivot_wider(
+    names_from = study,
+    values_from = log2FoldChange,
+    values_fn = list(log2FoldChange = ~mean(.x, na.rm = TRUE)) 
+  ) %>%
+  dplyr::mutate(
+    Hacken_direction = dplyr::case_when(
+      `Hacken(2023)` > 0 ~ "Up",
+      `Hacken(2023)` < 0 ~ "Down",
+      TRUE ~ "NA"
+    ),
+    Iyer_direction = dplyr::case_when(
+      `Iyer(2024)` > 0 ~ "Up",
+      `Iyer(2024)` < 0 ~ "Down",
+      TRUE ~ "NA"
+    ),
+    Hing_direction = dplyr::case_when(
+      `Hing(2023)` > 0 ~ "Up",
+      `Hing(2023)` < 0 ~ "Down",
+      TRUE ~ "NA"
+    ),
+    Rompietti_direction = dplyr::case_when(
+      `Rompietti(2025)` > 0 ~ "Up",
+      `Rompietti(2025)` < 0 ~ "Down",
+      TRUE ~ "NA"
+    )
+  ) 
+
+DT::datatable(all_mouse_gene_expr.df, options = list(scrollX = TRUE))
+```
+
+```{r, eval=FALSE}
+# Save the results
+saveRDS(common_mouse_gene_expr.df, here::here("scRNAseq/meta_analysis/R_objects/common_mouse_gene_expr.rds"))
+saveRDS(all_mouse_gene_expr.df, here::here("scRNAseq/meta_analysis/R_objects/all_mouse_gene_expr.rds"))
+```
+
+```{r}
+# Define known mouse up- and downregulated DEGs
+gene_mouse_categories <- list(
+  # Upregulated DEGs 
+  Cell_Cycle_Up = c("Mki67", "Cdk1", "Cdk6", "Ccna2", "Ccnb1", "Ccnd2", "Ccnd3"),
+  Mitosis_DNA_Up = c("Aurkb", "Top2a"),
+  Oncogenes_TF_Up = c("Myc", "Egr1"),
+  Immune_Checkpoint_Up = c("Ctla4", "Cd274", "Il10"), # Immunosuppression and T-cell exhaustion markers (common in RT microenvironment)
+  Microenv_Homing_Up = c("Cxcr5", "Ccr7", "Ccl17", "Ccl22", "Cx3cl1"), # Chemokines and Receptors for cell trafficking and interaction
+  Signaling_Metabolism_Up = c("Ldha", "Tgfbr1", "Il16ra"),
+
+  # Downregulated DEGs 
+  Cycle_Inhibitors_Down = c("Cdkn1a", "Cdkn2b"), # Loss of cell cycle "brakes" (Tumor Suppressors)
+  Oncogenes_TF_Down = c("Sox4", "Runx3", "Bcl6", "Bcl11b"),
+  Immune_Checkpoint_Down = c("Cd74"),
+  Microenv_Homing_Down = c("Itgb7"),
+  Signaling_Metabolism_Down = c("Itk"),
+  Immune_Reg_Down = c("Lair1") # Loss of inhibitory immune receptors
+)
+
+known_mouse_degs <- unlist(gene_mouse_categories)
+```
+
+```{r, message=FALSE, warning=FALSE, fig.height=8, fig.width=2}
+# Evaluate the consistency through the direction of the known DEGs by plotting the heatmap
+desired_order <- c("Hing(2023)", "Hacken(2023)", "Iyer(2024)", "Rompietti(2025)")
+
+# Extract expression matrix 
+expr_mat <- as.matrix(common_mouse_gene_expr.df[ , -1])   # all columns except gene
+rownames(expr_mat) <- common_mouse_gene_expr.df$`Mouse.gene.name`
+valid_genes <- intersect(known_mouse_degs, rownames(expr_mat))
+known_degs_expr_mat <- expr_mat[valid_genes, ]
+known_degs_expr_mat <- apply(known_degs_expr_mat, 2, as.numeric)
+rownames(known_degs_expr_mat) <- valid_genes
+known_degs_expr_mat <- known_degs_expr_mat[ , desired_order]
+colnames(known_degs_expr_mat) <- c("Hing(2023)", "Ten Hacken(2023)", "Iyer(2024)", "Rompietti(2025)")
+
+# Set scale for heatmap
+palette_length <- 100
+colour_pal <- colorRampPalette(c("#053061", "#2171B5", "white", "#FFD92F", "#A50F15"))(palette_length)
+value_limit <- max(abs(known_degs_expr_mat), na.rm = TRUE)
+breaks <- seq(-value_limit, value_limit, length.out = palette_length + 1)
+
+# Plot the heatmap
+pheatmap(
+  known_degs_expr_mat,
+  scale = "none",
+  color = colour_pal,
+  breaks = breaks,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE
+)
+```
+
+## Common upregulated DEGs
+
+```{r}
+# Select mouse data sets and extract adjusted significant upregulated genes and collect in a list
+mouse_sig_upreg_gene.lst <- purrr::pmap(
+  list(dea.lst[mouse_studies]),
+  function(dea){
+    dea <- dea[!is.na(dea$padj), ] # remove genes with padj = NA
+    selected_gene <- dea[dea$log2FoldChange > 0.25 & 
+                         dea$padj < 0.05 & 
+                         !is.na(dea$`Mouse.gene.name`) & 
+                         dea$`Mouse.gene.name` != "", "Mouse.gene.name"]
+    return(selected_gene)
+  }
+)
+
+# Drop empty ones
+mouse_sig_upreg_gene.lst <- mouse_sig_upreg_gene.lst %>%
+  purrr::discard(~ length(.x) == 0) 
+```
+
+```{r}
+# Plot the Venn diagram
+mouse_up_degs_venn.plt <- ggvenn(
+  list("Hing (2023)" = mouse_sig_upreg_gene.lst$`Hing(2023)`,
+       "Ten Hacken (2023)" = mouse_sig_upreg_gene.lst$`Hacken(2023)`,
+       "Iyer (2024)" = mouse_sig_upreg_gene.lst$`Iyer(2024)`,
+       "Rompietti (2025)" = mouse_sig_upreg_gene.lst$`Rompietti(2025)`
+       ),
+  fill_color = c("#0073C2FF", "#EFC000FF", "#6FB899", "#F1788D"),
+  stroke_size = 0.5,
+  set_name_size = 4.5,   # Size of the outside labels (Default is 6)
+  text_size = 4        # Size of the numbers inside the diagram (Default is 4)
+)
+
+mouse_up_degs_venn.plt
+```
+
+```{r}
+# Collect common upregulated DEGs
+mouse_common_up_degs <- Reduce(intersect, mouse_sig_upreg_gene.lst)
+mouse_common_up_degs
+```
+
+## Common downregulated DEGs
+
+```{r}
+# Select mouse data sets and extract adjusted significant downregulated genes and collect in a list
+mouse_sig_downreg_gene.lst <- purrr::pmap(
+  list(dea.lst[mouse_studies]),
+  function(dea){
+    dea <- dea[!is.na(dea$padj), ] # remove genes with padj = NA
+    selected_gene <- dea[dea$log2FoldChange < (-0.25) & 
+                         dea$padj < 0.05 & 
+                         !is.na(dea$`Mouse.gene.name`) & 
+                         dea$`Mouse.gene.name` != "", "Mouse.gene.name"]
+    return(selected_gene)
+  }
+)
+
+# Drop empty ones
+mouse_sig_downreg_gene.lst <- mouse_sig_downreg_gene.lst %>%
+  purrr::discard(~ length(.x) == 0) 
+```
+
+```{r}
+# Plot the Venn diagram
+mouse_down_degs_venn.plt <- ggvenn(
+  list("Hing (2023)" = mouse_sig_downreg_gene.lst$`Hing(2023)`,
+       "Ten Hacken (2023)" = mouse_sig_downreg_gene.lst$`Hacken(2023)`,
+       "Iyer (2024)" = mouse_sig_downreg_gene.lst$`Iyer(2024)`,
+       "Rompietti (2025)" = mouse_sig_downreg_gene.lst$`Rompietti(2025)`
+       ),
+  fill_color = c("#0073C2FF", "#EFC000FF", "#6FB899", "#F1788D"),
+  stroke_size = 0.5,
+  set_name_size = 4.5,   # Size of the outside labels (Default is 6)
+  text_size = 4        # Size of the numbers inside the diagram (Default is 4)
+)
+
+mouse_down_degs_venn.plt
+```
+
+```{r}
+# Collect common downregulated DEGs
+mouse_common_down_degs <- Reduce(intersect, mouse_sig_downreg_gene.lst)
+mouse_common_down_degs
+```
+
+```{r, eval=FALSE}
+# Save the results in the csv files
+# 1. Pad the lists to the same length with NAs
+max_len <- max(length(mouse_common_up_degs), length(mouse_common_down_degs))
+length(mouse_common_up_degs) <- max_len 
+length(mouse_common_down_degs) <- max_len
+
+# 2. Combine into a Data Frame and set your Column Names here
+mouse_common_degs <- data.frame(
+  "Common_up_DEGs" = mouse_common_up_degs,   
+  "Common_down_DEGs" = mouse_common_down_degs
+)
+
+# 3. Save as CSV
+write.csv(
+  mouse_common_degs, 
+  file = here::here("scRNAseq/meta_analysis/supplm_file/mouse_bulk_common_degs.csv"), 
+  row.names = FALSE,   # Removes the row numbers 
+  na = ""              # Makes empty cells blank instead of writing "NA"
+)
+```
+
+```{r, fig.height=2.5, fig.width=11}
+# Visualise the heatmap for common up- and downregulated DEGs
+
+# 1. Extract common DEGs expression data
+mouse_common_degs <- c(mouse_common_up_degs, mouse_common_down_degs)
+mouse_common_degs_expr.df <- purrr::map_dfr(
+  mouse_studies,
+  function(study_name){
+    dea <- dea.lst[[study_name]]
+    gene_expr <- dea %>%
+      dplyr::filter(`Mouse.gene.name` %in% mouse_common_degs) %>%
+      dplyr::select(`Mouse.gene.name`, log2FoldChange) %>%
+      dplyr::mutate(study = study_name) 
+    return(gene_expr)
+  }
+)
+
+# 2. Change the data frame to wider form and convert to a matrix
+mouse_common_degs_expr.df <- mouse_common_degs_expr.df %>%
+  tidyr::pivot_wider(
+    names_from = study,
+    values_from = log2FoldChange,
+    values_fn = mean # Average duplicates to get a single number
+  ) %>%
+  dplyr::mutate(`Mouse.gene.name` = factor(`Mouse.gene.name`, levels = mouse_common_degs)) %>%
+  dplyr::arrange(`Mouse.gene.name`) %>%
+  dplyr::rename("Ten Hacken(2023)" = `Hacken(2023)`) %>%
+  dplyr::select(
+    `Mouse.gene.name`, 
+    `Hing(2023)`, 
+    `Ten Hacken(2023)`, 
+    `Iyer(2024)`, 
+    `Rompietti(2025)`
+  )
+
+mouse_common_sig_expr_mat <- mouse_common_degs_expr.df %>% tibble::column_to_rownames(var = "Mouse.gene.name") %>% as.matrix()
+mouse_common_sig_expr_mat <- t(mouse_common_sig_expr_mat)
+
+# 4. Plot the heatmap
+breaks <- seq(-10, 10, length.out = 101)
+colour_pal <- colorRampPalette(c("#053061", "#2171B5", "white", "#FFD92F", "#A50F15"))(100)
+pheatmap(
+  mouse_common_sig_expr_mat,
+  scale = "none",
+  color = colour_pal,
+  breaks = breaks,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE
+)
+```
+
+## Common GSEA terms
+
+### Hallmark
+
+```{r}
+# Upregulated terms
+mouse_sig_term.lst <- purrr::pmap(
+  list(hm_gsea.lst[mouse_studies]),
+  function(gsea){
+    selected_term <- gsea@result[gsea@result$NES > 0, "ID"]
+    return(selected_term)
+  }
+)
+
+# Drop empty ones
+mouse_sig_term.lst <- mouse_sig_term.lst %>%
+  purrr::discard(~ length(.x) == 0) 
+
+# Plot the Venn diagram
+mouse_up_hm_venn.plt <- ggvenn(
+  list("Hing (2023)" = mouse_sig_term.lst$`Hing(2023)`,
+       "Ten Hacken (2023)" = mouse_sig_term.lst$`Hacken(2023)`,
+       "Iyer (2024)" = mouse_sig_term.lst$`Iyer(2024)`,
+       "Rompietti (2025)" = mouse_sig_term.lst$`Rompietti(2025)`
+       ),
+  fill_color = c("#0073C2FF", "#EFC000FF", "#6FB899", "#F1788D"),
+  stroke_size = 0.5,
+  set_name_size = 4.5,   # Size of the outside labels (Default is 6)
+  text_size = 4        # Size of the numbers inside the diagram (Default is 4)
+)
+
+mouse_up_hm_venn.plt
+```
+
+```{r}
+# Collect common upregulated terms
+mouse_common_up_hm <- Reduce(intersect, mouse_sig_term.lst)
+mouse_common_up_hm
+```
+
+```{r}
+# Downregulated terms
+mouse_sig_term.lst <- purrr::pmap(
+  list(hm_gsea.lst[mouse_studies]),
+  function(gsea){
+    selected_term <- gsea@result[gsea@result$NES < 0, "ID"]
+    return(selected_term)
+  }
+)
+
+# Drop empty ones
+mouse_sig_term.lst <- mouse_sig_term.lst %>%
+  purrr::discard(~ length(.x) == 0) 
+
+# Plot the Venn diagram
+mouse_down_hm_venn.plt <- ggvenn(
+  list("Hing (2023)" = mouse_sig_term.lst$`Hing(2023)`,
+       "Ten Hacken (2023)" = mouse_sig_term.lst$`Hacken(2023)`,
+       "Iyer (2024)" = mouse_sig_term.lst$`Iyer(2024)`,
+       "Rompietti (2025)" = mouse_sig_term.lst$`Rompietti(2025)`
+       ),
+  fill_color = c("#0073C2FF", "#EFC000FF", "#6FB899", "#F1788D"),
+  stroke_size = 0.5,
+  set_name_size = 4.5,   # Size of the outside labels (Default is 6)
+  text_size = 4        # Size of the numbers inside the diagram (Default is 4)
+)
+
+mouse_down_hm_venn.plt
+```
+
+```{r}
+# Collect common downregulated terms
+mouse_common_down_hm <- Reduce(intersect, mouse_sig_term.lst)
+mouse_common_down_hm
+```
+
+### GO:BP
+
+```{r}
+# Upregulated terms
+mouse_sig_term.lst <- purrr::pmap(
+  list(go_gsea.lst[mouse_studies]),
+  function(gsea){
+    selected_term <- gsea@result[gsea@result$NES > 0, "ID"]
+    return(selected_term)
+  }
+)
+
+# Drop empty ones
+mouse_sig_term.lst <- mouse_sig_term.lst %>%
+  purrr::discard(~ length(.x) == 0) 
+
+# Plot the Venn diagram
+mouse_up_go_venn.plt <- ggvenn(
+  list("Hing (2023)" = mouse_sig_term.lst$`Hing(2023)`,
+       "Ten Hacken (2023)" = mouse_sig_term.lst$`Hacken(2023)`,
+       "Iyer (2024)" = mouse_sig_term.lst$`Iyer(2024)`,
+       "Rompietti (2025)" = mouse_sig_term.lst$`Rompietti(2025)`
+       ),
+  fill_color = c("#0073C2FF", "#EFC000FF", "#6FB899", "#F1788D"),
+  stroke_size = 0.5,
+  set_name_size = 4.5,   # Size of the outside labels (Default is 6)
+  text_size = 4        # Size of the numbers inside the diagram (Default is 4)
+)
+
+mouse_up_go_venn.plt
+```
+
+```{r}
+# Collect common upregulated terms
+mouse_common_up_go <- Reduce(intersect, mouse_sig_term.lst)
+mouse_common_up_go
+```
+
+```{r}
+# Downregulated terms
+mouse_sig_term.lst <- purrr::pmap(
+  list(go_gsea.lst[mouse_studies]),
+  function(gsea){
+    selected_term <- gsea@result[gsea@result$NES < 0, "ID"]
+    return(selected_term)
+  }
+)
+
+# Drop empty ones
+mouse_sig_term.lst <- mouse_sig_term.lst %>%
+  purrr::discard(~ length(.x) == 0) 
+
+# Plot the Venn diagram
+mouse_down_go_venn.plt <- ggvenn(
+  list("Hing (2023)" = mouse_sig_term.lst$`Hing(2023)`,
+       "Ten Hacken (2023)" = mouse_sig_term.lst$`Hacken(2023)`,
+       "Iyer (2024)" = mouse_sig_term.lst$`Iyer(2024)`,
+       "Rompietti (2025)" = mouse_sig_term.lst$`Rompietti(2025)`
+       ),
+  fill_color = c("#0073C2FF", "#EFC000FF", "#6FB899", "#F1788D"),
+  stroke_size = 0.5,
+  set_name_size = 4.5,   # Size of the outside labels (Default is 6)
+  text_size = 4        # Size of the numbers inside the diagram (Default is 4)
+)
+
+mouse_down_go_venn.plt
+```
+
+```{r}
+# Collect common downregulated terms
+mouse_common_down_go <- Reduce(intersect, mouse_sig_term.lst)
+mouse_common_down_go
+```
+
+### KEGG
+
+```{r}
+# Upregulated terms
+mouse_sig_term.lst <- purrr::pmap(
+  list(kegg_gsea.lst[mouse_studies]),
+  function(gsea){
+    selected_term <- gsea@result[gsea@result$NES > 0, "ID"]
+    return(selected_term)
+  }
+)
+
+# Drop empty ones
+mouse_sig_term.lst <- mouse_sig_term.lst %>%
+  purrr::discard(~ length(.x) == 0) 
+
+# Plot the Venn diagram
+mouse_up_kegg_venn.plt <- ggvenn(
+  list("Hing (2023)" = mouse_sig_term.lst$`Hing(2023)`,
+       "Ten Hacken (2023)" = mouse_sig_term.lst$`Hacken(2023)`,
+       "Iyer (2024)" = mouse_sig_term.lst$`Iyer(2024)`,
+       "Rompietti (2025)" = mouse_sig_term.lst$`Rompietti(2025)`
+       ),
+  fill_color = c("#0073C2FF", "#EFC000FF", "#6FB899", "#F1788D"),
+  stroke_size = 0.5,
+  set_name_size = 4.5,   # Size of the outside labels (Default is 6)
+  text_size = 4        # Size of the numbers inside the diagram (Default is 4)
+)
+
+mouse_up_kegg_venn.plt
+```
+
+```{r}
+# Collect common upregulated terms
+mouse_common_up_kegg <- Reduce(intersect, mouse_sig_term.lst)
+mouse_common_up_kegg
+```
+
+```{r}
+# Downregulated terms
+mouse_sig_term.lst <- purrr::pmap(
+  list(kegg_gsea.lst[mouse_studies]),
+  function(gsea){
+    selected_term <- gsea@result[gsea@result$NES < 0, "ID"]
+    return(selected_term)
+  }
+)
+
+# Drop empty ones
+mouse_sig_term.lst <- mouse_sig_term.lst %>%
+  purrr::discard(~ length(.x) == 0) 
+
+# Plot the Venn diagram
+mouse_down_kegg_venn.plt <- ggvenn(
+  list("Hing (2023)" = mouse_sig_term.lst$`Hing(2023)`,
+       "Ten Hacken (2023)" = mouse_sig_term.lst$`Hacken(2023)`,
+       "Iyer (2024)" = mouse_sig_term.lst$`Iyer(2024)`,
+       "Rompietti (2025)" = mouse_sig_term.lst$`Rompietti(2025)`
+       ),
+  fill_color = c("#0073C2FF", "#EFC000FF", "#6FB899", "#F1788D"),
+  stroke_size = 0.5,
+  set_name_size = 4.5,   # Size of the outside labels (Default is 6)
+  text_size = 4        # Size of the numbers inside the diagram (Default is 4)
+)
+
+mouse_down_kegg_venn.plt
+```
+
+```{r}
+# Collect common downregulated terms
+mouse_common_down_kegg <- Reduce(intersect, mouse_sig_term.lst)
+mouse_common_down_kegg
+```
+
+### Reactome
+
+```{r}
+# Upregulated terms
+mouse_sig_term.lst <- purrr::pmap(
+  list(reactome_gsea.lst[mouse_studies]),
+  function(gsea){
+    selected_term <- gsea@result[gsea@result$NES > 0, "ID"]
+    return(selected_term)
+  }
+)
+
+# Drop empty ones
+mouse_sig_term.lst <- mouse_sig_term.lst %>%
+  purrr::discard(~ length(.x) == 0) 
+
+# Plot the Venn diagram
+mouse_up_reactome_venn.plt <- ggvenn(
+  list("Hing (2023)" = mouse_sig_term.lst$`Hing(2023)`,
+       "Ten Hacken (2023)" = mouse_sig_term.lst$`Hacken(2023)`,
+       "Iyer (2024)" = mouse_sig_term.lst$`Iyer(2024)`,
+       "Rompietti (2025)" = mouse_sig_term.lst$`Rompietti(2025)`
+       ),
+  fill_color = c("#0073C2FF", "#EFC000FF", "#6FB899", "#F1788D"),
+  stroke_size = 0.5,
+  set_name_size = 4.5,   # Size of the outside labels (Default is 6)
+  text_size = 4        # Size of the numbers inside the diagram (Default is 4)
+)
+
+mouse_up_reactome_venn.plt
+```
+
+```{r}
+# Collect common upregulated terms
+mouse_common_up_reactome <- Reduce(intersect, mouse_sig_term.lst)
+mouse_common_up_reactome
+```
+
+```{r}
+# Downregulated terms
+mouse_sig_term.lst <- purrr::pmap(
+  list(reactome_gsea.lst[mouse_studies]),
+  function(gsea){
+    selected_term <- gsea@result[gsea@result$NES < 0, "ID"]
+    return(selected_term)
+  }
+)
+
+# Drop empty ones
+mouse_sig_term.lst <- mouse_sig_term.lst %>%
+  purrr::discard(~ length(.x) == 0) 
+
+# Plot the Venn diagram
+mouse_down_reactome_venn.plt <- ggvenn(
+  list("Hing (2023)" = mouse_sig_term.lst$`Hing(2023)`,
+       "Ten Hacken (2023)" = mouse_sig_term.lst$`Hacken(2023)`,
+       "Iyer (2024)" = mouse_sig_term.lst$`Iyer(2024)`,
+       "Rompietti (2025)" = mouse_sig_term.lst$`Rompietti(2025)`
+       ),
+  fill_color = c("#0073C2FF", "#EFC000FF", "#6FB899", "#F1788D"),
+  stroke_size = 0.5,
+  set_name_size = 4.5,   # Size of the outside labels (Default is 6)
+  text_size = 4        # Size of the numbers inside the diagram (Default is 4)
+)
+
+mouse_down_reactome_venn.plt
+```
+
+```{r}
+# Collect common downregulated terms
+mouse_common_down_reactome <- Reduce(intersect, mouse_sig_term.lst)
+mouse_common_down_reactome
+```
+
+### WikiPath
+
+```{r}
+# Upregulated terms
+mouse_sig_term.lst <- purrr::pmap(
+  list(wikipath_gsea.lst[mouse_studies]),
+  function(gsea){
+    selected_term <- gsea@result[gsea@result$NES > 0, "ID"]
+    return(selected_term)
+  }
+)
+
+# Drop empty ones
+mouse_sig_term.lst <- mouse_sig_term.lst %>%
+  purrr::discard(~ length(.x) == 0) 
+
+# Plot the Venn diagram
+mouse_up_wikipath_venn.plt <- ggvenn(
+  list("Hing (2023)" = mouse_sig_term.lst$`Hing(2023)`,
+       "Ten Hacken (2023)" = mouse_sig_term.lst$`Hacken(2023)`,
+       "Iyer (2024)" = mouse_sig_term.lst$`Iyer(2024)`,
+       "Rompietti (2025)" = mouse_sig_term.lst$`Rompietti(2025)`
+       ),
+  fill_color = c("#0073C2FF", "#EFC000FF", "#6FB899", "#F1788D"),
+  stroke_size = 0.5,
+  set_name_size = 4.5,   # Size of the outside labels (Default is 6)
+  text_size = 4        # Size of the numbers inside the diagram (Default is 4)
+)
+
+mouse_up_wikipath_venn.plt
+```
+
+```{r}
+# Collect common upregulated terms
+mouse_common_up_wikipath <- Reduce(intersect, mouse_sig_term.lst)
+mouse_common_up_wikipath
+```
+
+```{r}
+# Downregulated terms
+mouse_sig_term.lst <- purrr::pmap(
+  list(wikipath_gsea.lst[mouse_studies]),
+  function(gsea){
+    selected_term <- gsea@result[gsea@result$NES < 0, "ID"]
+    return(selected_term)
+  }
+)
+
+# Drop empty ones
+mouse_sig_term.lst <- mouse_sig_term.lst %>%
+  purrr::discard(~ length(.x) == 0) 
+
+# Plot the Venn diagram
+mouse_down_wikipath_venn.plt <- ggvenn(
+  list("Hing (2023)" = mouse_sig_term.lst$`Hing(2023)`,
+       "Ten Hacken (2023)" = mouse_sig_term.lst$`Hacken(2023)`,
+       "Iyer (2024)" = mouse_sig_term.lst$`Iyer(2024)`,
+       "Rompietti (2025)" = mouse_sig_term.lst$`Rompietti(2025)`
+       ),
+  fill_color = c("#0073C2FF", "#EFC000FF", "#6FB899", "#F1788D"),
+  stroke_size = 0.5,
+  set_name_size = 4.5,   # Size of the outside labels (Default is 6)
+  text_size = 4        # Size of the numbers inside the diagram (Default is 4)
+)
+
+mouse_down_wikipath_venn.plt
+```
+
+```{r}
+# Collect common downregulated terms
+mouse_common_down_wikipath <- Reduce(intersect, mouse_sig_term.lst)
+mouse_common_down_wikipath
+```
+
+## Numerical consistency analysis across gene expression
+
+We also measured the gene expression consistency across those studies by selecting genes with significant expression to evaluate the correlation of those genes, see the following steps. We measured numerically consistency between the expression level through correlations and similarities.
+
+### All significant genes
+
+```{r, message=FALSE, warning=FALSE}
+# Extract significant genes 
+common_sig_mouse_genes <- purrr::map(
+  dea.lst[mouse_studies],
+  ~ .x %>%
+    dplyr::filter(!is.na(padj)) %>%
+    dplyr::filter(padj < 0.05) %>%
+    dplyr::filter(!is.na(`Mouse.gene.name`)) %>%
+    pull(`Mouse.gene.name`)
+) %>%
+  Reduce(intersect, .)
+
+sig_mouse_gene_expr.df <- purrr::map_dfr(
+  mouse_studies,
+  function(study_name){
+    dea <- dea.lst[[study_name]]
+    gene_expr <- dea %>%
+      dplyr::filter(`Mouse.gene.name` %in% common_sig_mouse_genes) %>%
+      dplyr::select(`Mouse.gene.name`, log2FoldChange) %>%
+      dplyr::mutate(study = study_name) 
+    return(gene_expr)
+  }
+)
+
+# Change the data frame to wider form
+sig_mouse_gene_expr.df <- sig_mouse_gene_expr.df %>%
+  tidyr::pivot_wider(
+    names_from = study,
+    values_from = log2FoldChange,
+    values_fn = mean # Average duplicates to get a single number
+  )
+
+# Rename and rearrange the column
+sig_mouse_gene_expr.df <- sig_mouse_gene_expr.df %>%
+  dplyr::rename("Ten Hacken(2023)" = `Hacken(2023)`)
+
+sig_mouse_gene_expr.df <- sig_mouse_gene_expr.df %>%
+  dplyr::select(
+    `Mouse.gene.name`, 
+    `Hing(2023)`, 
+    `Ten Hacken(2023)`, 
+    `Iyer(2024)`, 
+    `Rompietti(2025)`
+  )
+
+head(sig_mouse_gene_expr.df)
+```
+
+```{r}
+# Remove the gene column for correlation
+expr_mat <- sig_mouse_gene_expr.df %>% dplyr::select(-`Mouse.gene.name`) %>% as.matrix()
+
+# Compute correlations and cosine similarity
+pearson_cor <- cor(expr_mat, use = "pairwise.complete.obs", method = "pearson")
+spearman_cor <- cor(expr_mat, use = "pairwise.complete.obs", method = "spearman")
+cosine_similar <- lsa::cosine(expr_mat)
+
+# Compute Euclidean similarity
+euclidean_dist <- as.matrix(dist(t(expr_mat), method = "euclidean"))
+euclidean_similar <- 1 / (1 + euclidean_dist)
+```
+
+```{r, fig.height=5.4, fig.width=5.8}
+# Plot with viridis colour palette
+pheatmap(
+  pearson_cor,
+  main = "Pearson correlation (significant genes)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12         
+)
+
+pheatmap(
+  spearman_cor,
+  main = "Spearman correlation (significant genes)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12 
+)
+
+pheatmap(
+  cosine_similar,
+  main = "Cosine similarity (significant genes)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12 
+)
+
+pheatmap(
+  euclidean_similar,
+  main = "Euclidean similarity (significant genes)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12 
+)
+```
+
+### Upregulated genes
+
+```{r, message=FALSE, warning=FALSE}
+# Extract upregulated genes and their log2FC 
+common_upreg_mouse_genes <- purrr::map(
+  dea.lst[mouse_studies],
+  ~ .x %>%
+    dplyr::filter(!is.na(padj)) %>%
+    dplyr::filter(padj < 0.05, log2FoldChange > 0.25) %>%
+    dplyr::filter(!is.na(`Mouse.gene.name`)) %>%
+    pull(`Mouse.gene.name`)
+) %>%
+  Reduce(intersect, .)
+
+mouse_upreg_gene_expr.df <- purrr::map_dfr(
+  mouse_studies,
+  function(study_name){
+    dea <- dea.lst[[study_name]]
+    gene_expr <- dea %>%
+      dplyr::filter(`Mouse.gene.name` %in% common_upreg_mouse_genes) %>%
+      dplyr::select(`Mouse.gene.name`, log2FoldChange) %>%
+      dplyr::mutate(study = study_name) 
+    return(gene_expr)
+  }
+)
+
+# Change the data frame to wider form
+mouse_upreg_gene_expr.df <- mouse_upreg_gene_expr.df %>%
+  tidyr::pivot_wider(
+    names_from = study,
+    values_from = log2FoldChange,
+    values_fn = mean # Average duplicates to get a single number
+  )
+
+# Rename and rearrange the column
+mouse_upreg_gene_expr.df <- mouse_upreg_gene_expr.df %>%
+  dplyr::rename("Ten Hacken(2023)" = `Hacken(2023)`)
+
+mouse_upreg_gene_expr.df <- mouse_upreg_gene_expr.df %>%
+  dplyr::select(
+    `Mouse.gene.name`, 
+    `Hing(2023)`, 
+    `Ten Hacken(2023)`, 
+    `Iyer(2024)`, 
+    `Rompietti(2025)`
+  )
+
+head(mouse_upreg_gene_expr.df)
+```
+
+```{r}
+# Remove the gene column for correlation
+expr_mat <- mouse_upreg_gene_expr.df %>% dplyr::select(-`Mouse.gene.name`) %>% as.matrix()
+
+# Compute correlations and cosine similarity
+pearson_cor <- cor(expr_mat, use = "pairwise.complete.obs", method = "pearson")
+spearman_cor <- cor(expr_mat, use = "pairwise.complete.obs", method = "spearman")
+cosine_similar <- lsa::cosine(expr_mat)
+
+# Compute Euclidean similarity
+euclidean_dist <- as.matrix(dist(t(expr_mat), method = "euclidean"))
+euclidean_similar <- 1 / (1 + euclidean_dist)
+```
+
+```{r, fig.height=5.4, fig.width=5.8}
+# Plot with viridis colour palette
+pheatmap(
+  pearson_cor,
+  main = "Pearson correlation (upregulated DEGs)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12         
+)
+
+pheatmap(
+  spearman_cor,
+  main = "Spearman correlation (upregulated DEGs)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12 
+)
+
+pheatmap(
+  cosine_similar,
+  main = "Cosine similarity (upregulated DEGs)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12 
+)
+
+pheatmap(
+  euclidean_similar,
+  main = "Euclidean similarity (upregulated DEGs)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12 
+)
+```
+
+### Downregulated genes
+
+```{r, message=FALSE, warning=FALSE}
+# Extract downregulated genes and their log2FC 
+common_downreg_mouse_genes <- purrr::map(
+  dea.lst[mouse_studies],
+  ~ .x %>%
+    dplyr::filter(!is.na(padj)) %>%
+    dplyr::filter(padj < 0.05, log2FoldChange < (-0.25)) %>%
+    dplyr::filter(!is.na(`Mouse.gene.name`)) %>%
+    pull(`Mouse.gene.name`)
+) %>%
+  Reduce(intersect, .)
+
+mouse_downreg_gene_expr.df <- purrr::map_dfr(
+  mouse_studies,
+  function(study_name){
+    dea <- dea.lst[[study_name]]
+    gene_expr <- dea %>%
+      dplyr::filter(`Mouse.gene.name` %in% common_downreg_mouse_genes) %>%
+      dplyr::select(`Mouse.gene.name`, log2FoldChange) %>%
+      dplyr::mutate(study = study_name) 
+    return(gene_expr)
+  }
+)
+
+# Change the data frame to wider form
+mouse_downreg_gene_expr.df <- mouse_downreg_gene_expr.df %>%
+  tidyr::pivot_wider(
+    names_from = study,
+    values_from = log2FoldChange,
+    values_fn = mean # Average duplicates to get a single number
+  )
+
+# Rename and rearrange the column
+mouse_downreg_gene_expr.df <- mouse_downreg_gene_expr.df %>%
+  dplyr::rename("Ten Hacken(2023)" = `Hacken(2023)`)
+
+mouse_downreg_gene_expr.df <- mouse_downreg_gene_expr.df %>%
+  dplyr::select(
+    `Mouse.gene.name`, 
+    `Hing(2023)`, 
+    `Ten Hacken(2023)`, 
+    `Iyer(2024)`, 
+    `Rompietti(2025)`
+  )
+
+head(mouse_downreg_gene_expr.df)
+```
+
+```{r}
+# Remove the gene column for correlation
+expr_mat <- mouse_downreg_gene_expr.df %>% dplyr::select(-`Mouse.gene.name`) %>% as.matrix()
+
+# Compute correlations and cosine similarity
+pearson_cor <- cor(expr_mat, use = "pairwise.complete.obs", method = "pearson")
+spearman_cor <- cor(expr_mat, use = "pairwise.complete.obs", method = "spearman")
+cosine_similar <- lsa::cosine(expr_mat)
+
+# Compute Euclidean similarity
+euclidean_dist <- as.matrix(dist(t(expr_mat), method = "euclidean"))
+euclidean_similar <- 1 / (1 + euclidean_dist)
+```
+
+```{r, fig.height=5.4, fig.width=5.8}
+# Plot with viridis colour palette
+pheatmap(
+  pearson_cor,
+  main = "Pearson correlation (downregulated DEGs)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12         
+)
+
+pheatmap(
+  spearman_cor,
+  main = "Spearman correlation (downregulated DEGs)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12 
+)
+
+pheatmap(
+  cosine_similar,
+  main = "Cosine similarity (downregulated DEGs)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12 
+)
+
+pheatmap(
+  euclidean_similar,
+  main = "Euclidean similarity (downregulated DEGs)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12 
+)
+```
+
+### Upregulated GSEA
+
+```{r, message=FALSE, warning=FALSE}
+# Hallmark 
+mouse_common_up_hm_nes.df <- purrr::map_dfr(
+  mouse_studies,
+  function(study_name){
+    gsea <- hm_gsea.lst[[study_name]]@result
+    gsea_nes <- gsea %>%
+      dplyr::filter(ID %in% mouse_common_up_hm) %>%
+      dplyr::select(ID, NES) %>%
+      dplyr::mutate(study = study_name) 
+    return(gsea_nes)
+  }
+) %>%
+  tidyr::pivot_wider(names_from = study, values_from = NES)
+
+# GO:BP 
+mouse_common_up_go_nes.df <- purrr::map_dfr(
+  mouse_studies,
+  function(study_name){
+    gsea <- go_gsea.lst[[study_name]]@result
+    gsea_nes <- gsea %>%
+      dplyr::filter(ID %in% mouse_common_up_go) %>%
+      dplyr::select(ID, NES) %>%
+      dplyr::mutate(study = study_name) 
+    return(gsea_nes)
+  }
+) %>%
+  tidyr::pivot_wider(names_from = study, values_from = NES)
+
+# KEGG 
+mouse_common_up_kegg_nes.df <- purrr::map_dfr(
+  mouse_studies,
+  function(study_name){
+    gsea <- kegg_gsea.lst[[study_name]]@result
+    gsea_nes <- gsea %>%
+      dplyr::filter(ID %in% mouse_common_up_kegg) %>%
+      dplyr::select(ID, NES) %>%
+      dplyr::mutate(study = study_name) 
+    return(gsea_nes)
+  }
+) %>%
+  tidyr::pivot_wider(names_from = study, values_from = NES)
+
+# Reactome 
+mouse_common_up_reactome_nes.df <- purrr::map_dfr(
+  mouse_studies,
+  function(study_name){
+    gsea <- reactome_gsea.lst[[study_name]]@result
+    gsea_nes <- gsea %>%
+      dplyr::filter(ID %in% mouse_common_up_reactome) %>%
+      dplyr::select(ID, NES) %>%
+      dplyr::mutate(study = study_name) 
+    return(gsea_nes)
+  }
+) %>%
+  tidyr::pivot_wider(names_from = study, values_from = NES)
+
+# WikiPath 
+mouse_common_up_wikipath_nes.df <- purrr::map_dfr(
+  mouse_studies,
+  function(study_name){
+    gsea <- wikipath_gsea.lst[[study_name]]@result
+    gsea_nes <- gsea %>%
+      dplyr::filter(ID %in% mouse_common_up_wikipath) %>%
+      dplyr::select(ID, NES) %>%
+      dplyr::mutate(study = study_name) 
+    return(gsea_nes)
+  }
+) %>%
+  tidyr::pivot_wider(names_from = study, values_from = NES)
+
+# Join the data frames using rbind()
+mouse_common_up_terms <- bind_rows(mouse_common_up_hm_nes.df, 
+                                   mouse_common_up_go_nes.df, 
+                                   mouse_common_up_kegg_nes.df,
+                                   mouse_common_up_reactome_nes.df,
+                                   mouse_common_up_wikipath_nes.df)
+mouse_common_up_terms <- mouse_common_up_terms %>%
+  dplyr::rename("Ten Hacken(2023)" = `Hacken(2023)`) %>%
+  dplyr::rowwise() %>%
+  dplyr::mutate(avrg_NES = mean(c_across(where(is.numeric)), na.rm = TRUE)) %>%
+  dplyr::ungroup() %>%
+  dplyr::select(
+    ID,
+    `Hing(2023)`, 
+    `Ten Hacken(2023)`, 
+    `Iyer(2024)`, 
+    `Rompietti(2025)`,
+    avrg_NES
+  )
+
+head(mouse_common_up_terms)
+```
+
+```{r}
+# Remove the gene column for correlation
+gsea_mat <- mouse_common_up_terms %>% dplyr::select(-c("ID", "avrg_NES")) %>% as.matrix()
+
+# Compute correlations and cosine similarity
+pearson_cor <- cor(gsea_mat, use = "pairwise.complete.obs", method = "pearson")
+spearman_cor <- cor(gsea_mat, use = "pairwise.complete.obs", method = "spearman")
+cosine_similar <- lsa::cosine(gsea_mat)
+
+# Compute Euclidean similarity
+euclidean_dist <- as.matrix(dist(t(gsea_mat), method = "euclidean"))
+euclidean_similar <- 1 / (1 + euclidean_dist)
+```
+
+```{r, fig.height=5.4, fig.width=5.8}
+# Plot with viridis colour palette
+pheatmap(
+  pearson_cor,
+  main = "Pearson Correlation (upregulated GSEA)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12
+)
+
+pheatmap(
+  spearman_cor,
+  main = "Spearman Correlation (upregulated GSEA)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12
+)
+
+pheatmap(
+  cosine_similar,
+  main = "Cosine similarity (upregulated GSEA)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12
+)
+
+pheatmap(
+  euclidean_similar,
+  main = "Euclidean similarity (upregulated GSEA)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12
+)
+```
+
+### Downregulated GSEA
+
+```{r, message=FALSE, warning=FALSE}
+# Hallmark 
+mouse_common_down_hm_nes.df <- purrr::map_dfr(
+  mouse_studies,
+  function(study_name){
+    gsea <- hm_gsea.lst[[study_name]]@result
+    gsea_nes <- gsea %>%
+      dplyr::filter(ID %in% mouse_common_down_hm) %>%
+      dplyr::select(ID, NES) %>%
+      dplyr::mutate(study = study_name) 
+    return(gsea_nes)
+  }
+) %>%
+  tidyr::pivot_wider(names_from = study, values_from = NES)
+
+# GO:BP 
+mouse_common_down_go_nes.df <- purrr::map_dfr(
+  mouse_studies,
+  function(study_name){
+    gsea <- go_gsea.lst[[study_name]]@result
+    gsea_nes <- gsea %>%
+      dplyr::filter(ID %in% mouse_common_down_go) %>%
+      dplyr::select(ID, NES) %>%
+      dplyr::mutate(study = study_name) 
+    return(gsea_nes)
+  }
+) %>%
+  tidyr::pivot_wider(names_from = study, values_from = NES)
+
+# KEGG 
+mouse_common_down_kegg_nes.df <- purrr::map_dfr(
+  mouse_studies,
+  function(study_name){
+    gsea <- kegg_gsea.lst[[study_name]]@result
+    gsea_nes <- gsea %>%
+      dplyr::filter(ID %in% mouse_common_down_kegg) %>%
+      dplyr::select(ID, NES) %>%
+      dplyr::mutate(study = study_name) 
+    return(gsea_nes)
+  }
+) %>%
+  tidyr::pivot_wider(names_from = study, values_from = NES)
+
+# Reactome 
+mouse_common_down_reactome_nes.df <- purrr::map_dfr(
+  mouse_studies,
+  function(study_name){
+    gsea <- reactome_gsea.lst[[study_name]]@result
+    gsea_nes <- gsea %>%
+      dplyr::filter(ID %in% mouse_common_down_reactome) %>%
+      dplyr::select(ID, NES) %>%
+      dplyr::mutate(study = study_name) 
+    return(gsea_nes)
+  }
+) %>%
+  tidyr::pivot_wider(names_from = study, values_from = NES)
+
+# WikiPath 
+mouse_common_down_wikipath_nes.df <- purrr::map_dfr(
+  mouse_studies,
+  function(study_name){
+    gsea <- wikipath_gsea.lst[[study_name]]@result
+    gsea_nes <- gsea %>%
+      dplyr::filter(ID %in% mouse_common_down_wikipath) %>%
+      dplyr::select(ID, NES) %>%
+      dplyr::mutate(study = study_name) 
+    return(gsea_nes)
+  }
+) %>%
+  tidyr::pivot_wider(names_from = study, values_from = NES)
+
+# Join the data frames using rbind()
+mouse_common_down_terms <- bind_rows(mouse_common_down_hm_nes.df, 
+                                   mouse_common_down_go_nes.df, 
+                                   mouse_common_down_kegg_nes.df,
+                                   mouse_common_down_reactome_nes.df,
+                                   mouse_common_down_wikipath_nes.df)
+mouse_common_down_terms <- mouse_common_down_terms %>%
+  dplyr::rename("Ten Hacken(2023)" = `Hacken(2023)`) %>%
+  dplyr::rowwise() %>%
+  dplyr::mutate(avrg_NES = mean(c_across(where(is.numeric)), na.rm = TRUE)) %>%
+  dplyr::ungroup() %>%
+  dplyr::select(
+    ID,
+    `Hing(2023)`, 
+    `Ten Hacken(2023)`, 
+    `Iyer(2024)`, 
+    `Rompietti(2025)`,
+    avrg_NES
+  )
+
+head(mouse_common_down_terms)
+```
+
+```{r}
+# Remove the gene column for correlation
+gsea_mat <- mouse_common_down_terms %>% dplyr::select(-c("ID", "avrg_NES")) %>% as.matrix()
+
+# Compute correlations and cosine similarity
+pearson_cor <- cor(gsea_mat, use = "pairwise.complete.obs", method = "pearson")
+spearman_cor <- cor(gsea_mat, use = "pairwise.complete.obs", method = "spearman")
+cosine_similar <- lsa::cosine(gsea_mat)
+
+# Compute Euclidean similarity
+euclidean_dist <- as.matrix(dist(t(gsea_mat), method = "euclidean"))
+euclidean_similar <- 1 / (1 + euclidean_dist)
+```
+
+```{r, fig.height=5.4, fig.width=5.8}
+# Plot with viridis colour palette
+pheatmap(
+  pearson_cor,
+  main = "Pearson Correlation (downregulated GSEA)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12
+)
+
+pheatmap(
+  spearman_cor,
+  main = "Spearman Correlation (downregulated GSEA)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12
+)
+
+pheatmap(
+  cosine_similar,
+  main = "Cosine similarity (downregulated GSEA)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12
+)
+
+pheatmap(
+  euclidean_similar,
+  main = "Euclidean similarity (downregulated GSEA)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12
+)
+```
+
+## GSEA summarisation
+
+```{r}
+# Rbind both common up- and downregulated term tables
+mouse_common_terms <- bind_rows(mouse_common_up_terms, mouse_common_down_terms)
+DT::datatable(mouse_common_terms, options = list(scrollX = TRUE))
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Plot the bar graph
+selected_terms <- c("HALLMARK_E2F_TARGETS", "HALLMARK_MYC_TARGETS_V1", "HALLMARK_G2M_CHECKPOINT", "GOBP_MITOCHONDRIAL_TRANSLATION",
+                    "KEGG_CELL_CYCLE", "WP_RETINOBLASTOMA_GENE_IN_CANCER", "HALLMARK_INFLAMMATORY_RESPONSE", 
+                    "HALLMARK_KRAS_SIGNALING_UP", "GOBP_IMMUNE_RESPONSE_REGULATING_SIGNALING_PATHWAY", 
+                    "GOBP_TYPE_II_INTERFERON_PRODUCTION", "GOBP_REGULATION_OF_T_CELL_ACTIVATION", 
+                    "REACTOME_CLASS_A_1_RHODOPSIN_LIKE_RECEPTORS")
+
+selected_enrichment.df <- mouse_common_terms %>%
+  dplyr::filter(ID %in% selected_terms) %>%
+  dplyr::select(ID, avrg_NES) 
+
+selected_enrichment.df$ID <- gsub("HALLMARK_", "", selected_enrichment.df$ID)
+selected_enrichment.df$ID <- gsub("GOBP_", "", selected_enrichment.df$ID)
+selected_enrichment.df$ID <- gsub("KEGG_", "", selected_enrichment.df$ID)
+selected_enrichment.df$ID <- gsub("REACTOME_", "", selected_enrichment.df$ID)
+selected_enrichment.df$ID <- gsub("WP_", "", selected_enrichment.df$ID)
+selected_enrichment.df$ID <- gsub("_V1", "", selected_enrichment.df$ID)
+selected_enrichment.df$ID <- gsub("IMMUNE_RESPONSE_REGULATING_SIGNALING_PATHWAY", "IMMUNE_RESPONSE", selected_enrichment.df$ID)
+selected_enrichment.df$ID <- gsub("_", " ", selected_enrichment.df$ID)
+
+selected_enrichment.df$ID <- factor(selected_enrichment.df$ID, levels = selected_enrichment.df$ID)
+selected_enrichment.df$Direction <- "Up"
+selected_enrichment.df$Direction[selected_enrichment.df$avrg_NES<0] <- "Down"
+
+gsea_bar.plt <- ggplot(selected_enrichment.df, aes(x=ID, y=avrg_NES, fill=Direction)) +
+  geom_bar(stat = "identity", color="black", width = 0.75) +  
+  theme_classic() +
+  theme(
+    axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1, color = "black"),
+    plot.margin = margin(t = 10, r = 10, b = 100, l = 65, unit = "pt"),
+    legend.position = "none"
+  ) +
+  geom_hline(yintercept = 0) + 
+  ylab("Average NES") + xlab(NULL) + 
+  scale_fill_manual(values=c("#357EBD", "#D43F3A"))
+
+gsea_bar.plt
+```
+
+# Human bulk and integrated single-cell RNA-seq consistency analysis
+
+This section we evaluated the consistency of gene expression in human bulk and integrated data sets.
+
+## Common upregulated DEGs
+
+```{r}
+# Select human data sets and extract adjusted significant upregulated genes and collect in a list
+human_studies <- setdiff(names(dea.lst), mouse_studies)
+
+human_sig_upreg_gene.lst <- purrr::pmap(
+  list(dea.lst[human_studies]),
+  function(dea){
+    dea <- dea[!is.na(dea$padj), ] # remove genes with padj = NA
+    selected_gene <- dea[dea$log2FoldChange > 0.25 & 
+                         dea$padj < 0.05 & 
+                         !is.na(dea$gene_name) & 
+                         dea$gene_name != "", "gene_name"]
+    return(selected_gene)
+  }
+)
+
+# Drop empty ones
+human_sig_upreg_gene.lst <- human_sig_upreg_gene.lst %>%
+  purrr::discard(~ length(.x) == 0) 
+```
+
+```{r}
+# Plot the Venn diagram
+human_up_degs_venn.plt <- ggvenn(
+  list("Bulk Nadeu (2022)" = human_sig_upreg_gene.lst$`Nadeu(2022)`,
+       "Bulk Parry (2023a)" = human_sig_upreg_gene.lst$`Parry(2023a)`,
+       "Integrated scRNA-seq" = human_sig_upreg_gene.lst$`Integrated scRNA-seq`
+       ),
+  fill_color = c("#0073C2FF", "#EFC000FF", "#6FB899"),
+  stroke_size = 0.5,
+  set_name_size = 4.5,   # Size of the outside labels (Default is 6)
+  text_size = 4        # Size of the numbers inside the diagram (Default is 4)
+)
+
+human_up_degs_venn.plt
+```
+
+```{r}
+# Collect common upregulated DEGs
+human_common_up_degs <- Reduce(intersect, human_sig_upreg_gene.lst)
+human_common_up_degs
+```
+
+## Common downregulated DEGs
+
+```{r}
+# Select human data sets and extract adjusted significant upregulated genes and collect in a list
+human_sig_downreg_gene.lst <- purrr::pmap(
+  list(dea.lst[human_studies]),
+  function(dea){
+    dea <- dea[!is.na(dea$padj), ] # remove genes with padj = NA
+    selected_gene <- dea[dea$log2FoldChange < (-0.25) & 
+                         dea$padj < 0.05 & 
+                         !is.na(dea$gene_name) & 
+                         dea$gene_name != "", "gene_name"]
+    return(selected_gene)
+  }
+)
+
+# Drop empty ones
+human_sig_downreg_gene.lst <- human_sig_downreg_gene.lst %>%
+  purrr::discard(~ length(.x) == 0) 
+```
+
+```{r}
+# Plot the Venn diagram
+human_down_degs_venn.plt <- ggvenn(
+  list("Bulk Nadeu (2022)" = human_sig_downreg_gene.lst$`Nadeu(2022)`,
+       "Bulk Parry (2023a)" = human_sig_downreg_gene.lst$`Parry(2023a)`,
+       "Integrated scRNA-seq" = human_sig_downreg_gene.lst$`Integrated scRNA-seq`
+       ),
+  fill_color = c("#0073C2FF", "#EFC000FF", "#6FB899"),
+  stroke_size = 0.5,
+  set_name_size = 4.5,   # Size of the outside labels (Default is 6)
+  text_size = 4        # Size of the numbers inside the diagram (Default is 4)
+)
+
+human_down_degs_venn.plt
+```
+
+```{r}
+# Collect common downregulated DEGs
+human_common_down_degs <- Reduce(intersect, human_sig_downreg_gene.lst)
+human_common_down_degs
+```
+
+```{r, eval=FALSE}
+# Save the results in the csv files
+# 1. Pad the lists to the same length with NAs
+max_len <- max(length(human_common_up_degs), length(human_common_down_degs))
+length(human_common_up_degs) <- max_len 
+length(human_common_down_degs) <- max_len
+
+# 2. Combine into a Data Frame and set your Column Names here
+human_bulk_integrated_common_degs <- data.frame(
+  "Common_up_DEGs" = human_common_up_degs,   
+  "Common_down_DEGs" = human_common_down_degs
+)
+
+# 3. Save as CSV
+write.csv(
+  human_bulk_integrated_common_degs, 
+  file = here::here("scRNAseq/meta_analysis/supplm_file/human_bulk_integrated_common_degs.csv"), 
+  row.names = FALSE,   # Removes the row numbers 
+  na = ""              # Makes empty cells blank instead of writing "NA"
+)
+```
+
+## Common GSEA terms
+
+### Hallmark
+
+```{r}
+# Upregulated terms
+human_sig_term.lst <- purrr::pmap(
+  list(hm_gsea.lst[human_studies]),
+  function(gsea){
+    selected_term <- gsea@result[gsea@result$NES > 0, "ID"]
+    return(selected_term)
+  }
+)
+
+# Drop empty ones
+human_sig_term.lst <- human_sig_term.lst %>%
+  purrr::discard(~ length(.x) == 0) 
+
+# Plot the Venn diagram
+human_up_hm_venn.plt <- ggvenn(
+  list("Bulk Nadeu (2022)" = human_sig_term.lst$`Nadeu(2022)`,
+       "Bulk Parry (2023a)" = human_sig_term.lst$`Parry(2023a)`,
+       "Integrated scRNA-seq" = human_sig_term.lst$`Integrated scRNA-seq`
+       ),
+  fill_color = c("#0073C2FF", "#EFC000FF", "#6FB899"),
+  stroke_size = 0.5,
+  set_name_size = 4.5,   # Size of the outside labels (Default is 6)
+  text_size = 4        # Size of the numbers inside the diagram (Default is 4)
+)
+
+human_up_hm_venn.plt
+```
+
+```{r}
+# Collect common upregulated terms
+human_common_up_hm <- Reduce(intersect, human_sig_term.lst)
+human_common_up_hm
+```
+
+```{r}
+# Downregulated terms
+human_sig_term.lst <- purrr::pmap(
+  list(hm_gsea.lst[human_studies]),
+  function(gsea){
+    selected_term <- gsea@result[gsea@result$NES < 0, "ID"]
+    return(selected_term)
+  }
+)
+
+# Drop empty ones
+human_sig_term.lst <- human_sig_term.lst %>%
+  purrr::discard(~ length(.x) == 0) 
+
+# Plot the Venn diagram
+human_down_hm_venn.plt <- ggvenn(
+  list("Bulk Nadeu (2022)" = human_sig_term.lst$`Nadeu(2022)`,
+       "Bulk Parry (2023a)" = human_sig_term.lst$`Parry(2023a)`,
+       "Integrated scRNA-seq" = human_sig_term.lst$`Integrated scRNA-seq`
+       ),
+  fill_color = c("#0073C2FF", "#EFC000FF", "#6FB899"),
+  stroke_size = 0.5,
+  set_name_size = 4.5,   # Size of the outside labels (Default is 6)
+  text_size = 4        # Size of the numbers inside the diagram (Default is 4)
+)
+
+human_down_hm_venn.plt
+```
+
+### GO:BP
+
+```{r}
+# Upregulated terms
+human_sig_term.lst <- purrr::pmap(
+  list(go_gsea.lst[human_studies]),
+  function(gsea){
+    selected_term <- gsea@result[gsea@result$NES > 0, "ID"]
+    return(selected_term)
+  }
+)
+
+# Drop empty ones
+human_sig_term.lst <- human_sig_term.lst %>%
+  purrr::discard(~ length(.x) == 0) 
+
+# Plot the Venn diagram
+human_up_go_venn.plt <- ggvenn(
+  list("Bulk Nadeu (2022)" = human_sig_term.lst$`Nadeu(2022)`,
+       "Bulk Parry (2023a)" = human_sig_term.lst$`Parry(2023a)`,
+       "Integrated scRNA-seq" = human_sig_term.lst$`Integrated scRNA-seq`
+       ),
+  fill_color = c("#0073C2FF", "#EFC000FF", "#6FB899"),
+  stroke_size = 0.5,
+  set_name_size = 4.5,   # Size of the outside labels (Default is 6)
+  text_size = 4        # Size of the numbers inside the diagram (Default is 4)
+)
+
+human_up_go_venn.plt
+```
+
+```{r}
+# Collect common upregulated terms
+human_common_up_go <- Reduce(intersect, human_sig_term.lst)
+human_common_up_go
+```
+
+```{r}
+# Downregulated terms
+human_sig_term.lst <- purrr::pmap(
+  list(go_gsea.lst[human_studies]),
+  function(gsea){
+    selected_term <- gsea@result[gsea@result$NES < 0, "ID"]
+    return(selected_term)
+  }
+)
+
+# Drop empty ones
+human_sig_term.lst <- human_sig_term.lst %>%
+  purrr::discard(~ length(.x) == 0) 
+
+# Plot the Venn diagram
+human_down_go_venn.plt <- ggvenn(
+  list("Bulk Nadeu (2022)" = human_sig_term.lst$`Nadeu(2022)`,
+       "Bulk Parry (2023a)" = human_sig_term.lst$`Parry(2023a)`,
+       "Integrated scRNA-seq" = human_sig_term.lst$`Integrated scRNA-seq`
+       ),
+  fill_color = c("#0073C2FF", "#EFC000FF", "#6FB899"),
+  stroke_size = 0.5,
+  set_name_size = 4.5,   # Size of the outside labels (Default is 6)
+  text_size = 4        # Size of the numbers inside the diagram (Default is 4)
+)
+
+human_down_go_venn.plt
+```
+
+```{r}
+# Collect common downregulated terms
+human_common_down_go <- Reduce(intersect, human_sig_term.lst)
+human_common_down_go
+```
+
+### KEGG
+
+```{r}
+# Upregulated terms
+human_sig_term.lst <- purrr::pmap(
+  list(kegg_gsea.lst[human_studies]),
+  function(gsea){
+    selected_term <- gsea@result[gsea@result$NES > 0, "ID"]
+    return(selected_term)
+  }
+)
+
+# Drop empty ones
+human_sig_term.lst <- human_sig_term.lst %>%
+  purrr::discard(~ length(.x) == 0) 
+
+# Plot the Venn diagram
+human_up_kegg_venn.plt <- ggvenn(
+  list("Bulk Nadeu (2022)" = human_sig_term.lst$`Nadeu(2022)`,
+       "Bulk Parry (2023a)" = human_sig_term.lst$`Parry(2023a)`,
+       "Integrated scRNA-seq" = human_sig_term.lst$`Integrated scRNA-seq`
+       ),
+  fill_color = c("#0073C2FF", "#EFC000FF", "#6FB899"),
+  stroke_size = 0.5,
+  set_name_size = 4.5,   # Size of the outside labels (Default is 6)
+  text_size = 4        # Size of the numbers inside the diagram (Default is 4)
+)
+
+human_up_kegg_venn.plt
+```
+
+```{r}
+# Collect common upregulated terms
+human_common_up_kegg <- Reduce(intersect, human_sig_term.lst)
+human_common_up_kegg
+```
+
+```{r}
+# Downregulated terms
+human_sig_term.lst <- purrr::pmap(
+  list(kegg_gsea.lst[human_studies]),
+  function(gsea){
+    selected_term <- gsea@result[gsea@result$NES < 0, "ID"]
+    return(selected_term)
+  }
+)
+
+# Drop empty ones
+human_sig_term.lst <- human_sig_term.lst %>%
+  purrr::discard(~ length(.x) == 0) 
+
+# Plot the Venn diagram
+human_down_kegg_venn.plt <- ggvenn(
+  list("Bulk Nadeu (2022)" = human_sig_term.lst$`Nadeu(2022)`,
+       "Bulk Parry (2023a)" = human_sig_term.lst$`Parry(2023a)`,
+       "Integrated scRNA-seq" = human_sig_term.lst$`Integrated scRNA-seq`
+       ),
+  fill_color = c("#0073C2FF", "#EFC000FF", "#6FB899"),
+  stroke_size = 0.5,
+  set_name_size = 4.5,   # Size of the outside labels (Default is 6)
+  text_size = 4        # Size of the numbers inside the diagram (Default is 4)
+)
+
+human_down_kegg_venn.plt
+```
+
+```{r}
+# Collect common downregulated terms
+human_common_down_kegg <- Reduce(intersect, human_sig_term.lst)
+human_common_down_kegg
+```
+
+### Reactome
+
+```{r}
+# Upregulated terms
+human_sig_term.lst <- purrr::pmap(
+  list(reactome_gsea.lst[human_studies]),
+  function(gsea){
+    selected_term <- gsea@result[gsea@result$NES > 0, "ID"]
+    return(selected_term)
+  }
+)
+
+# Drop empty ones
+human_sig_term.lst <- human_sig_term.lst %>%
+  purrr::discard(~ length(.x) == 0) 
+
+# Plot the Venn diagram
+human_up_reactome_venn.plt <- ggvenn(
+  list("Bulk Nadeu (2022)" = human_sig_term.lst$`Nadeu(2022)`,
+       "Bulk Parry (2023a)" = human_sig_term.lst$`Parry(2023a)`,
+       "Integrated scRNA-seq" = human_sig_term.lst$`Integrated scRNA-seq`
+       ),
+  fill_color = c("#0073C2FF", "#EFC000FF", "#6FB899"),
+  stroke_size = 0.5,
+  set_name_size = 4.5,   # Size of the outside labels (Default is 6)
+  text_size = 4        # Size of the numbers inside the diagram (Default is 4)
+)
+
+human_up_reactome_venn.plt
+```
+
+```{r}
+# Collect common upregulated terms
+human_common_up_reactome <- Reduce(intersect, human_sig_term.lst)
+human_common_up_reactome
+```
+
+```{r}
+# Downregulated terms
+human_sig_term.lst <- purrr::pmap(
+  list(reactome_gsea.lst[human_studies]),
+  function(gsea){
+    selected_term <- gsea@result[gsea@result$NES < 0, "ID"]
+    return(selected_term)
+  }
+)
+
+# Drop empty ones
+human_sig_term.lst <- human_sig_term.lst %>%
+  purrr::discard(~ length(.x) == 0) 
+
+# Plot the Venn diagram
+human_down_reactome_venn.plt <- ggvenn(
+  list("Bulk Nadeu (2022)" = human_sig_term.lst$`Nadeu(2022)`,
+       "Bulk Parry (2023a)" = human_sig_term.lst$`Parry(2023a)`,
+       "Integrated scRNA-seq" = human_sig_term.lst$`Integrated scRNA-seq`
+       ),
+  fill_color = c("#0073C2FF", "#EFC000FF", "#6FB899"),
+  stroke_size = 0.5,
+  set_name_size = 4.5,   # Size of the outside labels (Default is 6)
+  text_size = 4        # Size of the numbers inside the diagram (Default is 4)
+)
+
+human_down_reactome_venn.plt
+```
+
+```{r}
+# Collect common downregulated terms
+human_common_down_reactome <- Reduce(intersect, human_sig_term.lst)
+human_common_down_reactome
+```
+
+### WikiPath
+
+```{r}
+# Upregulated terms
+human_sig_term.lst <- purrr::pmap(
+  list(wikipath_gsea.lst[human_studies]),
+  function(gsea){
+    selected_term <- gsea@result[gsea@result$NES > 0, "ID"]
+    return(selected_term)
+  }
+)
+
+# Drop empty ones
+human_sig_term.lst <- human_sig_term.lst %>%
+  purrr::discard(~ length(.x) == 0) 
+
+# Plot the Venn diagram
+human_up_wikipath_venn.plt <- ggvenn(
+  list("Bulk Nadeu (2022)" = human_sig_term.lst$`Nadeu(2022)`,
+       "Bulk Parry (2023a)" = human_sig_term.lst$`Parry(2023a)`,
+       "Integrated scRNA-seq" = human_sig_term.lst$`Integrated scRNA-seq`
+       ),
+  fill_color = c("#0073C2FF", "#EFC000FF", "#6FB899"),
+  stroke_size = 0.5,
+  set_name_size = 4.5,   # Size of the outside labels (Default is 6)
+  text_size = 4        # Size of the numbers inside the diagram (Default is 4)
+)
+
+human_up_wikipath_venn.plt
+```
+
+```{r}
+# Collect common upregulated terms
+human_common_up_wikipath <- Reduce(intersect, human_sig_term.lst)
+human_common_up_wikipath
+```
+
+```{r}
+# Downregulated terms
+human_sig_term.lst <- purrr::pmap(
+  list(wikipath_gsea.lst[human_studies]),
+  function(gsea){
+    selected_term <- gsea@result[gsea@result$NES < 0, "ID"]
+    return(selected_term)
+  }
+)
+
+# Drop empty ones
+human_sig_term.lst <- human_sig_term.lst %>%
+  purrr::discard(~ length(.x) == 0) 
+
+# Plot the Venn diagram
+human_down_wikipath_venn.plt <- ggvenn(
+  list("Bulk Nadeu (2022)" = human_sig_term.lst$`Nadeu(2022)`,
+       "Bulk Parry (2023a)" = human_sig_term.lst$`Parry(2023a)`,
+       "Integrated scRNA-seq" = human_sig_term.lst$`Integrated scRNA-seq`
+       ),
+  fill_color = c("#0073C2FF", "#EFC000FF", "#6FB899"),
+  stroke_size = 0.5,
+  set_name_size = 4.5,   # Size of the outside labels (Default is 6)
+  text_size = 4        # Size of the numbers inside the diagram (Default is 4)
+)
+
+human_down_wikipath_venn.plt
+```
+
+```{r}
+# Collect common downregulated terms
+human_common_down_wikipath <- Reduce(intersect, human_sig_term.lst)
+human_common_down_wikipath
+```
+
+## Numerical consistency analysis across gene expression
+
+We also measured the gene expression consistency across those studies by selecting genes with significant expression to evaluate the correlation of those genes, see the following steps. We measured numerically consistency between the expression level through correlations and similarities.
+
+### All significant genes
+
+```{r, message=FALSE, warning=FALSE}
+# Extract significant genes 
+common_sig_human_genes <- purrr::map(
+  dea.lst[human_studies],
+  ~ .x %>%
+    dplyr::filter(!is.na(padj)) %>%
+    dplyr::filter(padj < 0.05) %>%
+    dplyr::filter(!is.na(gene_name)) %>%
+    pull(gene_name)
+) %>%
+  Reduce(intersect, .)
+
+sig_human_gene_expr.df <- purrr::map_dfr(
+  human_studies,
+  function(study_name){
+    dea <- dea.lst[[study_name]]
+    gene_expr <- dea %>%
+      dplyr::filter(gene_name %in% common_sig_human_genes) %>%
+      dplyr::select(gene_name, log2FoldChange) %>%
+      dplyr::mutate(study = study_name) 
+    return(gene_expr)
+  }
+)
+
+# Change the data frame to wider form
+sig_human_gene_expr.df <- sig_human_gene_expr.df %>%
+  tidyr::pivot_wider(
+    names_from = study,
+    values_from = log2FoldChange,
+    values_fn = mean # Average duplicates to get a single number
+  )
+
+# Rename the column
+sig_human_gene_expr.df <- sig_human_gene_expr.df %>%
+  dplyr::rename(
+    "Bulk Nadeu(2022)" = `Nadeu(2022)`,
+    "Bulk Parry(2023a)" = `Parry(2023a)`
+    ) 
+
+head(sig_human_gene_expr.df)
+```
+
+```{r}
+# Remove the gene column for correlation
+expr_mat <- sig_human_gene_expr.df %>% dplyr::select(-gene_name) %>% as.matrix()
+
+# Compute correlations and cosine similarity
+pearson_cor <- cor(expr_mat, use = "pairwise.complete.obs", method = "pearson")
+spearman_cor <- cor(expr_mat, use = "pairwise.complete.obs", method = "spearman")
+cosine_similar <- lsa::cosine(expr_mat)
+
+# Compute Euclidean similarity
+euclidean_dist <- as.matrix(dist(t(expr_mat), method = "euclidean"))
+euclidean_similar <- 1 / (1 + euclidean_dist)
+```
+
+```{r, fig.height=5.8, fig.width=6.2}
+# Plot with viridis colour palette
+pheatmap(
+  pearson_cor,
+  main = "Pearson correlation (significant genes)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12         
+)
+
+pheatmap(
+  spearman_cor,
+  main = "Spearman correlation (significant genes)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12 
+)
+
+pheatmap(
+  cosine_similar,
+  main = "Cosine similarity (significant genes)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12 
+)
+
+pheatmap(
+  euclidean_similar,
+  main = "Euclidean similarity (significant genes)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12 
+)
+```
+
+### Upregulated genes
+
+```{r, message=FALSE, warning=FALSE}
+# Extract upregulated genes and their log2FC 
+common_upreg_human_genes <- purrr::map(
+  dea.lst[human_studies],
+  ~ .x %>%
+    dplyr::filter(!is.na(padj)) %>%
+    dplyr::filter(padj < 0.05, log2FoldChange > 0.25) %>%
+    dplyr::filter(!is.na(gene_name)) %>%
+    pull(gene_name)
+) %>%
+  Reduce(intersect, .)
+
+human_upreg_gene_expr.df <- purrr::map_dfr(
+  human_studies,
+  function(study_name){
+    dea <- dea.lst[[study_name]]
+    gene_expr <- dea %>%
+      dplyr::filter(gene_name %in% common_upreg_human_genes) %>%
+      dplyr::select(gene_name, log2FoldChange) %>%
+      dplyr::mutate(study = study_name) 
+    return(gene_expr)
+  }
+)
+
+# Change the data frame to wider form
+human_upreg_gene_expr.df <- human_upreg_gene_expr.df %>%
+  tidyr::pivot_wider(
+    names_from = study,
+    values_from = log2FoldChange,
+    values_fn = mean # Average duplicates to get a single number
+  )
+
+# Rename the column
+human_upreg_gene_expr.df <- human_upreg_gene_expr.df %>%
+  dplyr::rename(
+    "Bulk Nadeu(2022)" = `Nadeu(2022)`,
+    "Bulk Parry(2023a)" = `Parry(2023a)`
+    ) 
+
+head(human_upreg_gene_expr.df)
+```
+
+```{r}
+# Remove the gene column for correlation
+expr_mat <- human_upreg_gene_expr.df %>% dplyr::select(-gene_name) %>% as.matrix()
+
+# Compute correlations and cosine similarity
+pearson_cor <- cor(expr_mat, use = "pairwise.complete.obs", method = "pearson")
+spearman_cor <- cor(expr_mat, use = "pairwise.complete.obs", method = "spearman")
+cosine_similar <- lsa::cosine(expr_mat)
+
+# Compute Euclidean similarity
+euclidean_dist <- as.matrix(dist(t(expr_mat), method = "euclidean"))
+euclidean_similar <- 1 / (1 + euclidean_dist)
+```
+
+```{r, fig.height=5.8, fig.width=6.2}
+# Plot with viridis colour palette
+pheatmap(
+  pearson_cor,
+  main = "Pearson correlation (upregulated DEGs)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12         
+)
+
+pheatmap(
+  spearman_cor,
+  main = "Spearman correlation (upregulated DEGs)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12 
+)
+
+pheatmap(
+  cosine_similar,
+  main = "Cosine similarity (upregulated DEGs)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12 
+)
+
+pheatmap(
+  euclidean_similar,
+  main = "Euclidean similarity (upregulated DEGs)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12 
+)
+```
+
+### Downregulated genes
+
+```{r, message=FALSE, warning=FALSE}
+# Extract downregulated genes and their log2FC 
+common_downreg_human_genes <- purrr::map(
+  dea.lst[human_studies],
+  ~ .x %>%
+    dplyr::filter(!is.na(padj)) %>%
+    dplyr::filter(padj < 0.05, log2FoldChange < (-0.25)) %>%
+    dplyr::filter(!is.na(gene_name)) %>%
+    pull(gene_name)
+) %>%
+  Reduce(intersect, .)
+
+human_downreg_gene_expr.df <- purrr::map_dfr(
+  human_studies,
+  function(study_name){
+    dea <- dea.lst[[study_name]]
+    gene_expr <- dea %>%
+      dplyr::filter(gene_name %in% common_downreg_human_genes) %>%
+      dplyr::select(gene_name, log2FoldChange) %>%
+      dplyr::mutate(study = study_name) 
+    return(gene_expr)
+  }
+)
+
+# Change the data frame to wider form
+human_downreg_gene_expr.df <- human_downreg_gene_expr.df %>%
+  tidyr::pivot_wider(
+    names_from = study,
+    values_from = log2FoldChange,
+    values_fn = mean # Average duplicates to get a single number
+  )
+
+# Rename the column
+human_downreg_gene_expr.df <- human_downreg_gene_expr.df %>%
+  dplyr::rename(
+    "Bulk Nadeu(2022)" = `Nadeu(2022)`,
+    "Bulk Parry(2023a)" = `Parry(2023a)`
+    ) 
+
+head(human_downreg_gene_expr.df)
+```
+
+```{r}
+# Remove the gene column for correlation
+expr_mat <- human_downreg_gene_expr.df %>% dplyr::select(-gene_name) %>% as.matrix()
+
+# Compute correlations and cosine similarity
+pearson_cor <- cor(expr_mat, use = "pairwise.complete.obs", method = "pearson")
+spearman_cor <- cor(expr_mat, use = "pairwise.complete.obs", method = "spearman")
+cosine_similar <- lsa::cosine(expr_mat)
+
+# Compute Euclidean similarity
+euclidean_dist <- as.matrix(dist(t(expr_mat), method = "euclidean"))
+euclidean_similar <- 1 / (1 + euclidean_dist)
+```
+
+```{r, fig.height=5.8, fig.width=6.2}
+# Plot with viridis colour palette
+pheatmap(
+  pearson_cor,
+  main = "Pearson correlation (downregulated DEGs)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12         
+)
+
+pheatmap(
+  spearman_cor,
+  main = "Spearman correlation (downregulated DEGs)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12 
+)
+
+pheatmap(
+  cosine_similar,
+  main = "Cosine similarity (downregulated DEGs)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12 
+)
+
+pheatmap(
+  euclidean_similar,
+  main = "Euclidean similarity (downregulated DEGs)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12 
+)
+```
+
+### Upregulated GSEA
+
+```{r, message=FALSE, warning=FALSE}
+# Hallmark 
+human_common_up_hm_nes.df <- purrr::map_dfr(
+  human_studies,
+  function(study_name){
+    gsea <- hm_gsea.lst[[study_name]]@result
+    gsea_nes <- gsea %>%
+      dplyr::filter(ID %in% human_common_up_hm) %>%
+      dplyr::select(ID, NES) %>%
+      dplyr::mutate(study = study_name) 
+    return(gsea_nes)
+  }
+) %>%
+  tidyr::pivot_wider(names_from = study, values_from = NES)
+
+# GO:BP 
+human_common_up_go_nes.df <- purrr::map_dfr(
+  human_studies,
+  function(study_name){
+    gsea <- go_gsea.lst[[study_name]]@result
+    gsea_nes <- gsea %>%
+      dplyr::filter(ID %in% human_common_up_go) %>%
+      dplyr::select(ID, NES) %>%
+      dplyr::mutate(study = study_name) 
+    return(gsea_nes)
+  }
+) %>%
+  tidyr::pivot_wider(names_from = study, values_from = NES)
+
+# KEGG 
+human_common_up_kegg_nes.df <- purrr::map_dfr(
+  human_studies,
+  function(study_name){
+    gsea <- kegg_gsea.lst[[study_name]]@result
+    gsea_nes <- gsea %>%
+      dplyr::filter(ID %in% human_common_up_kegg) %>%
+      dplyr::select(ID, NES) %>%
+      dplyr::mutate(study = study_name) 
+    return(gsea_nes)
+  }
+) %>%
+  tidyr::pivot_wider(names_from = study, values_from = NES)
+
+# Reactome 
+human_common_up_reactome_nes.df <- purrr::map_dfr(
+  human_studies,
+  function(study_name){
+    gsea <- reactome_gsea.lst[[study_name]]@result
+    gsea_nes <- gsea %>%
+      dplyr::filter(ID %in% human_common_up_reactome) %>%
+      dplyr::select(ID, NES) %>%
+      dplyr::mutate(study = study_name) 
+    return(gsea_nes)
+  }
+) %>%
+  tidyr::pivot_wider(names_from = study, values_from = NES)
+
+# WikiPath 
+human_common_up_wikipath_nes.df <- purrr::map_dfr(
+  human_studies,
+  function(study_name){
+    gsea <- wikipath_gsea.lst[[study_name]]@result
+    gsea_nes <- gsea %>%
+      dplyr::filter(ID %in% mouse_common_up_wikipath) %>%
+      dplyr::select(ID, NES) %>%
+      dplyr::mutate(study = study_name) 
+    return(gsea_nes)
+  }
+) %>%
+  tidyr::pivot_wider(names_from = study, values_from = NES)
+
+# Join the data frames using rbind()
+human_common_up_terms <- bind_rows(human_common_up_hm_nes.df, 
+                                   human_common_up_go_nes.df, 
+                                   human_common_up_kegg_nes.df,
+                                   human_common_up_reactome_nes.df,
+                                   human_common_up_wikipath_nes.df)
+
+human_common_up_terms <- human_common_up_terms %>%
+  dplyr::rowwise() %>%
+  dplyr::mutate(avrg_NES = mean(c_across(where(is.numeric)), na.rm = TRUE)) %>%
+  dplyr::ungroup() %>%
+  dplyr::rename(
+    "Bulk Nadeu(2022)"    = `Nadeu(2022)`,
+    "Bulk Parry(2023a)"   = `Parry(2023a)`
+  )
+
+head(human_common_up_terms)
+```
+
+```{r}
+# Remove the gene column for correlation
+gsea_mat <- human_common_up_terms %>% dplyr::select(-c("ID", "avrg_NES")) %>% as.matrix()
+
+# Compute correlations and cosine similarity
+pearson_cor <- cor(gsea_mat, use = "pairwise.complete.obs", method = "pearson")
+spearman_cor <- cor(gsea_mat, use = "pairwise.complete.obs", method = "spearman")
+cosine_similar <- lsa::cosine(gsea_mat)
+
+# Compute Euclidean similarity
+euclidean_dist <- as.matrix(dist(t(gsea_mat), method = "euclidean"))
+euclidean_similar <- 1 / (1 + euclidean_dist)
+```
+
+```{r, fig.height=5.8, fig.width=6.2}
+# Plot with viridis colour palette
+pheatmap(
+  pearson_cor,
+  main = "Pearson Correlation (upregulated GSEA)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12
+)
+
+pheatmap(
+  spearman_cor,
+  main = "Spearman Correlation (upregulated GSEA)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12
+)
+
+pheatmap(
+  cosine_similar,
+  main = "Cosine similarity (upregulated GSEA)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12
+)
+
+pheatmap(
+  euclidean_similar,
+  main = "Euclidean similarity (upregulated GSEA)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12
+)
+```
+
+### Downregulated GSEA
+
+```{r, message=FALSE, warning=FALSE}
+# Hallmark --> no common downregulated term found
+
+# GO:BP 
+human_common_down_go_nes.df <- purrr::map_dfr(
+  human_studies,
+  function(study_name){
+    gsea <- go_gsea.lst[[study_name]]@result
+    gsea_nes <- gsea %>%
+      dplyr::filter(ID %in% human_common_down_go) %>%
+      dplyr::select(ID, NES) %>%
+      dplyr::mutate(study = study_name) 
+    return(gsea_nes)
+  }
+) %>%
+  tidyr::pivot_wider(names_from = study, values_from = NES)
+
+# KEGG 
+human_common_down_kegg_nes.df <- purrr::map_dfr(
+  human_studies,
+  function(study_name){
+    gsea <- kegg_gsea.lst[[study_name]]@result
+    gsea_nes <- gsea %>%
+      dplyr::filter(ID %in% human_common_down_kegg) %>%
+      dplyr::select(ID, NES) %>%
+      dplyr::mutate(study = study_name) 
+    return(gsea_nes)
+  }
+) %>%
+  tidyr::pivot_wider(names_from = study, values_from = NES)
+
+# Reactome 
+human_common_down_reactome_nes.df <- purrr::map_dfr(
+  human_studies,
+  function(study_name){
+    gsea <- reactome_gsea.lst[[study_name]]@result
+    gsea_nes <- gsea %>%
+      dplyr::filter(ID %in% human_common_down_reactome) %>%
+      dplyr::select(ID, NES) %>%
+      dplyr::mutate(study = study_name) 
+    return(gsea_nes)
+  }
+) %>%
+  tidyr::pivot_wider(names_from = study, values_from = NES)
+
+# WikiPath 
+human_common_down_wikipath_nes.df <- purrr::map_dfr(
+  human_studies,
+  function(study_name){
+    gsea <- wikipath_gsea.lst[[study_name]]@result
+    gsea_nes <- gsea %>%
+      dplyr::filter(ID %in% human_common_down_wikipath) %>%
+      dplyr::select(ID, NES) %>%
+      dplyr::mutate(study = study_name) 
+    return(gsea_nes)
+  }
+) %>%
+  tidyr::pivot_wider(names_from = study, values_from = NES)
+
+# Join the data frames using rbind()
+human_common_down_terms <- bind_rows(human_common_down_go_nes.df, 
+                                     human_common_down_kegg_nes.df,
+                                     human_common_down_reactome_nes.df,
+                                     human_common_down_wikipath_nes.df)
+
+human_common_down_terms <- human_common_down_terms %>%
+  dplyr::rowwise() %>%
+  dplyr::mutate(avrg_NES = mean(c_across(where(is.numeric)), na.rm = TRUE)) %>%
+  dplyr::ungroup() %>%
+  dplyr::rename(
+    "Bulk Nadeu(2022)"    = `Nadeu(2022)`,
+    "Bulk Parry(2023a)"   = `Parry(2023a)`
+  )
+
+head(human_common_down_terms)
+```
+
+```{r}
+# Remove the gene column for correlation
+gsea_mat <- human_common_down_terms %>% dplyr::select(-c("ID", "avrg_NES")) %>% as.matrix()
+
+# Compute correlations and cosine similarity
+pearson_cor <- cor(gsea_mat, use = "pairwise.complete.obs", method = "pearson")
+spearman_cor <- cor(gsea_mat, use = "pairwise.complete.obs", method = "spearman")
+cosine_similar <- lsa::cosine(gsea_mat)
+
+# Compute Euclidean similarity
+euclidean_dist <- as.matrix(dist(t(gsea_mat), method = "euclidean"))
+euclidean_similar <- 1 / (1 + euclidean_dist)
+```
+
+```{r, fig.height=5.8, fig.width=6}
+# Plot with viridis colour palette
+pheatmap(
+  pearson_cor,
+  main = "Pearson Correlation (downregulated GSEA)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12
+)
+
+pheatmap(
+  spearman_cor,
+  main = "Spearman Correlation (downregulated GSEA)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12
+)
+
+pheatmap(
+  cosine_similar,
+  main = "Cosine similarity (downregulated GSEA)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12
+)
+
+pheatmap(
+  euclidean_similar,
+  main = "Euclidean similarity (downregulated GSEA)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12
+)
+```
+
+## Approach with the Seurat method for the integrated single-cell data
+
+```{r, message=FALSE, warning=FALSE}
+# Change the dea and gsea results from the integrated data to seurat approach
+seurat_dea.lst <- dea.lst[human_studies]
+seurat_dea.lst$`Integrated scRNA-seq` <- readRDS(here::here("scRNAseq/meta_analysis/R_objects/gene_exprs/tumour_dea.rds")) %>%
+  tibble::rownames_to_column(var = "gene_name") %>%
+      dplyr::rename(
+       pvalue = "p_val",
+       padj = "p_val_adj",
+       log2FoldChange = "avg_log2FC"
+      )
+
+seurat_hm_gsea.lst <- hm_gsea.lst[human_studies]  
+seurat_hm_gsea.lst$`Integrated scRNA-seq` <- readRDS(here::here("scRNAseq/meta_analysis/R_objects/gene_exprs/tumour_hm_gsea.rds"))
+
+seurat_go_gsea.lst <- go_gsea.lst[human_studies]  
+seurat_go_gsea.lst$`Integrated scRNA-seq` <- readRDS(here::here("scRNAseq/meta_analysis/R_objects/gene_exprs/tumour_go_gsea.rds"))
+
+seurat_kegg_gsea.lst <- kegg_gsea.lst[human_studies]  
+seurat_kegg_gsea.lst$`Integrated scRNA-seq` <- readRDS(here::here("scRNAseq/meta_analysis/R_objects/gene_exprs/tumour_kegg_gsea.rds"))
+
+seurat_reactome_gsea.lst <- reactome_gsea.lst[human_studies]  
+seurat_reactome_gsea.lst$`Integrated scRNA-seq` <- readRDS(here::here("scRNAseq/meta_analysis/R_objects/gene_exprs/tumour_reactome_gsea.rds"))
+
+seurat_wikipath_gsea.lst <- wikipath_gsea.lst[human_studies]  
+seurat_wikipath_gsea.lst$`Integrated scRNA-seq` <- readRDS(here::here("scRNAseq/meta_analysis/R_objects/gene_exprs/tumour_wikipath_gsea.rds"))
+```
+
+### Common upregulated DEGs
+
+```{r}
+# Select human data sets and extract adjusted significant upregulated genes and collect in a list
+human_seurat_sig_upreg_gene.lst <- purrr::pmap(
+  list(seurat_dea.lst),
+  function(dea){
+    dea <- dea[!is.na(dea$padj), ] # remove genes with padj = NA
+    selected_gene <- dea[dea$log2FoldChange > 0.25 & 
+                         dea$padj < 0.05 & 
+                         !is.na(dea$gene_name) & 
+                         dea$gene_name != "", "gene_name"]
+    return(selected_gene)
+  }
+)
+
+# Drop empty ones
+human_seurat_sig_upreg_gene.lst <- human_seurat_sig_upreg_gene.lst %>%
+  purrr::discard(~ length(.x) == 0) 
+```
+
+```{r}
+# Plot the Venn diagram
+human_seurat_up_degs_venn.plt <- ggvenn(
+  list("Bulk Nadeu (2022)" = human_seurat_sig_upreg_gene.lst$`Nadeu(2022)`,
+       "Bulk Parry (2023a)" = human_seurat_sig_upreg_gene.lst$`Parry(2023a)`,
+       "Integrated scRNA-seq" = human_seurat_sig_upreg_gene.lst$`Integrated scRNA-seq`
+       ),
+  fill_color = c("#0073C2FF", "#EFC000FF", "#6FB899"),
+  stroke_size = 0.5,
+  set_name_size = 4.5,   # Size of the outside labels (Default is 6)
+  text_size = 4        # Size of the numbers inside the diagram (Default is 4)
+)
+
+human_seurat_up_degs_venn.plt
+```
+
+```{r}
+# Collect common upregulated DEGs
+human_seurat_common_up_degs <- Reduce(intersect, human_seurat_sig_upreg_gene.lst)
+human_seurat_common_up_degs
+```
+
+### Common downregulated DEGs
+
+```{r}
+# Select human data sets and extract adjusted significant upregulated genes and collect in a list
+human_seurat_sig_downreg_gene.lst <- purrr::pmap(
+  list(seurat_dea.lst),
+  function(dea){
+    dea <- dea[!is.na(dea$padj), ] # remove genes with padj = NA
+    selected_gene <- dea[dea$log2FoldChange < (-0.25) & 
+                         dea$padj < 0.05 & 
+                         !is.na(dea$gene_name) & 
+                         dea$gene_name != "", "gene_name"]
+    return(selected_gene)
+  }
+)
+
+# Drop empty ones
+human_seurat_sig_downreg_gene.lst <- human_seurat_sig_downreg_gene.lst %>%
+  purrr::discard(~ length(.x) == 0) 
+```
+
+```{r}
+# Plot the Venn diagram
+human_seurat_down_degs_venn.plt <- ggvenn(
+  list("Bulk Nadeu (2022)" = human_seurat_sig_downreg_gene.lst$`Nadeu(2022)`,
+       "Bulk Parry (2023a)" = human_seurat_sig_downreg_gene.lst$`Parry(2023a)`,
+       "Integrated scRNA-seq" = human_seurat_sig_downreg_gene.lst$`Integrated scRNA-seq`
+       ),
+  fill_color = c("#0073C2FF", "#EFC000FF", "#6FB899"),
+  stroke_size = 0.5,
+  set_name_size = 4.5,   # Size of the outside labels (Default is 6)
+  text_size = 4        # Size of the numbers inside the diagram (Default is 4)
+)
+
+human_seurat_down_degs_venn.plt
+```
+
+```{r}
+# Collect common downregulated DEGs
+human_seurat_common_down_degs <- Reduce(intersect, human_seurat_sig_downreg_gene.lst)
+human_seurat_common_down_degs
+```
+
+```{r, eval=FALSE}
+# Save the results in the csv files
+# 1. Pad the lists to the same length with NAs
+max_len <- max(length(human_seurat_common_up_degs), length(human_seurat_common_down_degs))
+length(human_seurat_common_up_degs) <- max_len 
+length(human_seurat_common_down_degs) <- max_len
+
+# 2. Combine into a Data Frame and set your Column Names here
+human_seurat_bulk_integrated_common_degs <- data.frame(
+  "Common_up_DEGs" = human_seurat_common_up_degs,   
+  "Common_down_DEGs" = human_seurat_common_down_degs
+)
+
+# 3. Save as CSV
+write.csv(
+  human_seurat_bulk_integrated_common_degs, 
+  file = here::here("scRNAseq/meta_analysis/supplm_file/human_seurat_bulk_integrated_common_degs.csv"), 
+  row.names = FALSE,   # Removes the row numbers 
+  na = ""              # Makes empty cells blank instead of writing "NA"
+)
+```
+
+### Numerical consistency analysis across gene expression
+
+#### All significant genes
+
+```{r, message=FALSE, warning=FALSE}
+# Extract significant genes 
+seurat_common_sig_human_genes <- purrr::map(
+  seurat_dea.lst,
+  ~ .x %>%
+    dplyr::filter(!is.na(padj)) %>%
+    dplyr::filter(padj < 0.05) %>%
+    dplyr::filter(!is.na(gene_name)) %>%
+    pull(gene_name)
+) %>%
+  Reduce(intersect, .)
+
+seurat_sig_human_gene_expr.df <- purrr::map_dfr(
+  human_studies,
+  function(study_name){
+    dea <- seurat_dea.lst[[study_name]]
+    gene_expr <- dea %>%
+      dplyr::filter(gene_name %in% seurat_common_sig_human_genes) %>%
+      dplyr::select(gene_name, log2FoldChange) %>%
+      dplyr::mutate(study = study_name) 
+    return(gene_expr)
+  }
+)
+
+# Change the data frame to wider form
+seurat_sig_human_gene_expr.df <- seurat_sig_human_gene_expr.df %>%
+  tidyr::pivot_wider(
+    names_from = study,
+    values_from = log2FoldChange,
+    values_fn = mean # Average duplicates to get a single number
+  )
+
+# Rename the column
+seurat_sig_human_gene_expr.df <- seurat_sig_human_gene_expr.df %>%
+  dplyr::rename(
+    "Bulk Nadeu(2022)" = `Nadeu(2022)`,
+    "Bulk Parry(2023a)" = `Parry(2023a)`
+    ) 
+
+head(seurat_sig_human_gene_expr.df)
+```
+
+```{r}
+# Remove the gene column for correlation
+expr_mat <- seurat_sig_human_gene_expr.df %>% dplyr::select(-gene_name) %>% as.matrix()
+
+# Compute correlations and cosine similarity
+pearson_cor <- cor(expr_mat, use = "pairwise.complete.obs", method = "pearson")
+spearman_cor <- cor(expr_mat, use = "pairwise.complete.obs", method = "spearman")
+cosine_similar <- lsa::cosine(expr_mat)
+
+# Compute Euclidean similarity
+euclidean_dist <- as.matrix(dist(t(expr_mat), method = "euclidean"))
+euclidean_similar <- 1 / (1 + euclidean_dist)
+```
+
+```{r, fig.height=5.8, fig.width=6.2}
+# Plot with viridis colour palette
+pheatmap(
+  pearson_cor,
+  main = "Pearson correlation (significant genes)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12         
+)
+
+pheatmap(
+  spearman_cor,
+  main = "Spearman correlation (significant genes)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12 
+)
+
+pheatmap(
+  cosine_similar,
+  main = "Cosine similarity (significant genes)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12 
+)
+
+pheatmap(
+  euclidean_similar,
+  main = "Euclidean similarity (significant genes)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12 
+)
+```
+
+#### Upregulated genes
+
+```{r, message=FALSE, warning=FALSE}
+# Extract upregulated genes and their log2FC 
+seurat_common_upreg_human_genes <- purrr::map(
+  seurat_dea.lst,
+  ~ .x %>%
+    dplyr::filter(!is.na(padj)) %>%
+    dplyr::filter(padj < 0.05, log2FoldChange > 0.25) %>%
+    dplyr::filter(!is.na(gene_name)) %>%
+    pull(gene_name)
+) %>%
+  Reduce(intersect, .)
+
+seurat_human_upreg_gene_expr.df <- purrr::map_dfr(
+  human_studies,
+  function(study_name){
+    dea <- seurat_dea.lst[[study_name]]
+    gene_expr <- dea %>%
+      dplyr::filter(gene_name %in% seurat_common_upreg_human_genes) %>%
+      dplyr::select(gene_name, log2FoldChange) %>%
+      dplyr::mutate(study = study_name) 
+    return(gene_expr)
+  }
+)
+
+# Change the data frame to wider form
+seurat_human_upreg_gene_expr.df <- seurat_human_upreg_gene_expr.df %>%
+  tidyr::pivot_wider(
+    names_from = study,
+    values_from = log2FoldChange,
+    values_fn = mean # Average duplicates to get a single number
+  )
+
+# Rename the column
+seurat_human_upreg_gene_expr.df <- seurat_human_upreg_gene_expr.df %>%
+  dplyr::rename(
+    "Bulk Nadeu(2022)" = `Nadeu(2022)`,
+    "Bulk Parry(2023a)" = `Parry(2023a)`
+    ) 
+
+head(seurat_human_upreg_gene_expr.df)
+```
+
+```{r}
+# Remove the gene column for correlation
+expr_mat <- seurat_human_upreg_gene_expr.df %>% dplyr::select(-gene_name) %>% as.matrix()
+
+# Compute correlations and cosine similarity
+pearson_cor <- cor(expr_mat, use = "pairwise.complete.obs", method = "pearson")
+spearman_cor <- cor(expr_mat, use = "pairwise.complete.obs", method = "spearman")
+cosine_similar <- lsa::cosine(expr_mat)
+
+# Compute Euclidean similarity
+euclidean_dist <- as.matrix(dist(t(expr_mat), method = "euclidean"))
+euclidean_similar <- 1 / (1 + euclidean_dist)
+```
+
+```{r, fig.height=5.8, fig.width=6.2}
+# Plot with viridis colour palette
+pheatmap(
+  pearson_cor,
+  main = "Pearson correlation (upregulated DEGs)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12         
+)
+
+pheatmap(
+  spearman_cor,
+  main = "Spearman correlation (upregulated DEGs)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12 
+)
+
+pheatmap(
+  cosine_similar,
+  main = "Cosine similarity (upregulated DEGs)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12 
+)
+
+pheatmap(
+  euclidean_similar,
+  main = "Euclidean similarity (upregulated DEGs)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12 
+)
+```
+
+#### Downregulated genes
+
+```{r, message=FALSE, warning=FALSE}
+# Extract downregulated genes and their log2FC 
+seurat_common_downreg_human_genes <- purrr::map(
+  seurat_dea.lst,
+  ~ .x %>%
+    dplyr::filter(!is.na(padj)) %>%
+    dplyr::filter(padj < 0.05, log2FoldChange < (-0.25)) %>%
+    dplyr::filter(!is.na(gene_name)) %>%
+    pull(gene_name)
+) %>%
+  Reduce(intersect, .)
+
+seurat_human_downreg_gene_expr.df <- purrr::map_dfr(
+  human_studies,
+  function(study_name){
+    dea <- seurat_dea.lst[[study_name]]
+    gene_expr <- dea %>%
+      dplyr::filter(gene_name %in% seurat_common_downreg_human_genes) %>%
+      dplyr::select(gene_name, log2FoldChange) %>%
+      dplyr::mutate(study = study_name) 
+    return(gene_expr)
+  }
+)
+
+# Change the data frame to wider form
+seurat_human_downreg_gene_expr.df <- seurat_human_downreg_gene_expr.df %>%
+  tidyr::pivot_wider(
+    names_from = study,
+    values_from = log2FoldChange,
+    values_fn = mean # Average duplicates to get a single number
+  )
+
+# Rename the column
+seurat_human_downreg_gene_expr.df <- seurat_human_downreg_gene_expr.df %>%
+  dplyr::rename(
+    "Bulk Nadeu(2022)" = `Nadeu(2022)`,
+    "Bulk Parry(2023a)" = `Parry(2023a)`
+    ) 
+
+head(seurat_human_downreg_gene_expr.df)
+```
+
+```{r}
+# Remove the gene column for correlation
+expr_mat <- seurat_human_downreg_gene_expr.df %>% dplyr::select(-gene_name) %>% as.matrix()
+
+# Compute correlations and cosine similarity
+pearson_cor <- cor(expr_mat, use = "pairwise.complete.obs", method = "pearson")
+spearman_cor <- cor(expr_mat, use = "pairwise.complete.obs", method = "spearman")
+cosine_similar <- lsa::cosine(expr_mat)
+
+# Compute Euclidean similarity
+euclidean_dist <- as.matrix(dist(t(expr_mat), method = "euclidean"))
+euclidean_similar <- 1 / (1 + euclidean_dist)
+```
+
+```{r, fig.height=5.8, fig.width=6.2}
+# Plot with viridis colour palette
+pheatmap(
+  pearson_cor,
+  main = "Pearson correlation (downregulated DEGs)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12         
+)
+
+pheatmap(
+  spearman_cor,
+  main = "Spearman correlation (downregulated DEGs)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12 
+)
+
+pheatmap(
+  cosine_similar,
+  main = "Cosine similarity (downregulated DEGs)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12 
+)
+
+pheatmap(
+  euclidean_similar,
+  main = "Euclidean similarity (downregulated DEGs)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12 
+)
+```
+
+#### Upregulated GSEA
+
+```{r, message=FALSE, warning=FALSE}
+# Hallmark 
+seurat_human_common_up_hm_nes.df <- purrr::map_dfr(seurat_hm_gsea.lst, ~ .x@result, .id = "study") %>%
+  dplyr::group_by(ID) %>%
+  # Keep IDs present in ALL studies AND where NES > 0 in ALL studies
+  dplyr::filter(n() == length(seurat_hm_gsea.lst) & all(NES > 0)) %>%
+  dplyr::ungroup() %>%
+  dplyr::select(ID, NES, study) %>%
+  tidyr::pivot_wider(names_from = study, values_from = NES)
+
+# GO:BP 
+seurat_human_common_up_go_nes.df <- purrr::map_dfr(seurat_go_gsea.lst, ~ .x@result, .id = "study") %>%
+  dplyr::group_by(ID) %>%
+  # Keep IDs present in ALL studies AND where NES > 0 in ALL studies
+  dplyr::filter(n() == length(seurat_go_gsea.lst) & all(NES > 0)) %>%
+  dplyr::ungroup() %>%
+  dplyr::select(ID, NES, study) %>%
+  tidyr::pivot_wider(names_from = study, values_from = NES)
+
+# KEGG 
+seurat_human_common_up_kegg_nes.df <- purrr::map_dfr(seurat_kegg_gsea.lst, ~ .x@result, .id = "study") %>%
+  dplyr::group_by(ID) %>%
+  # Keep IDs present in ALL studies AND where NES > 0 in ALL studies
+  dplyr::filter(n() == length(seurat_kegg_gsea.lst) & all(NES > 0)) %>%
+  dplyr::ungroup() %>%
+  dplyr::select(ID, NES, study) %>%
+  tidyr::pivot_wider(names_from = study, values_from = NES)
+
+# Reactome 
+seurat_human_common_up_reactome_nes.df <- purrr::map_dfr(seurat_reactome_gsea.lst, ~ .x@result, .id = "study") %>%
+  dplyr::group_by(ID) %>%
+  # Keep IDs present in ALL studies AND where NES > 0 in ALL studies
+  dplyr::filter(n() == length(seurat_reactome_gsea.lst) & all(NES > 0)) %>%
+  dplyr::ungroup() %>%
+  dplyr::select(ID, NES, study) %>%
+  tidyr::pivot_wider(names_from = study, values_from = NES)
+
+# WikiPath 
+seurat_human_common_up_wikipath_nes.df <- purrr::map_dfr(seurat_wikipath_gsea.lst, ~ .x@result, .id = "study") %>%
+  dplyr::group_by(ID) %>%
+  # Keep IDs present in ALL studies AND where NES > 0 in ALL studies
+  dplyr::filter(n() == length(seurat_wikipath_gsea.lst) & all(NES > 0)) %>%
+  dplyr::ungroup() %>%
+  dplyr::select(ID, NES, study) %>%
+  tidyr::pivot_wider(names_from = study, values_from = NES)
+
+# Join the data frames using rbind()
+seurat_human_common_up_terms <- bind_rows(seurat_human_common_up_hm_nes.df, 
+                                          seurat_human_common_up_go_nes.df, 
+                                          seurat_human_common_up_kegg_nes.df,
+                                          seurat_human_common_up_reactome_nes.df,
+                                          seurat_human_common_up_wikipath_nes.df)
+
+seurat_human_common_up_terms <- seurat_human_common_up_terms %>%
+  dplyr::rowwise() %>%
+  dplyr::mutate(avrg_NES = mean(c_across(where(is.numeric)), na.rm = TRUE)) %>%
+  dplyr::ungroup() %>%
+  dplyr::rename(
+    "Bulk Nadeu(2022)"    = `Nadeu(2022)`,
+    "Bulk Parry(2023a)"   = `Parry(2023a)`
+  )
+
+head(seurat_human_common_up_terms)
+```
+
+```{r}
+# Remove the gene column for correlation
+gsea_mat <- seurat_human_common_up_terms %>% dplyr::select(-c("ID", "avrg_NES")) %>% as.matrix()
+
+# Compute correlations and cosine similarity
+pearson_cor <- cor(gsea_mat, use = "pairwise.complete.obs", method = "pearson")
+spearman_cor <- cor(gsea_mat, use = "pairwise.complete.obs", method = "spearman")
+cosine_similar <- lsa::cosine(gsea_mat)
+
+# Compute Euclidean similarity
+euclidean_dist <- as.matrix(dist(t(gsea_mat), method = "euclidean"))
+euclidean_similar <- 1 / (1 + euclidean_dist)
+```
+
+```{r, fig.height=5.8, fig.width=6.2}
+# Plot with viridis colour palette
+pheatmap(
+  pearson_cor,
+  main = "Pearson Correlation (upregulated GSEA)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12
+)
+
+pheatmap(
+  spearman_cor,
+  main = "Spearman Correlation (upregulated GSEA)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12
+)
+
+pheatmap(
+  cosine_similar,
+  main = "Cosine similarity (upregulated GSEA)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12
+)
+
+pheatmap(
+  euclidean_similar,
+  main = "Euclidean similarity (upregulated GSEA)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12
+)
+```
+
+#### Downregulated GSEA
+
+We did not run this step as no common downregulated GSEA terms are found.
+
+# Candidate novel RT-related genes identified from the integrated single-cell data set
+
+```{r}
+# Load the DEGs results
+# 1. Set the single-cell study name
+sc_study.lst <- c("1-Penter_2021_GSE165087", "2-Nadeu_2022", "3-Hing_2023_GSE205704", "4-Parry_2023b", "5-Rigo_2024")
+sc_names.lst <- sub(
+  "^\\d+-([A-Za-z]+)_([0-9]{4}[A-Za-z]?).*$",  # capture name and year
+  "\\1(\\2)",                         # output as Name(Year)
+  sc_study.lst
+)
+sc_study_names <- sub("^\\d+-([^_0-9]+).*", "\\1", sc_study.lst)
+
+# 2. Download the dea using Seurat in each study and collect in a list
+path_to_download <- str_c(path_to_single_cell_analysis, "/", sc_study.lst, "/expression_data/", sc_study_names, "_dea.rds")
+sc_seurat_dea.lst <- purrr::pmap(
+  list(path_to_download), 
+  function(path){
+    expr.mat <- readRDS(path)
+    expr.mat <- expr.mat %>% 
+      tibble::rownames_to_column(var = "gene_name") %>%
+      dplyr::rename(
+       pvalue = "p_val",
+       padj = "p_val_adj",
+       log2FoldChange = "avg_log2FC"
+      )
+    return(expr.mat)
+  }
+)
+names(sc_seurat_dea.lst) <- sc_names.lst
+
+# Load the seurat dea for the integrated data
+integrated_seurat_df <- readRDS(here::here("scRNAseq/meta_analysis/R_objects/gene_exprs/tumour_dea.rds")) %>%
+  tibble::rownames_to_column(var = "gene_name") %>%
+      dplyr::rename(
+       pvalue = "p_val",
+       padj = "p_val_adj",
+       log2FoldChange = "avg_log2FC"
+      )
+
+# 3. Download the dea using DESeq2 in each study and collect in a list
+path_to_download <- str_c(path_to_single_cell_analysis, "/", sc_study.lst, "/pseudo_bulk_deseq2/", sc_study_names, "_deseq2_dea.rds")
+sc_deseq2_dea.lst <- purrr::pmap(
+  list(path_to_download), 
+  function(path){
+    expr.mat <- readRDS(path)
+    expr.mat <- expr.mat %>% rownames_to_column(var = "gene_name")
+    return(expr.mat)
+  }
+)
+names(sc_deseq2_dea.lst) <- sc_names.lst
+
+# 4. Combine bulk, single-cell, and integrated dea
+human_bulk_dea.lst <- dea.lst[human_studies]
+names(human_bulk_dea.lst) <- c("Bulk Nadeu(2022)", "Bulk Parry(2023a)", "Integrated scRNA-seq")
+combine_human_deseq2_dea.lst <- c(sc_deseq2_dea.lst, human_bulk_dea.lst)
+combine_human_seurat_dea.lst <- c(sc_seurat_dea.lst, human_bulk_dea.lst)
+combine_human_seurat_dea.lst$`Integrated scRNA-seq` <- integrated_seurat_df # Change the integrated dea to seurat form
+```
+
+## Seurat for single-cell data
+
+We identified the DEGs from our integrated scRNA-seq data that were not found in bulk and single-cell individual analysis with Seurat method.
+
+### Predicted novel upregulated DEGs
+
+```{r, message=FALSE, warning=FALSE, fig.height=8, fig.width=33}
+# Extract adjusted significant upregulated genes
+bulk_sc_sig_upreg_gene.lst <- purrr::pmap(
+  list(combine_human_seurat_dea.lst),
+  function(dea){
+    dea <- dea[!is.na(dea$padj), ] 
+    selected_gene <- dea %>% 
+      dplyr::filter(!is.na(gene_name)) %>%
+      dplyr::filter(!is.na(padj)) %>%
+      dplyr::filter(padj < 0.05, log2FoldChange > 0.25) %>%
+      pull(gene_name)
+    return(selected_gene)
+  }
+)
+
+# Reorder the list first
+bulk_sc_sig_upreg_gene.lst <- bulk_sc_sig_upreg_gene.lst %>%
+  purrr::discard(~ length(.x) == 0) %>%   # drop empty ones
+  rev()                                   # reverse order
+
+# Convert to UpSetR input
+upset_data <- fromList(bulk_sc_sig_upreg_gene.lst)
+
+# Plot UpSetR
+upset.plt <- upset(
+  upset_data,
+  sets = colnames(upset_data),
+  keep.order = TRUE,
+  nintersects = NA,
+  point.size = 3.5,
+  line.size = 1,
+  text.scale = c(2, 2, 2, 1.2, 2.5, 1.5), # defined as c(intersection size title, intersection size tick labels, set size title, set size tick labels, set names, numbers above bars)
+  mb.ratio = c(0.55, 0.45) # Adjust margin: give more space to the bottom/left for those large labels
+)
+
+upset.plt
+```
+
+### Predicted novel downregulated DEGs
+
+```{r, message=FALSE, warning=FALSE, fig.height=8, fig.width=30}
+# Extract adjusted significant downregulated genes
+bulk_sc_sig_downreg_gene.lst <- purrr::pmap(
+  list(combine_human_seurat_dea.lst),
+  function(dea){
+    dea <- dea[!is.na(dea$padj), ] 
+    selected_gene <- dea %>% 
+      dplyr::filter(!is.na(gene_name)) %>%
+      dplyr::filter(!is.na(padj)) %>%
+      dplyr::filter(padj < 0.05, log2FoldChange < (-0.25)) %>%
+      pull(gene_name)
+    return(selected_gene)
+  }
+)
+
+# Reorder the list first
+bulk_sc_sig_downreg_gene.lst <- bulk_sc_sig_downreg_gene.lst %>%
+  purrr::discard(~ length(.x) == 0) %>%   # drop empty ones
+  rev()                                   # reverse order
+
+# Convert to UpSetR input
+upset_data <- fromList(bulk_sc_sig_downreg_gene.lst)
+
+# Plot UpSetR
+upset.plt <- upset(
+  upset_data,
+  sets = colnames(upset_data),
+  keep.order = TRUE,
+  nintersects = NA,
+  point.size = 3.5,
+  line.size = 1,
+  text.scale = c(2, 2, 2, 1.2, 2.5, 1.5), # defined as c(intersection size title, intersection size tick labels, set size title, set size tick labels, set names, numbers above bars)
+  mb.ratio = c(0.55, 0.45) # Adjust margin: give more space to the bottom/left for those large labels
+)
+
+upset.plt
+```
+
+From the Seurat-based differential expression analysis of the integrated data, we observed that several thousand genes were identified as differentially expressed. Compared with other studies and datasets, this number appears unusually high. Consequently, we believe that the DEG results obtained from the pseudobulk approach implemented in Seurat after integration may not be reliable.
+
+```{r, eval=FALSE}
+# Save the results
+# 1. Unique upregulated DEGs
+target_degs <- bulk_sc_sig_upreg_gene.lst[["Integrated scRNA-seq"]]
+other_lists <- bulk_sc_sig_upreg_gene.lst[names(bulk_sc_sig_upreg_gene.lst) != "Integrated scRNA-seq"]
+degs_to_remove <- unique(unlist(other_lists)) # Union all data sets except the integrated
+unique_integrated_up_degs <- setdiff(target_degs, degs_to_remove)
+
+# 2. Unique downregulated DEGs
+target_degs <- bulk_sc_sig_downreg_gene.lst[["Integrated scRNA-seq"]]
+other_lists <- bulk_sc_sig_downreg_gene.lst[names(bulk_sc_sig_downreg_gene.lst) != "Integrated scRNA-seq"]
+degs_to_remove <- unique(unlist(other_lists)) # Union all data sets except the integrated
+unique_integrated_down_degs <- setdiff(target_degs, degs_to_remove)
+
+# 3. Save the results in the csv files
+max_len <- max(length(unique_integrated_up_degs), length(unique_integrated_down_degs))
+length(unique_integrated_up_degs) <- max_len 
+length(unique_integrated_down_degs) <- max_len
+
+unique_seurat_integrated_degs <- data.frame(
+  "UpDEGs" = unique_integrated_up_degs,   
+  "DownDEGs" = unique_integrated_down_degs
+)
+
+write.csv(
+  unique_seurat_integrated_degs, 
+  file = here::here("scRNAseq/meta_analysis/supplm_file/unique_seurat_integrated_degs.csv"), 
+  row.names = FALSE,   # Removes the row numbers 
+  na = ""              # Makes empty cells blank instead of writing "NA"
+)
+```
+
+## DESeq2 for single-cell data
+
+We also identified the DEGs from our integrated scRNA-seq data that were not found in bulk and single-cell individual analysis with DESeq2 method.
+
+### Predicted novel upregulated DEGs
+
+```{r, message=FALSE, warning=FALSE, fig.height=8, fig.width=12}
+# Extract adjusted significant upregulated genes
+bulk_sc_sig_upreg_gene.lst <- purrr::pmap(
+  list(combine_human_deseq2_dea.lst),
+  function(dea){
+    dea <- dea[!is.na(dea$padj), ] 
+    selected_gene <- dea %>% 
+      dplyr::filter(!is.na(gene_name)) %>%
+      dplyr::filter(!is.na(padj)) %>%
+      dplyr::filter(padj < 0.05, log2FoldChange > 0.25) %>%
+      pull(gene_name)
+    return(selected_gene)
+  }
+)
+
+# Reorder the list first
+bulk_sc_sig_upreg_gene.lst <- bulk_sc_sig_upreg_gene.lst %>%
+  purrr::discard(~ length(.x) == 0) %>%   # drop empty ones
+  rev()                                   # reverse order
+
+# Convert to UpSetR input
+upset_data <- fromList(bulk_sc_sig_upreg_gene.lst)
+
+# Plot UpSetR
+upset.plt <- upset(
+  upset_data,
+  sets = colnames(upset_data),
+  keep.order = TRUE,
+  nintersects = NA,
+  point.size = 3.5,
+  line.size = 1,
+  text.scale = c(2, 2, 2, 1.2, 2.5, 1.5), # defined as c(intersection size title, intersection size tick labels, set size title, set size tick labels, set names, numbers above bars)
+  mb.ratio = c(0.55, 0.45) # Adjust margin: give more space to the bottom/left for those large labels
+)
+
+upset.plt
+```
+
+```{r}
+# Predicted novel upregulated DEGs based on the integrated data
+target_degs <- bulk_sc_sig_upreg_gene.lst[["Integrated scRNA-seq"]]
+other_lists <- bulk_sc_sig_upreg_gene.lst[names(bulk_sc_sig_upreg_gene.lst) != "Integrated scRNA-seq"]
+degs_to_remove <- unique(unlist(other_lists)) # Union all data sets except the integrated
+unique_integrated_up_degs <- setdiff(target_degs, degs_to_remove)
+unique_integrated_up_degs
+```
+
+### Predicted novel downregulated DEGs
+
+```{r, message=FALSE, warning=FALSE, fig.height=8, fig.width=12}
+# Extract adjusted significant downregulated genes
+bulk_sc_sig_downreg_gene.lst <- purrr::pmap(
+  list(combine_human_deseq2_dea.lst),
+  function(dea){
+    dea <- dea[!is.na(dea$padj), ] 
+    selected_gene <- dea %>% 
+      dplyr::filter(!is.na(gene_name)) %>%
+      dplyr::filter(!is.na(padj)) %>%
+      dplyr::filter(padj < 0.05, log2FoldChange < (-0.25)) %>%
+      pull(gene_name)
+    return(selected_gene)
+  }
+)
+
+# Reorder the list first
+bulk_sc_sig_downreg_gene.lst <- bulk_sc_sig_downreg_gene.lst %>%
+  purrr::discard(~ length(.x) == 0) %>%   # drop empty ones
+  rev()                                   # reverse order
+
+# Convert to UpSetR input
+upset_data <- fromList(bulk_sc_sig_downreg_gene.lst)
+
+# Plot UpSetR
+upset.plt <- upset(
+  upset_data,
+  sets = colnames(upset_data),
+  keep.order = TRUE,
+  nintersects = NA,
+  point.size = 3.5,
+  line.size = 1,
+  text.scale = c(2, 2, 2, 1.2, 2.5, 1.5), # defined as c(intersection size title, intersection size tick labels, set size title, set size tick labels, set names, numbers above bars)
+  mb.ratio = c(0.55, 0.45) # Adjust margin: give more space to the bottom/left for those large labels
+)
+
+upset.plt
+```
+
+```{r}
+# Predicted novel downregulated DEGs based on the integrated data
+target_degs <- bulk_sc_sig_downreg_gene.lst[["Integrated scRNA-seq"]]
+other_lists <- bulk_sc_sig_downreg_gene.lst[names(bulk_sc_sig_downreg_gene.lst) != "Integrated scRNA-seq"]
+degs_to_remove <- unique(unlist(other_lists)) # Union all data sets except the integrated
+unique_integrated_down_degs <- setdiff(target_degs, degs_to_remove)
+unique_integrated_down_degs
+```
+
+```{r, eval=FALSE}
+# Save the results in the csv files
+max_len <- max(length(unique_integrated_up_degs), length(unique_integrated_down_degs))
+length(unique_integrated_up_degs) <- max_len 
+length(unique_integrated_down_degs) <- max_len
+
+unique_seurat_integrated_degs <- data.frame(
+  "UpDEGs" = unique_integrated_up_degs,   
+  "DownDEGs" = unique_integrated_down_degs
+)
+
+write.csv(
+  unique_seurat_integrated_degs, 
+  file = here::here("scRNAseq/meta_analysis/supplm_file/unique_deseq2_integrated_degs.csv"), 
+  row.names = FALSE,   # Removes the row numbers 
+  na = ""              # Makes empty cells blank instead of writing "NA"
+)
+```
+
+```{r, message=FALSE, warning=FALSE, fig.height=5, fig.width=5.5}
+# Plot genes of interest
+gene_plot = c(unique_integrated_up_degs, unique_integrated_down_degs)
+integrated_expr.df <- readRDS(here::here("scRNAseq/meta_analysis/R_objects/gene_exprs/tumour_deseq2_dea.rds"))
+selected_df <- integrated_expr.df[gene_plot, ]
+
+novel_gene.plt <- ggplot() +
+  # --- NEW LAYER: Background genes (All genes) ---
+  # Color is set to pale grey ("grey85"). 
+  geom_point(
+    data = integrated_expr.df, 
+    aes(x = log2FoldChange, y = -log10(pvalue)), 
+    color = "grey90",    # Pale grey
+    size = 2,            # Slightly smaller than the highlighted points
+    alpha = 0.8          # Slight transparency
+  ) +
+  # --- EXISTING LAYER: Highlighted genes ---
+  geom_point(
+    data = selected_df, 
+    aes(x = log2FoldChange, y = -log10(pvalue), fill = -log10(padj)), 
+    shape = 21, 
+    size = 4, 
+    colour = "black", 
+    stroke = 0.6
+  ) +
+  scale_fill_viridis_c(option = "viridis", direction = -1) +
+  geom_hline(yintercept = -log10(0.05), linetype = "dashed") +
+  geom_vline(xintercept = c(-0.25, 0.25), linetype = "dashed") +
+  # Use selected_df for the labels
+  geom_text_repel(
+    data = selected_df, 
+    aes(x = log2FoldChange, y = -log10(pvalue), label = rownames(selected_df)), 
+    size = 3, 
+    max.overlaps = 20, 
+    color = "black"
+  ) +
+  scale_x_continuous(
+    limits = c(-1.7, 1.7),
+    breaks = seq(-6, 6, 2)
+  ) +
+  ylim(1, 5.1) +
+  labs(
+    x = "Fold-change RT vs CLL",
+    y = "-log(P-Value)",
+    fill = "-log(FDR)"
+  ) +
+  guides(
+    fill = guide_colorbar(
+      barheight = unit(10, "cm"),
+      barwidth = unit(0.6, "cm"),
+      direction = "vertical"
+    )
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    axis.line = element_line(color = "black", linewidth = 0.5),
+    panel.grid = element_blank()
+  )
+
+novel_gene.plt
+```
+
+# Mouse and human RNA-seq consistency analysis
+
+## Common upregulated DEGs
+
+```{r, message=FALSE, warning=FALSE, fig.height=8, fig.width=27}
+# Select all data sets and extract adjusted significant upregulated genes and collect in a list
+desired_order <- c("Hing(2023)", "Ten Hacken(2023)", "Iyer(2024)", "Rompietti(2025)", 
+                   "Nadeu(2022)", "Parry(2023a)", "Integrated scRNA-seq")
+
+all_sig_upreg_gene.lst <- purrr::pmap(
+  list(dea.lst),
+  function(dea){
+    dea <- dea[!is.na(dea$padj), ] # remove genes with padj = NA
+    selected_gene <- dea[dea$log2FoldChange > 0.25 & 
+                         dea$padj < 0.05 & 
+                         !is.na(dea$gene_name) & 
+                         dea$gene_name != "", "gene_name"]
+    return(selected_gene)
+  }
+)
+names(all_sig_upreg_gene.lst)[names(all_sig_upreg_gene.lst) == "Hacken(2023)"] <- "Ten Hacken(2023)"
+all_sig_upreg_gene.lst <- all_sig_upreg_gene.lst[rev(desired_order)]
+
+# Drop empty ones
+all_sig_upreg_gene.lst <- all_sig_upreg_gene.lst %>%
+  purrr::discard(~ length(.x) == 0) 
+
+# Convert to UpSetR input
+upset_data <- fromList(all_sig_upreg_gene.lst)
+
+# Plot UpSetR
+upset.plt <- upset(
+  upset_data,
+  sets = colnames(upset_data),
+  keep.order = TRUE,
+  nintersects = NA,
+  point.size = 3.5,
+  line.size = 1,
+  text.scale = c(2, 2, 2, 1.2, 2.5, 1.5), # defined as c(intersection size title, intersection size tick labels, set size title, set size tick labels, set names, numbers above bars)
+  mb.ratio = c(0.55, 0.45) # Adjust margin: give more space to the bottom/left for those large labels
+)
+
+upset.plt
+```
+
+```{r}
+# Collect common bulk upregulated DEGs but not integrated single-cell data set 
+bulk_common_up_degs <- Reduce(intersect, all_sig_upreg_gene.lst[names(all_sig_upreg_gene.lst) != "Integrated scRNA-seq"])
+bulk_common_up_degs
+```
+
+## Common downregulated DEGs
+
+```{r, message=FALSE, warning=FALSE, fig.height=8, fig.width=27}
+# Select all data sets and extract adjusted significant downregulated genes and collect in a list
+all_sig_downreg_gene.lst <- purrr::pmap(
+  list(dea.lst),
+  function(dea){
+    dea <- dea[!is.na(dea$padj), ] # remove genes with padj = NA
+    selected_gene <- dea[dea$log2FoldChange < (-0.25) & 
+                         dea$padj < 0.05 & 
+                         !is.na(dea$gene_name) & 
+                         dea$gene_name != "", "gene_name"]
+    return(selected_gene)
+  }
+)
+names(all_sig_downreg_gene.lst)[names(all_sig_downreg_gene.lst) == "Hacken(2023)"] <- "Ten Hacken(2023)"
+all_sig_downreg_gene.lst <- all_sig_downreg_gene.lst[rev(desired_order)]
+
+# Drop empty ones
+all_sig_downreg_gene.lst <- all_sig_downreg_gene.lst %>%
+  purrr::discard(~ length(.x) == 0) 
+
+# Convert to UpSetR input
+upset_data <- fromList(all_sig_downreg_gene.lst)
+
+# Plot UpSetR
+upset.plt <- upset(
+  upset_data,
+  sets = colnames(upset_data),
+  keep.order = TRUE,
+  nintersects = NA,
+  point.size = 3.5,
+  line.size = 1,
+  text.scale = c(2, 2, 2, 1.2, 2.5, 1.5), # defined as c(intersection size title, intersection size tick labels, set size title, set size tick labels, set names, numbers above bars)
+  mb.ratio = c(0.55, 0.45) # Adjust margin: give more space to the bottom/left for those large labels
+)
+
+upset.plt
+```
+
+```{r}
+# Collect common bulk downregulated DEGs but not integrated single-cell data set 
+bulk_common_down_degs <- Reduce(intersect, all_sig_downreg_gene.lst[names(all_sig_downreg_gene.lst) != "Integrated scRNA-seq"])
+bulk_common_down_degs
+```
+
+## Common GSEA terms
+
+### Hallmark
+
+```{r, message=FALSE, warning=FALSE, fig.height=8, fig.width=27}
+# Upregulated terms
+sig_term.lst <- purrr::pmap(
+  list(hm_gsea.lst),
+  function(gsea){
+    selected_term <- gsea@result[gsea@result$NES > 0, "ID"]
+    return(selected_term)
+  }
+)
+names(sig_term.lst)[names(sig_term.lst) == "Hacken(2023)"] <- "Ten Hacken(2023)"
+sig_term.lst <- sig_term.lst[rev(desired_order)]
+
+# Reorder the list first
+sig_term.lst <- sig_term.lst %>%
+  purrr::discard(~ length(.x) == 0)    # drop empty ones
+
+# Convert to UpSetR input
+upset_data <- fromList(sig_term.lst)
+
+# Plot UpSetR
+upset.plt <- upset(
+  upset_data,
+  sets = colnames(upset_data),
+  keep.order = TRUE,
+  nintersects = NA,
+  point.size = 3.5,
+  line.size = 1,
+  text.scale = c(2, 2, 2, 2, 2.5, 2.5), # defined as c(intersection size title, intersection size tick labels, set size title, set size tick labels, set names, numbers above bars)
+  mb.ratio = c(0.55, 0.45) # Adjust margin: give more space to the bottom/left for those large labels
+)
+
+upset.plt
+```
+
+```{r}
+# Collect common upregulated terms
+all_common_up_hm <- Reduce(intersect, sig_term.lst)
+all_common_up_hm
+```
+
+```{r, message=FALSE, warning=FALSE, fig.height=8, fig.width=27}
+# Downregulated terms
+sig_term.lst <- purrr::pmap(
+  list(hm_gsea.lst),
+  function(gsea){
+    selected_term <- gsea@result[gsea@result$NES < 0, "ID"]
+    return(selected_term)
+  }
+)
+names(sig_term.lst)[names(sig_term.lst) == "Hacken(2023)"] <- "Ten Hacken(2023)"
+sig_term.lst <- sig_term.lst[rev(desired_order)]
+
+# Reorder the list first
+sig_term.lst <- sig_term.lst %>%
+  purrr::discard(~ length(.x) == 0)    # drop empty ones
+
+# Convert to UpSetR input
+upset_data <- fromList(sig_term.lst)
+
+# Plot UpSetR
+upset.plt <- upset(
+  upset_data,
+  sets = colnames(upset_data),
+  keep.order = TRUE,
+  nintersects = NA,
+  point.size = 3.5,
+  line.size = 1,
+  text.scale = c(2, 2, 2, 2, 2.5, 2.5), # defined as c(intersection size title, intersection size tick labels, set size title, set size tick labels, set names, numbers above bars)
+  mb.ratio = c(0.55, 0.45) # Adjust margin: give more space to the bottom/left for those large labels
+)
+
+upset.plt
+```
+
+### GO:BP
+
+```{r, message=FALSE, warning=FALSE, fig.height=8, fig.width=27}
+# Upregulated terms
+sig_term.lst <- purrr::pmap(
+  list(go_gsea.lst),
+  function(gsea){
+    selected_term <- gsea@result[gsea@result$NES > 0, "ID"]
+    return(selected_term)
+  }
+)
+names(sig_term.lst)[names(sig_term.lst) == "Hacken(2023)"] <- "Ten Hacken(2023)"
+sig_term.lst <- sig_term.lst[rev(desired_order)]
+
+# Reorder the list first
+sig_term.lst <- sig_term.lst %>%
+  purrr::discard(~ length(.x) == 0)    # drop empty ones
+
+# Convert to UpSetR input
+upset_data <- fromList(sig_term.lst)
+
+# Plot UpSetR
+upset.plt <- upset(
+  upset_data,
+  sets = colnames(upset_data),
+  keep.order = TRUE,
+  nintersects = NA,
+  point.size = 3.5,
+  line.size = 1,
+  text.scale = c(2, 2, 2, 2, 2.5, 2.5), # defined as c(intersection size title, intersection size tick labels, set size title, set size tick labels, set names, numbers above bars)
+  mb.ratio = c(0.55, 0.45) # Adjust margin: give more space to the bottom/left for those large labels
+)
+
+upset.plt
+```
+
+```{r}
+# Collect common upregulated terms
+all_common_up_go <- Reduce(intersect, sig_term.lst)
+all_common_up_go
+```
+
+```{r, message=FALSE, warning=FALSE, fig.height=8, fig.width=27}
+# Downregulated terms
+sig_term.lst <- purrr::pmap(
+  list(go_gsea.lst),
+  function(gsea){
+    selected_term <- gsea@result[gsea@result$NES < 0, "ID"]
+    return(selected_term)
+  }
+)
+names(sig_term.lst)[names(sig_term.lst) == "Hacken(2023)"] <- "Ten Hacken(2023)"
+sig_term.lst <- sig_term.lst[rev(desired_order)]
+
+# Reorder the list first
+sig_term.lst <- sig_term.lst %>%
+  purrr::discard(~ length(.x) == 0)    # drop empty ones
+
+# Convert to UpSetR input
+upset_data <- fromList(sig_term.lst)
+
+# Plot UpSetR
+upset.plt <- upset(
+  upset_data,
+  sets = colnames(upset_data),
+  keep.order = TRUE,
+  nintersects = NA,
+  point.size = 3.5,
+  line.size = 1,
+  text.scale = c(2, 2, 2, 2, 2.5, 2.5), # defined as c(intersection size title, intersection size tick labels, set size title, set size tick labels, set names, numbers above bars)
+  mb.ratio = c(0.55, 0.45) # Adjust margin: give more space to the bottom/left for those large labels
+)
+
+upset.plt
+```
+
+### KEGG
+
+```{r, message=FALSE, warning=FALSE, fig.height=8, fig.width=27}
+# Upregulated terms
+sig_term.lst <- purrr::pmap(
+  list(kegg_gsea.lst),
+  function(gsea){
+    selected_term <- gsea@result[gsea@result$NES > 0, "ID"]
+    return(selected_term)
+  }
+)
+names(sig_term.lst)[names(sig_term.lst) == "Hacken(2023)"] <- "Ten Hacken(2023)"
+sig_term.lst <- sig_term.lst[rev(desired_order)]
+
+# Reorder the list first
+sig_term.lst <- sig_term.lst %>%
+  purrr::discard(~ length(.x) == 0)    # drop empty ones
+
+# Convert to UpSetR input
+upset_data <- fromList(sig_term.lst)
+
+# Plot UpSetR
+upset.plt <- upset(
+  upset_data,
+  sets = colnames(upset_data),
+  keep.order = TRUE,
+  nintersects = NA,
+  point.size = 3.5,
+  line.size = 1,
+  text.scale = c(2, 2, 2, 2, 2.5, 2.5), # defined as c(intersection size title, intersection size tick labels, set size title, set size tick labels, set names, numbers above bars)
+  mb.ratio = c(0.55, 0.45) # Adjust margin: give more space to the bottom/left for those large labels
+)
+
+upset.plt
+```
+
+```{r}
+# Collect common upregulated terms
+all_common_up_kegg <- Reduce(intersect, sig_term.lst)
+all_common_up_kegg
+```
+
+```{r, message=FALSE, warning=FALSE, fig.height=8, fig.width=27}
+# Downregulated terms
+sig_term.lst <- purrr::pmap(
+  list(kegg_gsea.lst),
+  function(gsea){
+    selected_term <- gsea@result[gsea@result$NES < 0, "ID"]
+    return(selected_term)
+  }
+)
+names(sig_term.lst)[names(sig_term.lst) == "Hacken(2023)"] <- "Ten Hacken(2023)"
+sig_term.lst <- sig_term.lst[rev(desired_order)]
+
+# Reorder the list first
+sig_term.lst <- sig_term.lst %>%
+  purrr::discard(~ length(.x) == 0)    # drop empty ones
+
+# Convert to UpSetR input
+upset_data <- fromList(sig_term.lst)
+
+# Plot UpSetR
+upset.plt <- upset(
+  upset_data,
+  sets = colnames(upset_data),
+  keep.order = TRUE,
+  nintersects = NA,
+  point.size = 3.5,
+  line.size = 1,
+  text.scale = c(2, 2, 2, 2, 2.5, 2.5), # defined as c(intersection size title, intersection size tick labels, set size title, set size tick labels, set names, numbers above bars)
+  mb.ratio = c(0.55, 0.45) # Adjust margin: give more space to the bottom/left for those large labels
+)
+
+upset.plt
+```
+
+### Reactome
+
+```{r, message=FALSE, warning=FALSE, fig.height=8, fig.width=27}
+# Upregulated terms
+sig_term.lst <- purrr::pmap(
+  list(reactome_gsea.lst),
+  function(gsea){
+    selected_term <- gsea@result[gsea@result$NES > 0, "ID"]
+    return(selected_term)
+  }
+)
+names(sig_term.lst)[names(sig_term.lst) == "Hacken(2023)"] <- "Ten Hacken(2023)"
+sig_term.lst <- sig_term.lst[rev(desired_order)]
+
+# Reorder the list first
+sig_term.lst <- sig_term.lst %>%
+  purrr::discard(~ length(.x) == 0)    # drop empty ones
+
+# Convert to UpSetR input
+upset_data <- fromList(sig_term.lst)
+
+# Plot UpSetR
+upset.plt <- upset(
+  upset_data,
+  sets = colnames(upset_data),
+  keep.order = TRUE,
+  nintersects = NA,
+  point.size = 3.5,
+  line.size = 1,
+  text.scale = c(2, 2, 2, 2, 2.5, 2.5), # defined as c(intersection size title, intersection size tick labels, set size title, set size tick labels, set names, numbers above bars)
+  mb.ratio = c(0.55, 0.45) # Adjust margin: give more space to the bottom/left for those large labels
+)
+
+upset.plt
+```
+
+```{r}
+# Collect common upregulated terms
+all_common_up_reactome <- Reduce(intersect, sig_term.lst)
+all_common_up_reactome
+```
+
+```{r, message=FALSE, warning=FALSE, fig.height=8, fig.width=27}
+# Downregulated terms
+sig_term.lst <- purrr::pmap(
+  list(reactome_gsea.lst),
+  function(gsea){
+    selected_term <- gsea@result[gsea@result$NES < 0, "ID"]
+    return(selected_term)
+  }
+)
+names(sig_term.lst)[names(sig_term.lst) == "Hacken(2023)"] <- "Ten Hacken(2023)"
+sig_term.lst <- sig_term.lst[rev(desired_order)]
+
+# Reorder the list first
+sig_term.lst <- sig_term.lst %>%
+  purrr::discard(~ length(.x) == 0)    # drop empty ones
+
+# Convert to UpSetR input
+upset_data <- fromList(sig_term.lst)
+
+# Plot UpSetR
+upset.plt <- upset(
+  upset_data,
+  sets = colnames(upset_data),
+  keep.order = TRUE,
+  nintersects = NA,
+  point.size = 3.5,
+  line.size = 1,
+  text.scale = c(2, 2, 2, 2, 2.5, 2.5), # defined as c(intersection size title, intersection size tick labels, set size title, set size tick labels, set names, numbers above bars)
+  mb.ratio = c(0.55, 0.45) # Adjust margin: give more space to the bottom/left for those large labels
+)
+
+upset.plt
+```
+
+### WikiPath
+
+```{r, message=FALSE, warning=FALSE, fig.height=8, fig.width=27}
+# Upregulated terms
+sig_term.lst <- purrr::pmap(
+  list(wikipath_gsea.lst),
+  function(gsea){
+    selected_term <- gsea@result[gsea@result$NES > 0, "ID"]
+    return(selected_term)
+  }
+)
+names(sig_term.lst)[names(sig_term.lst) == "Hacken(2023)"] <- "Ten Hacken(2023)"
+sig_term.lst <- sig_term.lst[rev(desired_order)]
+
+# Reorder the list first
+sig_term.lst <- sig_term.lst %>%
+  purrr::discard(~ length(.x) == 0)    # drop empty ones
+
+# Convert to UpSetR input
+upset_data <- fromList(sig_term.lst)
+
+# Plot UpSetR
+upset.plt <- upset(
+  upset_data,
+  sets = colnames(upset_data),
+  keep.order = TRUE,
+  nintersects = NA,
+  point.size = 3.5,
+  line.size = 1,
+  text.scale = c(2, 2, 2, 2, 2.5, 2.5), # defined as c(intersection size title, intersection size tick labels, set size title, set size tick labels, set names, numbers above bars)
+  mb.ratio = c(0.55, 0.45) # Adjust margin: give more space to the bottom/left for those large labels
+)
+
+upset.plt
+```
+
+```{r}
+# Collect common upregulated terms
+all_common_up_wikipath <- Reduce(intersect, sig_term.lst)
+all_common_up_wikipath
+```
+
+```{r, message=FALSE, warning=FALSE, fig.height=8, fig.width=27}
+# Downregulated terms
+sig_term.lst <- purrr::pmap(
+  list(wikipath_gsea.lst),
+  function(gsea){
+    selected_term <- gsea@result[gsea@result$NES < 0, "ID"]
+    return(selected_term)
+  }
+)
+names(sig_term.lst)[names(sig_term.lst) == "Hacken(2023)"] <- "Ten Hacken(2023)"
+sig_term.lst <- sig_term.lst[rev(desired_order)]
+
+# Reorder the list first
+sig_term.lst <- sig_term.lst %>%
+  purrr::discard(~ length(.x) == 0)    # drop empty ones
+
+# Convert to UpSetR input
+upset_data <- fromList(sig_term.lst)
+
+# Plot UpSetR
+upset.plt <- upset(
+  upset_data,
+  sets = colnames(upset_data),
+  keep.order = TRUE,
+  nintersects = NA,
+  point.size = 3.5,
+  line.size = 1,
+  text.scale = c(2, 2, 2, 2, 2.5, 2.5), # defined as c(intersection size title, intersection size tick labels, set size title, set size tick labels, set names, numbers above bars)
+  mb.ratio = c(0.55, 0.45) # Adjust margin: give more space to the bottom/left for those large labels
+)
+
+upset.plt
+```
+
+## Seurat-based approach for the integrated single-cell data
+
+### Common upregulated DEGs
+
+```{r, message=FALSE, warning=FALSE, fig.height=8, fig.width=27}
+# Select all data sets and extract adjusted significant upregulated genes and collect in a list
+desired_order <- c("Hing(2023)", "Ten Hacken(2023)", "Iyer(2024)", "Rompietti(2025)", 
+                   "Nadeu(2022)", "Parry(2023a)", "Integrated scRNA-seq")
+
+seurat_all_dea.lst <- dea.lst
+seurat_all_dea.lst$`Integrated scRNA-seq` <- seurat_dea.lst$`Integrated scRNA-seq`
+
+seurat_all_sig_upreg_gene.lst <- purrr::pmap(
+  list(seurat_all_dea.lst),
+  function(dea){
+    dea <- dea[!is.na(dea$padj), ] # remove genes with padj = NA
+    selected_gene <- dea[dea$log2FoldChange > 0.25 & 
+                         dea$padj < 0.05 & 
+                         !is.na(dea$gene_name) & 
+                         dea$gene_name != "", "gene_name"]
+    return(selected_gene)
+  }
+)
+names(seurat_all_sig_upreg_gene.lst)[names(seurat_all_sig_upreg_gene.lst) == "Hacken(2023)"] <- "Ten Hacken(2023)"
+seurat_all_sig_upreg_gene.lst <- seurat_all_sig_upreg_gene.lst[rev(desired_order)]
+
+# Drop empty ones
+seurat_all_sig_upreg_gene.lst <- seurat_all_sig_upreg_gene.lst %>%
+  purrr::discard(~ length(.x) == 0) 
+
+# Convert to UpSetR input
+upset_data <- fromList(seurat_all_sig_upreg_gene.lst)
+
+# Plot UpSetR
+upset.plt <- upset(
+  upset_data,
+  sets = colnames(upset_data),
+  keep.order = TRUE,
+  nintersects = NA,
+  point.size = 3.5,
+  line.size = 1,
+  text.scale = c(2, 2, 2, 1.2, 2.5, 1.5), # defined as c(intersection size title, intersection size tick labels, set size title, set size tick labels, set names, numbers above bars)
+  mb.ratio = c(0.55, 0.45) # Adjust margin: give more space to the bottom/left for those large labels
+)
+
+upset.plt
+```
+
+```{r}
+# Collect common bulk upregulated DEGs but not integrated single-cell data set 
+seurat_bulk_common_up_degs <- Reduce(intersect, seurat_all_sig_upreg_gene.lst)
+seurat_bulk_common_up_degs
+```
+
+### Common downregulated DEGs
+
+```{r, message=FALSE, warning=FALSE, fig.height=8, fig.width=27}
+# Select all data sets and extract adjusted significant upregulated genes and collect in a list
+seurat_all_sig_downreg_gene.lst <- purrr::pmap(
+  list(seurat_all_dea.lst),
+  function(dea){
+    dea <- dea[!is.na(dea$padj), ] # remove genes with padj = NA
+    selected_gene <- dea[dea$log2FoldChange < (-0.25) & 
+                         dea$padj < 0.05 & 
+                         !is.na(dea$gene_name) & 
+                         dea$gene_name != "", "gene_name"]
+    return(selected_gene)
+  }
+)
+names(seurat_all_sig_downreg_gene.lst)[names(seurat_all_sig_downreg_gene.lst) == "Hacken(2023)"] <- "Ten Hacken(2023)"
+seurat_all_sig_downreg_gene.lst <- seurat_all_sig_downreg_gene.lst[rev(desired_order)]
+
+# Drop empty ones
+seurat_all_sig_downreg_gene.lst <- seurat_all_sig_downreg_gene.lst %>%
+  purrr::discard(~ length(.x) == 0) 
+
+# Convert to UpSetR input
+upset_data <- fromList(seurat_all_sig_downreg_gene.lst)
+
+# Plot UpSetR
+upset.plt <- upset(
+  upset_data,
+  sets = colnames(upset_data),
+  keep.order = TRUE,
+  nintersects = NA,
+  point.size = 3.5,
+  line.size = 1,
+  text.scale = c(2, 2, 2, 1.2, 2.5, 1.5), # defined as c(intersection size title, intersection size tick labels, set size title, set size tick labels, set names, numbers above bars)
+  mb.ratio = c(0.55, 0.45) # Adjust margin: give more space to the bottom/left for those large labels
+)
+
+upset.plt
+```
+
+```{r}
+# Collect common bulk downregulated DEGs but not integrated single-cell data set 
+seurat_bulk_common_down_degs <- Reduce(intersect, seurat_all_sig_downreg_gene.lst[names(seurat_all_sig_downreg_gene.lst) != "Integrated scRNA-seq"])
+seurat_bulk_common_down_degs
+```
+
+```{r}
+# Collect common bulk downregulated DEGs but not Hing data set 
+seurat_bulk_common_down_degs <- Reduce(intersect, seurat_all_sig_downreg_gene.lst[names(seurat_all_sig_downreg_gene.lst) != "Hing(2023)"])
+seurat_bulk_common_down_degs
+```
+
+## Evaluation of representation of mouse to human RNA-seq
+
+```{r}
+# Select mouse and human data sets and extract adjusted significant upregulated genes and collect in a list
+selected_studies <- c("Hacken(2023)", "Iyer(2024)", "Hing(2023)", "Rompietti(2025)", "Nadeu(2022)", "Parry(2023a)")
+
+bulk_mouse_human_sig_upreg_gene.lst <- purrr::pmap(
+  list(dea.lst[selected_studies]),
+  function(dea){
+    dea <- dea[!is.na(dea$padj), ] # remove genes with padj = NA
+    selected_gene <- dea[dea$log2FoldChange > 0.25 & 
+                         dea$padj < 0.05 & 
+                         !is.na(dea$gene_name) & 
+                         dea$gene_name != "", "gene_name"]
+    return(selected_gene)
+  }
+)
+
+# Drop empty ones
+bulk_mouse_human_sig_upreg_gene.lst <- bulk_mouse_human_sig_upreg_gene.lst %>%
+  purrr::discard(~ length(.x) == 0) 
+```
+
+```{r}
+# Select mouse and human data sets and extract adjusted significant downregulated genes and collect in a list
+bulk_mouse_human_sig_downreg_gene.lst <- purrr::pmap(
+  list(dea.lst[selected_studies]),
+  function(dea){
+    dea <- dea[!is.na(dea$padj), ] # remove genes with padj = NA
+    selected_gene <- dea[dea$log2FoldChange < (-0.25) & 
+                         dea$padj < 0.05 & 
+                         !is.na(dea$gene_name) & 
+                         dea$gene_name != "", "gene_name"]
+    return(selected_gene)
+  }
+)
+
+# Drop empty ones
+bulk_mouse_human_sig_downreg_gene.lst <- bulk_mouse_human_sig_downreg_gene.lst %>%
+  purrr::discard(~ length(.x) == 0) 
+```
+
+```{r, eval=FALSE}
+# Save only DEGs from mouse studies for further analysis
+all_mouse_up_degs <- unlist(bulk_mouse_human_sig_upreg_gene.lst[mouse_studies])
+all_mouse_down_degs <- unlist(bulk_mouse_human_sig_downreg_gene.lst[mouse_studies])
+saveRDS(all_mouse_up_degs, here::here("scRNAseq/meta_analysis/R_objects/gene_exprs/all_mouse_up_degs.rds"))
+saveRDS(all_mouse_down_degs, here::here("scRNAseq/meta_analysis/R_objects/gene_exprs/all_mouse_down_degs.rds"))
+```
+
+### Ten Hacken (2023)
+
+#### Gene overlapping analysis
+
+```{r}
+# Plot the Venn diagram
+hacken_human_up_degs_venn.plt <- ggvenn(
+  list("Nadeu (2022)" = bulk_mouse_human_sig_upreg_gene.lst$`Nadeu(2022)`,
+       "Parry (2023a)" = bulk_mouse_human_sig_upreg_gene.lst$`Parry(2023a)`,
+       "Ten Hacken (2023)" = bulk_mouse_human_sig_upreg_gene.lst$`Hacken(2023)`
+       ),
+  fill_color = c("#0073C2FF", "#EFC000FF", "#6FB899"),
+  stroke_size = 0.5,
+  set_name_size = 4.5,   # Size of the outside labels (Default is 6)
+  text_size = 4        # Size of the numbers inside the diagram (Default is 4)
+)
+
+hacken_human_up_degs_venn.plt
+```
+
+```{r}
+# Plot the Venn diagram
+hacken_human_down_degs_venn.plt <- ggvenn(
+  list("Nadeu (2022)" = bulk_mouse_human_sig_downreg_gene.lst$`Nadeu(2022)`,
+       "Parry (2023a)" = bulk_mouse_human_sig_downreg_gene.lst$`Parry(2023a)`,
+       "Ten Hacken (2023)" = bulk_mouse_human_sig_downreg_gene.lst$`Hacken(2023)`
+       ),
+  fill_color = c("#0073C2FF", "#EFC000FF", "#6FB899"),
+  stroke_size = 0.5,
+  set_name_size = 4.5,   # Size of the outside labels (Default is 6)
+  text_size = 4        # Size of the numbers inside the diagram (Default is 4)
+)
+
+hacken_human_down_degs_venn.plt
+```
+
+#### Numerical consistency analysis across gene expression
+
+##### All significant genes
+
+```{r}
+# Set selected studies
+hacken_human_studies <- c("Hacken(2023)", "Nadeu(2022)", "Parry(2023a)")
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Extract significant genes 
+common_sig_hacken_human_genes <- purrr::map(
+  dea.lst[hacken_human_studies],
+  ~ .x %>%
+    dplyr::filter(!is.na(padj)) %>%
+    dplyr::filter(padj < 0.05) %>%
+    dplyr::filter(!is.na(gene_name)) %>%
+    pull(gene_name)
+) %>%
+  Reduce(intersect, .)
+
+sig_hacken_human_gene_expr.df <- purrr::map_dfr(
+  hacken_human_studies,
+  function(study_name){
+    dea <- dea.lst[[study_name]]
+    gene_expr <- dea %>%
+      dplyr::filter(gene_name %in% common_sig_hacken_human_genes) %>%
+      dplyr::select(gene_name, log2FoldChange) %>%
+      dplyr::mutate(study = study_name) 
+    return(gene_expr)
+  }
+)
+
+# Change the data frame to wider form
+sig_hacken_human_gene_expr.df <- sig_hacken_human_gene_expr.df %>%
+  tidyr::pivot_wider(
+    names_from = study,
+    values_from = log2FoldChange,
+    values_fn = mean # Average duplicates to get a single number
+  )
+
+# Rename the column
+sig_hacken_human_gene_expr.df <- sig_hacken_human_gene_expr.df %>%
+  dplyr::rename(
+    "Ten Hacken(2023)" = `Hacken(2023)`
+    ) 
+
+head(sig_hacken_human_gene_expr.df)
+```
+
+```{r}
+# Remove the gene column for correlation
+expr_mat <- sig_hacken_human_gene_expr.df %>% dplyr::select(-gene_name) %>% as.matrix()
+
+# Compute correlations and cosine similarity
+pearson_cor <- cor(expr_mat, use = "pairwise.complete.obs", method = "pearson")
+spearman_cor <- cor(expr_mat, use = "pairwise.complete.obs", method = "spearman")
+cosine_similar <- lsa::cosine(expr_mat)
+
+# Compute Euclidean similarity
+euclidean_dist <- as.matrix(dist(t(expr_mat), method = "euclidean"))
+euclidean_similar <- 1 / (1 + euclidean_dist)
+```
+
+```{r, fig.height=5.8, fig.width=6.2}
+# Plot with viridis colour palette
+pheatmap(
+  pearson_cor,
+  main = "Pearson correlation (significant genes)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12         
+)
+
+pheatmap(
+  spearman_cor,
+  main = "Spearman correlation (significant genes)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12 
+)
+
+pheatmap(
+  cosine_similar,
+  main = "Cosine similarity (significant genes)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12 
+)
+
+pheatmap(
+  euclidean_similar,
+  main = "Euclidean similarity (significant genes)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12 
+)
+```
+
+##### Upregulated genes
+
+```{r, message=FALSE, warning=FALSE}
+# Extract upregulated genes and their log2FC 
+common_upreg_hacken_human_genes <- purrr::map(
+  dea.lst[hacken_human_studies],
+  ~ .x %>%
+    dplyr::filter(!is.na(padj)) %>%
+    dplyr::filter(padj < 0.05, log2FoldChange > 0.25) %>%
+    dplyr::filter(!is.na(gene_name)) %>%
+    pull(gene_name)
+) %>%
+  Reduce(intersect, .)
+
+hacken_human_upreg_gene_expr.df <- purrr::map_dfr(
+  hacken_human_studies,
+  function(study_name){
+    dea <- dea.lst[[study_name]]
+    gene_expr <- dea %>%
+      dplyr::filter(gene_name %in% common_upreg_hacken_human_genes) %>%
+      dplyr::select(gene_name, log2FoldChange) %>%
+      dplyr::mutate(study = study_name) 
+    return(gene_expr)
+  }
+)
+
+# Change the data frame to wider form
+hacken_human_upreg_gene_expr.df <- hacken_human_upreg_gene_expr.df %>%
+  tidyr::pivot_wider(
+    names_from = study,
+    values_from = log2FoldChange,
+    values_fn = mean # Average duplicates to get a single number
+  )
+
+# Rename the column
+hacken_human_upreg_gene_expr.df <- hacken_human_upreg_gene_expr.df %>%
+  dplyr::rename(
+    "Ten Hacken(2023)" = `Hacken(2023)`
+    ) 
+
+head(hacken_human_upreg_gene_expr.df)
+```
+
+```{r}
+# Remove the gene column for correlation
+expr_mat <- hacken_human_upreg_gene_expr.df %>% dplyr::select(-gene_name) %>% as.matrix()
+
+# Compute correlations and cosine similarity
+pearson_cor <- cor(expr_mat, use = "pairwise.complete.obs", method = "pearson")
+spearman_cor <- cor(expr_mat, use = "pairwise.complete.obs", method = "spearman")
+cosine_similar <- lsa::cosine(expr_mat)
+
+# Compute Euclidean similarity
+euclidean_dist <- as.matrix(dist(t(expr_mat), method = "euclidean"))
+euclidean_similar <- 1 / (1 + euclidean_dist)
+```
+
+```{r, fig.height=5.8, fig.width=6.2}
+# Plot with viridis colour palette
+pheatmap(
+  pearson_cor,
+  main = "Pearson correlation (upregulated DEGs)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12         
+)
+
+pheatmap(
+  spearman_cor,
+  main = "Spearman correlation (upregulated DEGs)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12 
+)
+
+pheatmap(
+  cosine_similar,
+  main = "Cosine similarity (upregulated DEGs)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12 
+)
+
+pheatmap(
+  euclidean_similar,
+  main = "Euclidean similarity (upregulated DEGs)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12 
+)
+```
+
+##### Downregulated genes
+
+```{r, message=FALSE, warning=FALSE}
+# Extract downregulated genes and their log2FC 
+common_downreg_hacken_human_genes <- purrr::map(
+  dea.lst[hacken_human_studies],
+  ~ .x %>%
+    dplyr::filter(!is.na(padj)) %>%
+    dplyr::filter(padj < 0.05, log2FoldChange < (-0.25)) %>%
+    dplyr::filter(!is.na(gene_name)) %>%
+    pull(gene_name)
+) %>%
+  Reduce(intersect, .)
+
+hacken_human_downreg_gene_expr.df <- purrr::map_dfr(
+  hacken_human_studies,
+  function(study_name){
+    dea <- dea.lst[[study_name]]
+    gene_expr <- dea %>%
+      dplyr::filter(gene_name %in% common_downreg_hacken_human_genes) %>%
+      dplyr::select(gene_name, log2FoldChange) %>%
+      dplyr::mutate(study = study_name) 
+    return(gene_expr)
+  }
+)
+
+# Change the data frame to wider form
+hacken_human_downreg_gene_expr.df <- hacken_human_downreg_gene_expr.df %>%
+  tidyr::pivot_wider(
+    names_from = study,
+    values_from = log2FoldChange,
+    values_fn = mean # Average duplicates to get a single number
+  )
+
+# Rename the column
+hacken_human_downreg_gene_expr.df <- hacken_human_downreg_gene_expr.df %>%
+  dplyr::rename(
+    "Ten Hacken(2023)" = `Hacken(2023)`
+    ) 
+
+head(hacken_human_downreg_gene_expr.df)
+```
+
+```{r}
+# Remove the gene column for correlation
+expr_mat <- hacken_human_downreg_gene_expr.df %>% dplyr::select(-gene_name) %>% as.matrix()
+
+# Compute correlations and cosine similarity
+pearson_cor <- cor(expr_mat, use = "pairwise.complete.obs", method = "pearson")
+spearman_cor <- cor(expr_mat, use = "pairwise.complete.obs", method = "spearman")
+cosine_similar <- lsa::cosine(expr_mat)
+
+# Compute Euclidean similarity
+euclidean_dist <- as.matrix(dist(t(expr_mat), method = "euclidean"))
+euclidean_similar <- 1 / (1 + euclidean_dist)
+```
+
+```{r, fig.height=5.8, fig.width=6.2}
+# Plot with viridis colour palette
+pheatmap(
+  pearson_cor,
+  main = "Pearson correlation (downregulated DEGs)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12         
+)
+
+pheatmap(
+  spearman_cor,
+  main = "Spearman correlation (downregulated DEGs)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12 
+)
+
+pheatmap(
+  cosine_similar,
+  main = "Cosine similarity (downregulated DEGs)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12 
+)
+
+pheatmap(
+  euclidean_similar,
+  main = "Euclidean similarity (downregulated DEGs)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12 
+)
+```
+
+### Hing (2023)
+
+#### Gene overlapping analysis
+
+```{r}
+# Plot the Venn diagram
+hing_human_up_degs_venn.plt <- ggvenn(
+  list("Nadeu (2022)" = bulk_mouse_human_sig_upreg_gene.lst$`Nadeu(2022)`,
+       "Parry (2023a)" = bulk_mouse_human_sig_upreg_gene.lst$`Parry(2023a)`,
+       "Hing (2023)" = bulk_mouse_human_sig_upreg_gene.lst$`Hing(2023)`
+       ),
+  fill_color = c("#0073C2FF", "#EFC000FF", "#6FB899"),
+  stroke_size = 0.5,
+  set_name_size = 4.5,   # Size of the outside labels (Default is 6)
+  text_size = 4        # Size of the numbers inside the diagram (Default is 4)
+)
+
+hing_human_up_degs_venn.plt
+```
+
+```{r}
+# Plot the Venn diagram
+hing_human_down_degs_venn.plt <- ggvenn(
+  list("Nadeu (2022)" = bulk_mouse_human_sig_downreg_gene.lst$`Nadeu(2022)`,
+       "Parry (2023a)" = bulk_mouse_human_sig_downreg_gene.lst$`Parry(2023a)`,
+       "Hing (2023)" = bulk_mouse_human_sig_downreg_gene.lst$`Hing(2023)`
+       ),
+  fill_color = c("#0073C2FF", "#EFC000FF", "#6FB899"),
+  stroke_size = 0.5,
+  set_name_size = 4.5,   # Size of the outside labels (Default is 6)
+  text_size = 4        # Size of the numbers inside the diagram (Default is 4)
+)
+
+hing_human_down_degs_venn.plt
+```
+
+#### Numerical consistency analysis across gene expression
+
+##### All significant genes
+
+```{r}
+# Set selected studies
+hing_human_studies <- c("Hing(2023)", "Nadeu(2022)", "Parry(2023a)")
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Extract significant genes 
+common_sig_hing_human_genes <- purrr::map(
+  dea.lst[hing_human_studies],
+  ~ .x %>%
+    dplyr::filter(!is.na(padj)) %>%
+    dplyr::filter(padj < 0.05) %>%
+    dplyr::filter(!is.na(gene_name)) %>%
+    pull(gene_name)
+) %>%
+  Reduce(intersect, .)
+
+sig_hing_human_gene_expr.df <- purrr::map_dfr(
+  hing_human_studies,
+  function(study_name){
+    dea <- dea.lst[[study_name]]
+    gene_expr <- dea %>%
+      dplyr::filter(gene_name %in% common_sig_hing_human_genes) %>%
+      dplyr::select(gene_name, log2FoldChange) %>%
+      dplyr::mutate(study = study_name) 
+    return(gene_expr)
+  }
+)
+
+# Change the data frame to wider form
+sig_hing_human_gene_expr.df <- sig_hing_human_gene_expr.df %>%
+  tidyr::pivot_wider(
+    names_from = study,
+    values_from = log2FoldChange,
+    values_fn = mean # Average duplicates to get a single number
+  )
+
+head(sig_hing_human_gene_expr.df)
+```
+
+```{r}
+# Remove the gene column for correlation
+expr_mat <- sig_hing_human_gene_expr.df %>% dplyr::select(-gene_name) %>% as.matrix()
+
+# Compute correlations and cosine similarity
+pearson_cor <- cor(expr_mat, use = "pairwise.complete.obs", method = "pearson")
+spearman_cor <- cor(expr_mat, use = "pairwise.complete.obs", method = "spearman")
+cosine_similar <- lsa::cosine(expr_mat)
+
+# Compute Euclidean similarity
+euclidean_dist <- as.matrix(dist(t(expr_mat), method = "euclidean"))
+euclidean_similar <- 1 / (1 + euclidean_dist)
+```
+
+```{r, fig.height=5.8, fig.width=6.2}
+# Plot with viridis colour palette
+pheatmap(
+  pearson_cor,
+  main = "Pearson correlation (significant genes)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12         
+)
+
+pheatmap(
+  spearman_cor,
+  main = "Spearman correlation (significant genes)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12 
+)
+
+pheatmap(
+  cosine_similar,
+  main = "Cosine similarity (significant genes)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12 
+)
+
+pheatmap(
+  euclidean_similar,
+  main = "Euclidean similarity (significant genes)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12 
+)
+```
+
+##### Upregulated genes
+
+```{r, message=FALSE, warning=FALSE}
+# Extract upregulated genes and their log2FC 
+common_upreg_hing_human_genes <- purrr::map(
+  dea.lst[hing_human_studies],
+  ~ .x %>%
+    dplyr::filter(!is.na(padj)) %>%
+    dplyr::filter(padj < 0.05, log2FoldChange > 0.25) %>%
+    dplyr::filter(!is.na(gene_name)) %>%
+    pull(gene_name)
+) %>%
+  Reduce(intersect, .)
+
+hing_human_upreg_gene_expr.df <- purrr::map_dfr(
+  hing_human_studies,
+  function(study_name){
+    dea <- dea.lst[[study_name]]
+    gene_expr <- dea %>%
+      dplyr::filter(gene_name %in% common_upreg_hing_human_genes) %>%
+      dplyr::select(gene_name, log2FoldChange) %>%
+      dplyr::mutate(study = study_name) 
+    return(gene_expr)
+  }
+)
+
+# Change the data frame to wider form
+hing_human_upreg_gene_expr.df <- hing_human_upreg_gene_expr.df %>%
+  tidyr::pivot_wider(
+    names_from = study,
+    values_from = log2FoldChange,
+    values_fn = mean # Average duplicates to get a single number
+  )
+
+head(hing_human_upreg_gene_expr.df)
+```
+
+```{r}
+# Remove the gene column for correlation
+expr_mat <- hing_human_upreg_gene_expr.df %>% dplyr::select(-gene_name) %>% as.matrix()
+
+# Compute correlations and cosine similarity
+pearson_cor <- cor(expr_mat, use = "pairwise.complete.obs", method = "pearson")
+spearman_cor <- cor(expr_mat, use = "pairwise.complete.obs", method = "spearman")
+cosine_similar <- lsa::cosine(expr_mat)
+
+# Compute Euclidean similarity
+euclidean_dist <- as.matrix(dist(t(expr_mat), method = "euclidean"))
+euclidean_similar <- 1 / (1 + euclidean_dist)
+```
+
+```{r, fig.height=5.8, fig.width=6.2}
+# Plot with viridis colour palette
+pheatmap(
+  pearson_cor,
+  main = "Pearson correlation (upregulated DEGs)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12         
+)
+
+pheatmap(
+  spearman_cor,
+  main = "Spearman correlation (upregulated DEGs)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12 
+)
+
+pheatmap(
+  cosine_similar,
+  main = "Cosine similarity (upregulated DEGs)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12 
+)
+
+pheatmap(
+  euclidean_similar,
+  main = "Euclidean similarity (upregulated DEGs)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12 
+)
+```
+
+##### Downregulated genes
+
+```{r, message=FALSE, warning=FALSE}
+# Extract downregulated genes and their log2FC 
+common_downreg_hing_human_genes <- purrr::map(
+  dea.lst[hing_human_studies],
+  ~ .x %>%
+    dplyr::filter(!is.na(padj)) %>%
+    dplyr::filter(padj < 0.05, log2FoldChange < (-0.25)) %>%
+    dplyr::filter(!is.na(gene_name)) %>%
+    pull(gene_name)
+) %>%
+  Reduce(intersect, .)
+
+hing_human_downreg_gene_expr.df <- purrr::map_dfr(
+  hing_human_studies,
+  function(study_name){
+    dea <- dea.lst[[study_name]]
+    gene_expr <- dea %>%
+      dplyr::filter(gene_name %in% common_downreg_hing_human_genes) %>%
+      dplyr::select(gene_name, log2FoldChange) %>%
+      dplyr::mutate(study = study_name) 
+    return(gene_expr)
+  }
+)
+
+# Change the data frame to wider form
+hing_human_downreg_gene_expr.df <- hing_human_downreg_gene_expr.df %>%
+  tidyr::pivot_wider(
+    names_from = study,
+    values_from = log2FoldChange,
+    values_fn = mean # Average duplicates to get a single number
+  )
+
+head(hing_human_downreg_gene_expr.df)
+```
+
+```{r}
+# Remove the gene column for correlation
+expr_mat <- hing_human_downreg_gene_expr.df %>% dplyr::select(-gene_name) %>% as.matrix()
+
+# Compute correlations and cosine similarity
+pearson_cor <- cor(expr_mat, use = "pairwise.complete.obs", method = "pearson")
+spearman_cor <- cor(expr_mat, use = "pairwise.complete.obs", method = "spearman")
+cosine_similar <- lsa::cosine(expr_mat)
+
+# Compute Euclidean similarity
+euclidean_dist <- as.matrix(dist(t(expr_mat), method = "euclidean"))
+euclidean_similar <- 1 / (1 + euclidean_dist)
+```
+
+```{r, fig.height=5.8, fig.width=6.2}
+# Plot with viridis colour palette
+pheatmap(
+  pearson_cor,
+  main = "Pearson correlation (downregulated DEGs)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12         
+)
+
+pheatmap(
+  spearman_cor,
+  main = "Spearman correlation (downregulated DEGs)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12 
+)
+
+pheatmap(
+  cosine_similar,
+  main = "Cosine similarity (downregulated DEGs)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12 
+)
+
+pheatmap(
+  euclidean_similar,
+  main = "Euclidean similarity (downregulated DEGs)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12 
+)
+```
+
+### Iyer (2024)
+
+#### Gene overlapping analysis
+
+```{r}
+# Plot the Venn diagram
+iyer_human_up_degs_venn.plt <- ggvenn(
+  list("Nadeu (2022)" = bulk_mouse_human_sig_upreg_gene.lst$`Nadeu(2022)`,
+       "Parry (2023a)" = bulk_mouse_human_sig_upreg_gene.lst$`Parry(2023a)`,
+       "Iyer (2024)" = bulk_mouse_human_sig_upreg_gene.lst$`Iyer(2024)`
+       ),
+  fill_color = c("#0073C2FF", "#EFC000FF", "#6FB899"),
+  stroke_size = 0.5,
+  set_name_size = 4.5,   # Size of the outside labels (Default is 6)
+  text_size = 4        # Size of the numbers inside the diagram (Default is 4)
+)
+
+iyer_human_up_degs_venn.plt
+```
+
+```{r}
+# Plot the Venn diagram
+iyer_human_down_degs_venn.plt <- ggvenn(
+  list("Nadeu (2022)" = bulk_mouse_human_sig_downreg_gene.lst$`Nadeu(2022)`,
+       "Parry (2023a)" = bulk_mouse_human_sig_downreg_gene.lst$`Parry(2023a)`,
+       "Iyer (2024)" = bulk_mouse_human_sig_downreg_gene.lst$`Iyer(2024)`
+       ),
+  fill_color = c("#0073C2FF", "#EFC000FF", "#6FB899"),
+  stroke_size = 0.5,
+  set_name_size = 4.5,   # Size of the outside labels (Default is 6)
+  text_size = 4        # Size of the numbers inside the diagram (Default is 4)
+)
+
+iyer_human_down_degs_venn.plt
+```
+
+#### Numerical consistency analysis across gene expression
+
+##### All significant genes
+
+```{r}
+# Set selected studies
+iyer_human_studies <- c("Iyer(2024)", "Nadeu(2022)", "Parry(2023a)")
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Extract significant genes 
+common_sig_iyer_human_genes <- purrr::map(
+  dea.lst[iyer_human_studies],
+  ~ .x %>%
+    dplyr::filter(!is.na(padj)) %>%
+    dplyr::filter(padj < 0.05) %>%
+    dplyr::filter(!is.na(gene_name)) %>%
+    pull(gene_name)
+) %>%
+  Reduce(intersect, .)
+
+sig_iyer_human_gene_expr.df <- purrr::map_dfr(
+  iyer_human_studies,
+  function(study_name){
+    dea <- dea.lst[[study_name]]
+    gene_expr <- dea %>%
+      dplyr::filter(gene_name %in% common_sig_iyer_human_genes) %>%
+      dplyr::select(gene_name, log2FoldChange) %>%
+      dplyr::mutate(study = study_name) 
+    return(gene_expr)
+  }
+)
+
+# Change the data frame to wider form
+sig_iyer_human_gene_expr.df <- sig_iyer_human_gene_expr.df %>%
+  tidyr::pivot_wider(
+    names_from = study,
+    values_from = log2FoldChange,
+    values_fn = mean # Average duplicates to get a single number
+  )
+
+head(sig_iyer_human_gene_expr.df)
+```
+
+```{r}
+# Remove the gene column for correlation
+expr_mat <- sig_iyer_human_gene_expr.df %>% dplyr::select(-gene_name) %>% as.matrix()
+
+# Compute correlations and cosine similarity
+pearson_cor <- cor(expr_mat, use = "pairwise.complete.obs", method = "pearson")
+spearman_cor <- cor(expr_mat, use = "pairwise.complete.obs", method = "spearman")
+cosine_similar <- lsa::cosine(expr_mat)
+
+# Compute Euclidean similarity
+euclidean_dist <- as.matrix(dist(t(expr_mat), method = "euclidean"))
+euclidean_similar <- 1 / (1 + euclidean_dist)
+```
+
+```{r, fig.height=5.8, fig.width=6.2}
+# Plot with viridis colour palette
+pheatmap(
+  pearson_cor,
+  main = "Pearson correlation (significant genes)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12         
+)
+
+pheatmap(
+  spearman_cor,
+  main = "Spearman correlation (significant genes)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12 
+)
+
+pheatmap(
+  cosine_similar,
+  main = "Cosine similarity (significant genes)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12 
+)
+
+pheatmap(
+  euclidean_similar,
+  main = "Euclidean similarity (significant genes)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12 
+)
+```
+
+##### Upregulated genes
+
+```{r, message=FALSE, warning=FALSE}
+# Extract upregulated genes and their log2FC 
+common_upreg_iyer_human_genes <- purrr::map(
+  dea.lst[iyer_human_studies],
+  ~ .x %>%
+    dplyr::filter(!is.na(padj)) %>%
+    dplyr::filter(padj < 0.05, log2FoldChange > 0.25) %>%
+    dplyr::filter(!is.na(gene_name)) %>%
+    pull(gene_name)
+) %>%
+  Reduce(intersect, .)
+
+iyer_human_upreg_gene_expr.df <- purrr::map_dfr(
+  iyer_human_studies,
+  function(study_name){
+    dea <- dea.lst[[study_name]]
+    gene_expr <- dea %>%
+      dplyr::filter(gene_name %in% common_upreg_iyer_human_genes) %>%
+      dplyr::select(gene_name, log2FoldChange) %>%
+      dplyr::mutate(study = study_name) 
+    return(gene_expr)
+  }
+)
+
+# Change the data frame to wider form
+iyer_human_upreg_gene_expr.df <- iyer_human_upreg_gene_expr.df %>%
+  tidyr::pivot_wider(
+    names_from = study,
+    values_from = log2FoldChange,
+    values_fn = mean # Average duplicates to get a single number
+  )
+
+head(iyer_human_upreg_gene_expr.df)
+```
+
+```{r}
+# Remove the gene column for correlation
+expr_mat <- iyer_human_upreg_gene_expr.df %>% dplyr::select(-gene_name) %>% as.matrix()
+
+# Compute correlations and cosine similarity
+pearson_cor <- cor(expr_mat, use = "pairwise.complete.obs", method = "pearson")
+spearman_cor <- cor(expr_mat, use = "pairwise.complete.obs", method = "spearman")
+cosine_similar <- lsa::cosine(expr_mat)
+
+# Compute Euclidean similarity
+euclidean_dist <- as.matrix(dist(t(expr_mat), method = "euclidean"))
+euclidean_similar <- 1 / (1 + euclidean_dist)
+```
+
+```{r, fig.height=5.8, fig.width=6.2}
+# Plot with viridis colour palette
+pheatmap(
+  pearson_cor,
+  main = "Pearson correlation (upregulated DEGs)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12         
+)
+
+pheatmap(
+  spearman_cor,
+  main = "Spearman correlation (upregulated DEGs)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12 
+)
+
+pheatmap(
+  cosine_similar,
+  main = "Cosine similarity (upregulated DEGs)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12 
+)
+
+pheatmap(
+  euclidean_similar,
+  main = "Euclidean similarity (upregulated DEGs)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12 
+)
+```
+
+##### Downregulated genes
+
+```{r, message=FALSE, warning=FALSE}
+# Extract downregulated genes and their log2FC 
+common_downreg_iyer_human_genes <- purrr::map(
+  dea.lst[iyer_human_studies],
+  ~ .x %>%
+    dplyr::filter(!is.na(padj)) %>%
+    dplyr::filter(padj < 0.05, log2FoldChange < (-0.25)) %>%
+    dplyr::filter(!is.na(gene_name)) %>%
+    pull(gene_name)
+) %>%
+  Reduce(intersect, .)
+
+iyer_human_downreg_gene_expr.df <- purrr::map_dfr(
+  iyer_human_studies,
+  function(study_name){
+    dea <- dea.lst[[study_name]]
+    gene_expr <- dea %>%
+      dplyr::filter(gene_name %in% common_downreg_iyer_human_genes) %>%
+      dplyr::select(gene_name, log2FoldChange) %>%
+      dplyr::mutate(study = study_name) 
+    return(gene_expr)
+  }
+)
+
+# Change the data frame to wider form
+iyer_human_downreg_gene_expr.df <- iyer_human_downreg_gene_expr.df %>%
+  tidyr::pivot_wider(
+    names_from = study,
+    values_from = log2FoldChange,
+    values_fn = mean # Average duplicates to get a single number
+  )
+
+head(iyer_human_downreg_gene_expr.df)
+```
+
+```{r}
+# Remove the gene column for correlation
+expr_mat <- iyer_human_downreg_gene_expr.df %>% dplyr::select(-gene_name) %>% as.matrix()
+
+# Compute correlations and cosine similarity
+pearson_cor <- cor(expr_mat, use = "pairwise.complete.obs", method = "pearson")
+spearman_cor <- cor(expr_mat, use = "pairwise.complete.obs", method = "spearman")
+cosine_similar <- lsa::cosine(expr_mat)
+
+# Compute Euclidean similarity
+euclidean_dist <- as.matrix(dist(t(expr_mat), method = "euclidean"))
+euclidean_similar <- 1 / (1 + euclidean_dist)
+```
+
+```{r, fig.height=5.8, fig.width=6.2}
+# Plot with viridis colour palette
+pheatmap(
+  pearson_cor,
+  main = "Pearson correlation (downregulated DEGs)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12         
+)
+
+pheatmap(
+  spearman_cor,
+  main = "Spearman correlation (downregulated DEGs)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12 
+)
+
+pheatmap(
+  cosine_similar,
+  main = "Cosine similarity (downregulated DEGs)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12 
+)
+
+pheatmap(
+  euclidean_similar,
+  main = "Euclidean similarity (downregulated DEGs)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12 
+)
+```
+
+### Rompietti (2025)
+
+#### Gene overlapping analysis
+
+```{r}
+# Plot the Venn diagram
+rompietti_human_up_degs_venn.plt <- ggvenn(
+  list("Nadeu (2022)" = bulk_mouse_human_sig_upreg_gene.lst$`Nadeu(2022)`,
+       "Parry (2023a)" = bulk_mouse_human_sig_upreg_gene.lst$`Parry(2023a)`,
+       "Rompietti (2025)" = bulk_mouse_human_sig_upreg_gene.lst$`Rompietti(2025)`
+       ),
+  fill_color = c("#0073C2FF", "#EFC000FF", "#6FB899"),
+  stroke_size = 0.5,
+  set_name_size = 4.5,   # Size of the outside labels (Default is 6)
+  text_size = 4        # Size of the numbers inside the diagram (Default is 4)
+)
+
+rompietti_human_up_degs_venn.plt
+```
+
+```{r}
+# Plot the Venn diagram
+rompietti_human_down_degs_venn.plt <- ggvenn(
+  list("Nadeu (2022)" = bulk_mouse_human_sig_downreg_gene.lst$`Nadeu(2022)`,
+       "Parry (2023a)" = bulk_mouse_human_sig_downreg_gene.lst$`Parry(2023a)`,
+       "Rompietti (2025)" = bulk_mouse_human_sig_downreg_gene.lst$`Rompietti(2025)`
+       ),
+  fill_color = c("#0073C2FF", "#EFC000FF", "#6FB899"),
+  stroke_size = 0.5,
+  set_name_size = 4.5,   # Size of the outside labels (Default is 6)
+  text_size = 4        # Size of the numbers inside the diagram (Default is 4)
+)
+
+rompietti_human_down_degs_venn.plt
+```
+
+#### Numerical consistency analysis across gene expression
+
+##### All significant genes
+
+```{r}
+# Set selected studies
+rompietti_human_studies <- c("Rompietti(2025)", "Nadeu(2022)", "Parry(2023a)")
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Extract significant genes 
+common_sig_rompietti_human_genes <- purrr::map(
+  dea.lst[rompietti_human_studies],
+  ~ .x %>%
+    dplyr::filter(!is.na(padj)) %>%
+    dplyr::filter(padj < 0.05) %>%
+    dplyr::filter(!is.na(gene_name)) %>%
+    pull(gene_name)
+) %>%
+  Reduce(intersect, .)
+
+sig_rompietti_human_gene_expr.df <- purrr::map_dfr(
+  rompietti_human_studies,
+  function(study_name){
+    dea <- dea.lst[[study_name]]
+    gene_expr <- dea %>%
+      dplyr::filter(gene_name %in% common_sig_rompietti_human_genes) %>%
+      dplyr::select(gene_name, log2FoldChange) %>%
+      dplyr::mutate(study = study_name) 
+    return(gene_expr)
+  }
+)
+
+# Change the data frame to wider form
+sig_rompietti_human_gene_expr.df <- sig_rompietti_human_gene_expr.df %>%
+  tidyr::pivot_wider(
+    names_from = study,
+    values_from = log2FoldChange,
+    values_fn = mean # Average duplicates to get a single number
+  )
+
+head(sig_rompietti_human_gene_expr.df)
+```
+
+```{r}
+# Remove the gene column for correlation
+expr_mat <- sig_rompietti_human_gene_expr.df %>% dplyr::select(-gene_name) %>% as.matrix()
+
+# Compute correlations and cosine similarity
+pearson_cor <- cor(expr_mat, use = "pairwise.complete.obs", method = "pearson")
+spearman_cor <- cor(expr_mat, use = "pairwise.complete.obs", method = "spearman")
+cosine_similar <- lsa::cosine(expr_mat)
+
+# Compute Euclidean similarity
+euclidean_dist <- as.matrix(dist(t(expr_mat), method = "euclidean"))
+euclidean_similar <- 1 / (1 + euclidean_dist)
+```
+
+```{r, fig.height=5.8, fig.width=6.2}
+# Plot with viridis colour palette
+pheatmap(
+  pearson_cor,
+  main = "Pearson correlation (significant genes)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12         
+)
+
+pheatmap(
+  spearman_cor,
+  main = "Spearman correlation (significant genes)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12 
+)
+
+pheatmap(
+  cosine_similar,
+  main = "Cosine similarity (significant genes)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12 
+)
+
+pheatmap(
+  euclidean_similar,
+  main = "Euclidean similarity (significant genes)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12 
+)
+```
+
+##### Upregulated genes
+
+```{r, message=FALSE, warning=FALSE}
+# Extract upregulated genes and their log2FC 
+common_upreg_rompietti_human_genes <- purrr::map(
+  dea.lst[rompietti_human_studies],
+  ~ .x %>%
+    dplyr::filter(!is.na(padj)) %>%
+    dplyr::filter(padj < 0.05, log2FoldChange > 0.25) %>%
+    dplyr::filter(!is.na(gene_name)) %>%
+    pull(gene_name)
+) %>%
+  Reduce(intersect, .)
+
+rompietti_human_upreg_gene_expr.df <- purrr::map_dfr(
+  rompietti_human_studies,
+  function(study_name){
+    dea <- dea.lst[[study_name]]
+    gene_expr <- dea %>%
+      dplyr::filter(gene_name %in% common_upreg_rompietti_human_genes) %>%
+      dplyr::select(gene_name, log2FoldChange) %>%
+      dplyr::mutate(study = study_name) 
+    return(gene_expr)
+  }
+)
+
+# Change the data frame to wider form
+rompietti_human_upreg_gene_expr.df <- rompietti_human_upreg_gene_expr.df %>%
+  tidyr::pivot_wider(
+    names_from = study,
+    values_from = log2FoldChange,
+    values_fn = mean # Average duplicates to get a single number
+  )
+
+head(rompietti_human_upreg_gene_expr.df)
+```
+
+```{r}
+# Remove the gene column for correlation
+expr_mat <- rompietti_human_upreg_gene_expr.df %>% dplyr::select(-gene_name) %>% as.matrix()
+
+# Compute correlations and cosine similarity
+pearson_cor <- cor(expr_mat, use = "pairwise.complete.obs", method = "pearson")
+spearman_cor <- cor(expr_mat, use = "pairwise.complete.obs", method = "spearman")
+cosine_similar <- lsa::cosine(expr_mat)
+
+# Compute Euclidean similarity
+euclidean_dist <- as.matrix(dist(t(expr_mat), method = "euclidean"))
+euclidean_similar <- 1 / (1 + euclidean_dist)
+```
+
+```{r, fig.height=5.8, fig.width=6.2}
+# Plot with viridis colour palette
+pheatmap(
+  pearson_cor,
+  main = "Pearson correlation (upregulated DEGs)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12         
+)
+
+pheatmap(
+  spearman_cor,
+  main = "Spearman correlation (upregulated DEGs)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12 
+)
+
+pheatmap(
+  cosine_similar,
+  main = "Cosine similarity (upregulated DEGs)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12 
+)
+
+pheatmap(
+  euclidean_similar,
+  main = "Euclidean similarity (upregulated DEGs)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12 
+)
+```
+
+##### Downregulated genes
+
+```{r, message=FALSE, warning=FALSE}
+# Extract downregulated genes and their log2FC 
+common_downreg_rompietti_human_genes <- purrr::map(
+  dea.lst[rompietti_human_studies],
+  ~ .x %>%
+    dplyr::filter(!is.na(padj)) %>%
+    dplyr::filter(padj < 0.05, log2FoldChange < (-0.25)) %>%
+    dplyr::filter(!is.na(gene_name)) %>%
+    pull(gene_name)
+) %>%
+  Reduce(intersect, .)
+
+rompietti_human_downreg_gene_expr.df <- purrr::map_dfr(
+  rompietti_human_studies,
+  function(study_name){
+    dea <- dea.lst[[study_name]]
+    gene_expr <- dea %>%
+      dplyr::filter(gene_name %in% common_downreg_rompietti_human_genes) %>%
+      dplyr::select(gene_name, log2FoldChange) %>%
+      dplyr::mutate(study = study_name) 
+    return(gene_expr)
+  }
+)
+
+# Change the data frame to wider form
+rompietti_human_downreg_gene_expr.df <- rompietti_human_downreg_gene_expr.df %>%
+  tidyr::pivot_wider(
+    names_from = study,
+    values_from = log2FoldChange,
+    values_fn = mean # Average duplicates to get a single number
+  )
+
+head(rompietti_human_downreg_gene_expr.df)
+```
+
+```{r}
+# Remove the gene column for correlation
+expr_mat <- rompietti_human_downreg_gene_expr.df %>% dplyr::select(-gene_name) %>% as.matrix()
+
+# Compute correlations and cosine similarity
+pearson_cor <- cor(expr_mat, use = "pairwise.complete.obs", method = "pearson")
+spearman_cor <- cor(expr_mat, use = "pairwise.complete.obs", method = "spearman")
+cosine_similar <- lsa::cosine(expr_mat)
+
+# Compute Euclidean similarity
+euclidean_dist <- as.matrix(dist(t(expr_mat), method = "euclidean"))
+euclidean_similar <- 1 / (1 + euclidean_dist)
+```
+
+```{r, fig.height=5.8, fig.width=6.2}
+# Plot with viridis colour palette
+pheatmap(
+  pearson_cor,
+  main = "Pearson correlation (downregulated DEGs)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12         
+)
+
+pheatmap(
+  spearman_cor,
+  main = "Spearman correlation (downregulated DEGs)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12 
+)
+
+pheatmap(
+  cosine_similar,
+  main = "Cosine similarity (downregulated DEGs)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12 
+)
+
+pheatmap(
+  euclidean_similar,
+  main = "Euclidean similarity (downregulated DEGs)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12 
+)
+```
+
+# Session Information
+
+```{r}
+sessionInfo()
+```
