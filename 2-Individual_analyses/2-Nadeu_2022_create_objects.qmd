@@ -1,0 +1,203 @@
+---
+title: "Nadeu_2022_create_objects"
+author: "Pakorn Sagulkoo"
+format:
+  html:
+    toc: true
+    toc-location: left
+    embed-resources: true
+editor: visual
+---
+
+This source code we will demultiplex and create a Seurat object for single-cell RNA-seq for RT and CLL conditions in [Nadeu et. al. (2022)](https://www.nature.com/articles/s41591-022-01927-8) study which performed longitudinal single-cell analysis in CLL and RT conditions. In Nadeu's study, five cases such as 12, 19, 63, 365, and 3299 were performed scRNA-seq. Case 63 was analysed using the Smart-seq2 platform, whereas the others were conducted using 10x Genomics.
+
+# Import the relevant packages and set working path directory
+
+```{r, setup, message=FALSE, warning=FALSE}
+# Attach the packages you will need for the analysis.
+library(Seurat)
+library(dplyr)
+library(readr)
+```
+
+```{r}
+# Check root path
+here::here()
+```
+
+# Define paths
+
+```{r}
+path_to_richter_metadata <- here::here("scRNAseq/Nadeu2022_NatMed_scRNAseq_data/metadata/richter_metadata.csv")
+path_to_sample_metadata <- here::here("scRNAseq/Nadeu2022_NatMed_scRNAseq_data/metadata/sample_metadata.csv")
+path_to_case63_counts <- here::here("scRNAseq/Nadeu2022_NatMed_scRNAseq_data/expression_matrices/CLL_52/feature_bc_matrix.csv")
+path_to_case63_metadata <- here::here("scRNAseq/Nadeu2022_NatMed_scRNAseq_data/metadata/CLL_52_cell_metadata.csv")
+path_to_save_obj_lst <- here::here("scRNAseq/systematic_review/2-Nadeu_2022/R_objects/Nadeu_seu_lst.rds")
+```
+
+# Load data and functions
+
+```{r, message=FALSE, warning=FALSE}
+# Source functions
+source(here::here("bin/utils.R"))
+```
+
+There are two main types of metadata: sample metadata and Richter metadata. Sample metadata contain clinical information and time points for each patient, whereas Richter metadata relate to the technical aspects and library preparation of each sample.
+
+```{r}
+# Load the sample metadata
+sample_metadata <- read.csv(path_to_sample_metadata) %>%
+  mutate(sample_id = str_replace(sample_id, "(-|_)", "/"))
+DT::datatable(sample_metadata, options = list(scrollX = TRUE))
+```
+
+In the original study, sample_id 14/2944 from case 365 was excluded from the single-cell analysis as it provided low quality in other techniques such as whole genome sequencing (WGS) or DNA methylation. However, in our study we include this sample as we focus mainly scRNA-sequences analysis. Then we will change sample_description from NA to posttreatment
+
+```{r}
+# Add information of sample description to sample_id 14/2944 for case 365
+sample_metadata[sample_metadata$sample_id == "14/2944", "sample_description_FN"] <- "posttreatment"
+```
+
+```{r}
+# Load the richter metadata
+richter_metadata <- read.csv(path_to_richter_metadata)
+DT::datatable(richter_metadata, options = list(scrollX = TRUE))
+```
+
+We excluded gem_id r65huxjg_g0itbe2k from the analysis because it was not included in the files provided by the original study.
+
+```{r}
+# Select the metadata without "hashed_hto"
+cdna_richter_metadata <- richter_metadata %>%
+  filter(type != "hashed_hto" & gem_id != "r65huxjg_g0itbe2k")
+```
+
+# Demultiplexing in BCLLATLAS_10 and adding additional sample from BCLLATLAS_29 subproject
+
+As case 12, 19, 365, and 3299 were performed scRNA-seq with hash multiplexing during the experiment for BCLLATLAS_10 subproject, we will demultiplex the count matrices before create create objects in individual cases. Moreover, the original study also performed non-cell hashing BCLLATLAS_29 subproject as low number cells in some samples in CLLATLAS_10 subproject. Then we will convert them to Seurat objects collecting in a list.
+
+```{r, warning=FALSE, message=FALSE}
+seurat.lst <- purrr::pmap(
+  list(cdna_richter_metadata$subproject, 
+       cdna_richter_metadata$gem_id, 
+       cdna_richter_metadata$library_name,
+       cdna_richter_metadata$donor_id),
+  function(subproject, gem_id, library_name, donor_id){
+    # Define paths
+    path_to_count_matrices <- str_c(
+      "scRNAseq/Nadeu2022_NatMed_scRNAseq_data/expression_matrices/",
+      subproject,
+      "/",
+      gem_id,
+      "/filtered_feature_bc_matrix/"
+    )
+    path_to_count_matrices <- here::here(path_to_count_matrices)
+  
+    # Load data and create Seurat object
+    matrices <- Read10X(data.dir = path_to_count_matrices)
+    if(subproject == "BCLLATLAS_10"){
+      seurat.obj <- CreateSeuratObject(counts = matrices$`Gene Expression`, min.cells=10)
+      
+      # Demultiplexing 
+      if (library_name %in% c('ICGC_3299_01', 'ICGC_3299_02')){
+        selected_rows <- rownames(matrices$`Antibody Capture`) != "ICGC_3299_19_2768B"
+        matrices$`Antibody Capture` <- matrices$`Antibody Capture`[selected_rows, ]
+      }
+      seurat.obj[["HTO"]] <- CreateAssayObject(counts = matrices$`Antibody Capture`)
+      seurat.obj <- NormalizeData(seurat.obj, assay = "HTO", normalization.method = "CLR")
+      seurat.obj <- HTODemux(seurat.obj, assay = "HTO", positive.quantile = 0.99) 
+      seurat.obj <- RenameCells(seurat.obj, add.cell.id = gem_id)
+      seurat.obj <- subset(seurat.obj, subset = !(hash.ID %in% c("Negative", "Doublet"))) # Remove doublets and unclear cells
+      seurat.obj[["sample_id"]] <- seurat.obj$hash.ID %>%
+        str_remove("(ICGC-012-|ICGC-019|ICGC-365-|ICGC-3299-)") %>%
+        str_remove("^-")
+      
+    }else{
+      seurat.obj <- CreateSeuratObject(counts = matrices, min.cells=10) %>%
+        RenameCells(add.cell.id = gem_id)
+      seurat.obj[["sample_id"]] <- library_name
+    }
+    
+    # Add richter_metadata 
+    seurat.obj[["subproject"]] <- subproject
+    seurat.obj[["library_name"]] <- library_name
+    seurat.obj[["gem_id"]] <- gem_id
+    seurat.obj[["donor_id"]] <- donor_id
+    seurat.obj[["case"]] <- donor_id %>%
+      str_remove("ICGC_") %>%
+      str_remove("^0")
+    
+    # Add sample_metadata
+    seurat.obj$sample_id <- str_replace(seurat.obj$sample_id, "(-|_)", "/")
+    new_metadata <- seurat.obj@meta.data %>%
+      left_join(sample_metadata, by = "sample_id") 
+    rownames(new_metadata) <- colnames(seurat.obj)
+    seurat.obj@meta.data <- new_metadata 
+    
+    # Add other metadata consistent with other studies
+    seurat.obj[["ref"]] <- "Nadeu_2022"
+    seurat.obj[["case_id"]] <- donor_id
+    seurat.obj[["cond"]] <- ifelse(grepl("RS", seurat.obj$sample_description_FN), "RT", "CLL")
+    
+    return(seurat.obj)
+  }
+)
+
+names(seurat.lst) <- cdna_richter_metadata$gem_id
+```
+
+# Create a Seurat object in case 63
+
+Sequencing technique in case 63 was performed with Smart-seq2 which is different from the 10x Genomics platform used in other cases. We will construct a count matrix indiviually in case 63 before generate Seurat objects and add them to the list collecting the objects from previous analysis.
+
+```{r}
+# Load a count matrix
+case63_counts <- read_delim(path_to_case63_counts, delim = ";", show_col_types = FALSE)
+
+# Move first column to row names
+case63_counts <- as.data.frame(case63_counts)          # ensure it's a data frame
+rownames(case63_counts) <- case63_counts[[1]]          # set first column as row names
+case63_counts <- case63_counts[ , -1, drop = FALSE]    # remove first column
+```
+
+```{r}
+# Load case 63 metadata
+case63_metadata <- read_delim(path_to_case63_metadata, delim = ";", show_col_types = FALSE)
+case63_metadata <- as.data.frame(case63_metadata)
+rownames(case63_metadata) <- case63_metadata$cell_barcode
+```
+
+```{r, warning=FALSE, message=FALSE}
+# Create an object
+case63_seurat <- CreateSeuratObject(counts = case63_counts, meta.data = case63_metadata)
+
+# Filtered out cell with NA in sample_description_FN
+na_cells <- which(is.na(case63_seurat$sample_description_FN))
+case63_seurat <- subset(case63_seurat, cells = setdiff(colnames(case63_seurat), names(na_cells)))
+
+# Add additional metadata
+case63_seurat[["ref"]] <- "Nadeu_2022"
+case63_seurat[["case_id"]] <- "case_63"
+case63_seurat[["case"]] <- "63"
+case63_seurat[["cond"]] <- ifelse(grepl("RS", case63_seurat$sample_description_FN), "RT", "CLL")
+```
+
+```{r}
+# Add case 63 object to the previous list
+seurat.lst$case63 <- case63_seurat
+```
+
+# Save the list to the object
+
+```{r}
+saveRDS(seurat.lst, path_to_save_obj_lst)
+```
+
+# Session Information
+
+```{r}
+sessionInfo()
+```
+
+
+
