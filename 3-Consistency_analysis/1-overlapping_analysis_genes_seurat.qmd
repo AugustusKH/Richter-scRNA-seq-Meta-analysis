@@ -1,0 +1,892 @@
+---
+title: "Overlapping_genes_seurat"
+author: "Pakorn Sagulkoo"
+format:
+  html:
+    toc: true
+    toc-location: left
+    embed-resources: true
+editor: visual
+---
+
+After we carried out psedobulk gene expression analysis and GSEA for several RT scRNA-seq datasets, we will evaluate the consistency of gene expression results across those studies with calculated from Pseudobulk analysis using `FindMarkers()` in Seurat. We will explore overlapping genes among those studies.
+
+# Import the relevant packages and set working path directory
+
+```{r, setup, message=FALSE, warning=FALSE}
+# Import the relavant packages
+library(UpSetR)
+library(dplyr)
+library(tidyr)
+library(tibble)
+library(stringr)
+library(ggplot2)
+library(ggrepel)
+library(lsa)
+library(pheatmap)
+library(viridis)
+```
+
+```{r}
+# Check root path
+here::here()
+```
+
+# Define paths
+
+```{r}
+# Define paths to load and save files
+path_to_single_cell_analysis <- here::here("scRNAseq/systematic_review")
+path_to_save_up_common_degs <- here::here("scRNAseq/systematic_review/6-consistency_assessment/overlapping_genes/seurat/1.upregulated_common_degs.txt")
+path_to_save_down_common_degs <- here::here("scRNAseq/systematic_review/6-consistency_assessment/overlapping_genes/seurat/1.downregulated_common_degs.txt")
+path_to_save_up_consist_rp <- here::here("scRNAseq/systematic_review/6-consistency_assessment/overlapping_genes/seurat/2.upregulated_rp.rds")
+path_to_save_down_consist_rp <- here::here("scRNAseq/systematic_review/6-consistency_assessment/overlapping_genes/seurat/2.downregulated_rp.rds")
+path_to_save_up_consist_rs <- here::here("scRNAseq/systematic_review/6-consistency_assessment/overlapping_genes/seurat/2.upregulated_rs.rds")
+path_to_save_down_consist_rs <- here::here("scRNAseq/systematic_review/6-consistency_assessment/overlapping_genes/seurat/2.downregulated_rs.rds")
+path_to_save_up_union_rp_rs_consist_degs <- here::here("scRNAseq/systematic_review/6-consistency_assessment/overlapping_genes/seurat/3.upregulated_union_rp_rs_consist_degs.txt")
+path_to_save_down_union_rp_rs_consist_degs <- here::here("scRNAseq/systematic_review/6-consistency_assessment/overlapping_genes/seurat/3.downregulated_union_rp_rs_consist_degs.txt")
+path_to_save_up_intersct_rp_rs_consist_degs <- here::here("scRNAseq/systematic_review/6-consistency_assessment/overlapping_genes/seurat/3.upregulated_intersct_rp_rs_consist_degs.txt")
+path_to_save_down_intersct_rp_rs_consist_degs <- here::here("scRNAseq/systematic_review/6-consistency_assessment/overlapping_genes/seurat/3.downregulated_intersct_rp_rs_consist_degs.txt")
+path_to_save_figure <- here::here("figures")
+```
+
+# Load data and functions
+
+```{r, message=FALSE, warning=FALSE}
+# Source functions
+source(here::here("bin/utils.R"))
+```
+
+```{r}
+# List file names of all studies
+study.lst <- c("1-Penter_2021_GSE165087", "2-Nadeu_2022", "3-Hing_2023_GSE205704", "4-Parry_2023b", "5-Rigo_2024")
+study.lst
+```
+
+```{r}
+# Create names for list later
+names.lst <- sub(
+  "^\\d+-([A-Za-z]+)_([0-9]{4}[A-Za-z]?).*$",  # capture name and year
+  "\\1(\\2)",                         # output as Name(Year)
+  study.lst
+)
+names.lst
+```
+
+```{r}
+# Extract only name of studies
+study_names <- sub("^\\d+-([^_0-9]+).*", "\\1", study.lst)
+study_names
+```
+
+# Pseudobulk gene expression using `FindMarkers()` in Seurat
+
+```{r}
+# Load expression results in each study and collect in a list
+path_to_download <- str_c(path_to_single_cell_analysis, "/", study.lst, "/expression_data/", study_names, "_dea.rds")
+dea.lst <- purrr::pmap(
+  list(path_to_download), 
+  function(path){
+    expr.mat <- readRDS(path)
+    return(expr.mat)
+  }
+)
+names(dea.lst) <- names.lst
+```
+
+## Upregulated genes
+
+```{r, message=FALSE, warning=FALSE, fig.height=8, fig.width=12}
+# Extract adjusted significant upregulated genes
+sig_upreg_gene.lst <- purrr::pmap(
+  list(dea.lst),
+  function(dea){
+    selected_gene <- dea[dea$avg_log2FC > 0.25 & dea$p_val_adj < 0.05, "gene"]
+    return(selected_gene)
+  }
+)
+
+# Reorder the list first
+sig_upreg_gene.lst <- sig_upreg_gene.lst %>%
+  purrr::discard(~ length(.x) == 0) %>%   # drop empty ones
+  rev()                                   # reverse order
+
+# Convert to UpSetR input
+upset_data <- fromList(sig_upreg_gene.lst)
+
+# Plot UpSetR
+upset.plt <- upset(
+  upset_data,
+  sets = colnames(upset_data),
+  keep.order = TRUE,
+  nintersects = NA,
+  point.size = 3.5,
+  line.size = 1,
+  text.scale = c(2, 2, 2, 2, 2.5, 1.7), # defined as c(intersection size title, intersection size tick labels, set size title, set size tick labels, set names, numbers above bars)
+  mb.ratio = c(0.55, 0.45) # Adjust margin: give more space to the bottom/left for those large labels
+)
+
+upset.plt
+```
+
+```{r, eval=FALSE}
+# Save the figure
+png(filename = paste0(path_to_save_figure, "/upset_plt_seurat_up_degs.png"), width=12, height=8, units="in", res=500)
+print(upset.plt)
+dev.off()
+```
+
+```{r}
+# Collect upregulated DEGs
+five_common_up_degs <- Reduce(intersect, sig_upreg_gene.lst)
+five_common_up_degs
+```
+
+## Downregulated genes
+
+```{r, message=FALSE, warning=FALSE, fig.height=8, fig.width=12}
+# Extract adjusted significant downregulated genes
+sig_downreg_gene.lst <- purrr::pmap(
+  list(dea.lst),
+  function(dea){
+    selected_gene <- dea[dea$avg_log2FC < (-0.25) & dea$p_val_adj < 0.05, "gene"]
+    return(selected_gene)
+  }
+)
+
+# Reorder the list first
+sig_downreg_gene.lst <- sig_downreg_gene.lst %>%
+  purrr::discard(~ length(.x) == 0) %>%   # drop empty ones
+  rev()                                   # reverse order
+
+# Convert to UpSetR input
+upset_data <- fromList(sig_downreg_gene.lst)
+
+# Plot UpSetR
+upset.plt <- upset(
+  upset_data,
+  sets = colnames(upset_data),
+  keep.order = TRUE,
+  nintersects = NA,
+  point.size = 3.5,
+  line.size = 1,
+  text.scale = c(2, 2, 2, 2, 2.5, 1.7), # defined as c(intersection size title, intersection size tick labels, set size title, set size tick labels, set names, numbers above bars)
+  mb.ratio = c(0.55, 0.45) # Adjust margin: give more space to the bottom/left for those large labels
+)
+
+upset.plt
+```
+
+```{r, eval=FALSE}
+# Save the figure
+png(filename = paste0(path_to_save_figure, "/upset_plt_seurat_down_degs.png"), width=12, height=8, units="in", res=500)
+print(upset.plt)
+dev.off()
+```
+
+```{r}
+# Collect downregulated DEGs
+five_common_down_degs <- Reduce(intersect, sig_downreg_gene.lst)
+five_common_down_degs
+```
+
+```{r, eval=FALSE}
+# Save the common DEG results
+write.table(
+  five_common_up_degs,
+  file = path_to_save_up_common_degs,   
+  sep = "\t",        
+  quote = FALSE,     
+  row.names = FALSE,
+  col.names = FALSE
+)
+
+write.table(
+  five_common_down_degs,
+  file = path_to_save_down_common_degs,   
+  sep = "\t",        
+  quote = FALSE,     
+  row.names = FALSE,
+  col.names = FALSE
+)
+```
+
+# Consistency analysis of expression genes
+
+## Identify the consistent direction of expression
+
+We compared the known DEGs between RT versus CLL reported from the previous publications and compared the consistency through the direction between upregulation and downregulation.
+
+```{r}
+# Extract all expressed genes without considering significance 
+common_genes <- purrr::map(
+  dea.lst,
+  ~ .x %>%
+    pull(gene)
+) %>%
+  Reduce(intersect, .)
+
+common_gene_expr.df <- purrr::map_dfr(
+  names(dea.lst),
+  function(study_name){
+    dea <- dea.lst[[study_name]]
+    gene_expr <- dea %>%
+      dplyr::filter(gene %in% common_genes) %>%
+      dplyr::select(gene, avg_log2FC) %>%
+      dplyr::mutate(study = study_name) 
+    return(gene_expr)
+  }
+)
+
+# Change the data frame to wider form
+common_gene_expr.df <- common_gene_expr.df %>%
+  tidyr::pivot_wider(
+    names_from = study,
+    values_from = avg_log2FC
+  )
+
+DT::datatable(common_gene_expr.df, options = list(scrollX = TRUE))
+```
+
+```{r}
+# Define known up- and downregulated DEGs
+gene_categories <- list(
+  # Upregulated DEGs
+  Cell_Cycle_Up = c("MKI67", "PCNA", "CDK1", "CDK2", "CDK4", "CDK5", "CDK6", "CCND2", "CCND3", "CDKN2A", "CDKN3", "CKS1B", "E2F7", 
+                    "ANP32B"),
+  Mitosis_Up = c("FOXM1", "PLK1", "PLK4", "AURKA", "AURKB", "TUBB", "TUBA1C", "STMN1", "TPX2", "HMMR", "KIF14", "KIF18B", "BUB1", 
+                 "UBE2C", "UBE2S", "BIRC5"),
+  DNA_Repair_Up = c("POLH", "POLQ", "POLE2", "TERT", "BRCA1", "XRCC2", "AICDA", "TOP2A", "NPM1"),
+  Oncogenes_Wnt_Up = c("MYC", "MYCBP", "EZH2", "PRMT5", "WNT3", "WNT5A", "WNT6", "WNT10A", "GAS5"),
+  Immune_Surface_Up = c("TLR8", "TLR9", "TLR10", "CD24", "CD70", "LTB", "MS4A1", "BID"),
+  
+  # Downregulated DEGs
+  Apoptosis_Down = c("BAX", "BAK1", "BAD", "BMF", "HRK", "BBC3", "PMAIP1", "BCL2L11"),
+  Chromatin_TumorSup_Down = c("CDKN1B", "CREBBP", "EP300", "CHD2", "CHD7", "ARID1A", "ARID4B", "ARID5B", "SPEN", "BAZ2A"),
+  B_Identity_MHC_Down = c("PAX5", "CD79A", "CD74", "CD37", "CD83", "CD99", "IGHV3-7", "IGLC7", "HLA-A", "HLA-B"),
+  Signaling_Homing_Down = c("CXCR4", "ITGB1", "LYN", "TRAF3", "TRAF5", "NFKBIA", "WNT16", "CDK17"),
+  Transcription_Stress_Down = c("FOS", "FOSB", "JUN", "JUNB", "ZFP36", "BTG1", "UBC")
+)
+
+known_degs <- unlist(gene_categories)
+```
+
+```{r, fig.height=14, fig.width=2.5}
+# Evaluate the consistency through the direction of the known DEGs by plotting the heatmap
+library(pheatmap)
+
+# Extract expression matrix 
+expr_mat <- as.matrix(common_gene_expr.df[ , -1])   # all columns except gene
+rownames(expr_mat) <- common_gene_expr.df$gene
+valid_genes <- intersect(known_degs, rownames(expr_mat))
+known_degs_expr_mat <- expr_mat[valid_genes, ]
+colnames(known_degs_expr_mat) <- names.lst
+
+# Set scale for heatmap
+palette_length <- 100
+colour_pal <- colorRampPalette(c("#053061", "#2171B5", "white", "#FFD92F", "#A50F15"))(palette_length)
+value_limit <- max(abs(known_degs_expr_mat), na.rm = TRUE)
+breaks <- seq(-value_limit, value_limit, length.out = palette_length + 1)
+
+# Plot the heatmap
+pheatmap(
+  known_degs_expr_mat,
+  scale = "none",
+  color = colour_pal,
+  breaks = breaks,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE
+)
+```
+
+For our results, several well-established upregulated DEGs, including PCNA, CDK4, CDK5, CKS1B, TUBA1C, STMN1, NPM1, MYC, PRMT5, WNT3, GAS5, TLR9, and BID, exhibited consistent directionality across all studies. Similarly, known downregulated DEGs, such as CHD7, CD74, NFKBIA, JUNB, and BTG1, showed consistent downregulation across all studies.
+
+We also measured the gene expression consistency across those studies by selecting genes with significant expression to evaluate the correlation of those genes, see the following steps. We measured numerically consistency between the expression level through correlations and similarities.
+
+## All significant genes
+
+```{r}
+# Extract significant genes 
+common_sig_genes <- purrr::map(
+  dea.lst,
+  ~ .x %>%
+    dplyr::filter(p_val_adj < 0.05) %>%
+    pull(gene)
+) %>%
+  Reduce(intersect, .)
+
+sig_gene_expr.df <- purrr::map_dfr(
+  names(dea.lst),
+  function(study_name){
+    dea <- dea.lst[[study_name]]
+    gene_expr <- dea %>%
+      dplyr::filter(gene %in% common_sig_genes) %>%
+      dplyr::select(gene, avg_log2FC) %>%
+      dplyr::mutate(study = study_name) 
+    return(gene_expr)
+  }
+)
+
+# Change the data frame to wider form
+sig_gene_expr.df <- sig_gene_expr.df %>%
+  tidyr::pivot_wider(
+    names_from = study,
+    values_from = avg_log2FC
+  )
+
+DT::datatable(sig_gene_expr.df, options = list(scrollX = TRUE))
+```
+
+```{r}
+# Remove the gene column for correlation
+expr_mat <- sig_gene_expr.df %>% dplyr::select(-gene) %>% as.matrix()
+
+# Compute correlations and cosine similarity
+pearson_cor <- cor(expr_mat, use = "pairwise.complete.obs", method = "pearson")
+spearman_cor <- cor(expr_mat, use = "pairwise.complete.obs", method = "spearman")
+cosine_similar <- lsa::cosine(expr_mat)
+
+# Compute Euclidean similarity
+euclidean_dist <- as.matrix(dist(t(expr_mat), method = "euclidean"))
+euclidean_similar <- 1 / (1 + euclidean_dist)
+```
+
+```{r, fig.height=5, fig.width=5.5}
+# Plot with viridis colour palette
+pheatmap(
+  pearson_cor,
+  main = "Pearson Correlation (Significant genes)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12         
+)
+
+pheatmap(
+  spearman_cor,
+  main = "Spearman Correlation (Significant genes)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12 
+)
+
+pheatmap(
+  cosine_similar,
+  main = "Cosine similarity (Significant genes)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12 
+)
+
+pheatmap(
+  euclidean_similar,
+  main = "Euclidean similarity (Significant genes)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12 
+)
+```
+
+## Upregulated genes
+
+```{r}
+# Extract upregulated genes and their log2FC
+common_upreg_genes <- purrr::map(
+  dea.lst,
+  ~ .x %>%
+    dplyr::filter(avg_log2FC > 0.25, p_val_adj < 0.05) %>%
+    pull(gene)
+) %>%
+  Reduce(intersect, .)
+
+upreg_gene_expr.df <- purrr::map_dfr(
+  names(dea.lst),
+  function(study_name){
+    dea <- dea.lst[[study_name]]
+    gene_expr <- dea %>%
+      dplyr::filter(gene %in% common_upreg_genes) %>%
+      dplyr::select(gene, avg_log2FC) %>%
+      dplyr::mutate(study = study_name) 
+    return(gene_expr)
+  }
+)
+
+# Change the data frame to wider form
+upreg_gene_expr.df <- upreg_gene_expr.df %>%
+  tidyr::pivot_wider(
+    names_from = study,
+    values_from = avg_log2FC
+  )
+
+head(upreg_gene_expr.df)
+```
+
+```{r}
+# Remove the gene column for correlation
+expr_mat <- upreg_gene_expr.df %>% dplyr::select(-gene) %>% as.matrix()
+
+# Compute correlations and cosine similarity
+pearson_cor <- cor(expr_mat, use = "pairwise.complete.obs", method = "pearson")
+spearman_cor <- cor(expr_mat, use = "pairwise.complete.obs", method = "spearman")
+cosine_similar <- lsa::cosine(expr_mat)
+
+# Compute Euclidean similarity
+euclidean_dist <- as.matrix(dist(t(expr_mat), method = "euclidean"))
+euclidean_similar <- 1 / (1 + euclidean_dist)
+```
+
+```{r, fig.height=5, fig.width=5.5}
+# Plot with viridis colour palette
+pheatmap(
+  pearson_cor,
+  main = "Pearson correlation (upregulated DEGs)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12 
+)
+
+pheatmap(
+  spearman_cor,
+  main = "Spearman correlation (upregulated DEGs)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12 
+)
+
+pheatmap(
+  cosine_similar,
+  main = "Cosine similarity (upregulated DEGs)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12 
+)
+
+pheatmap(
+  euclidean_similar,
+  main = "Euclidean similarity (upregulated DEGs)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12 
+)
+```
+
+## Downregulated genes
+
+```{r}
+# Extract downregulated genes and their log2FC
+common_downreg_genes <- purrr::map(
+  dea.lst,
+  ~ .x %>%
+    dplyr::filter(avg_log2FC < (-0.25), p_val_adj < 0.05) %>%
+    pull(gene)
+) %>%
+  Reduce(intersect, .)
+
+downreg_gene_expr.df <- purrr::map_dfr(
+  names(dea.lst),
+  function(study_name){
+    dea <- dea.lst[[study_name]]
+    gene_expr <- dea %>%
+      dplyr::filter(gene %in% common_downreg_genes) %>%
+      dplyr::select(gene, avg_log2FC) %>%
+      dplyr::mutate(study = study_name) 
+    return(gene_expr)
+  }
+)
+
+# Change the data frame to wider form
+downreg_gene_expr.df <- downreg_gene_expr.df %>%
+  tidyr::pivot_wider(
+    names_from = study,
+    values_from = avg_log2FC
+  )
+
+head(downreg_gene_expr.df)
+```
+
+```{r}
+# Remove the gene column for correlation
+expr_mat <- downreg_gene_expr.df %>% dplyr::select(-gene) %>% as.matrix()
+
+# Compute correlations and cosine similarity
+pearson_cor <- cor(expr_mat, use = "pairwise.complete.obs", method = "pearson")
+spearman_cor <- cor(expr_mat, use = "pairwise.complete.obs", method = "spearman")
+cosine_similar <- lsa::cosine(expr_mat)
+
+# Compute Euclidean similarity
+euclidean_dist <- as.matrix(dist(t(expr_mat), method = "euclidean"))
+euclidean_similar <- 1 / (1 + euclidean_dist)
+```
+
+```{r, fig.height=5, fig.width=5.5}
+# Plot with viridis colour palette
+pheatmap(
+  pearson_cor,
+  main = "Pearson correlation (downregulated DEGs)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12 
+)
+
+pheatmap(
+  spearman_cor,
+  main = "Spearman correlation (downregulated DEGs)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12 
+)
+
+pheatmap(
+  cosine_similar,
+  main = "Cosine similarity (downregulated DEGs)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12 
+)
+
+pheatmap(
+  euclidean_similar,
+  main = "Euclidean similarity (downregulated DEGs)",
+  color = viridis(100),
+  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
+  display_numbers = TRUE,
+  number_color = "black",
+  border_color = NA,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  fontsize_number = 12,
+  fontsize_row = 12,        
+  fontsize_col = 12 
+)
+```
+
+# Evaluate gene-ranked consistency
+
+From the previous step, we got 78 and 10 for common up- and downregulated DEGs from all studies. However, we are not sure if these DEGs are common from ranking by chance. We will evaluate thier rank based on log2FC by using RankProd package. The package evaluates the statistics of gene rank across several gene expression studies by modelling ranked genes as probability distribution for the sum of outcomes by rolling *K* dices with *N* faces, similar to measuring *N* genes in expression analysis across *K* replicates or studies.
+
+```{r, message=FALSE, warning=FALSE}
+# Import the relavant packages
+library(RankProd)
+```
+
+```{r}
+# Join dea tables from all studies
+common_dea.df <- dea.lst[[1]] %>%
+  dplyr::mutate(log2FC_1 = avg_log2FC) %>%
+  dplyr::select(gene, log2FC_1)
+
+# Loop over the rest
+for (i in 2:length(dea.lst)) {
+  
+  # Rename dynamically with :=
+  df_i <- dea.lst[[i]] %>%
+    dplyr::mutate(!!paste0("log2FC_", i) := avg_log2FC) %>% 
+    dplyr::select(gene, !!paste0("log2FC_", i))
+  
+  # Join onto the growing table
+  common_dea.df <- full_join(common_dea.df, df_i, by = "gene")
+}
+
+# Result: one data frame with gene and log2FC_x columns
+head(common_dea.df)
+```
+
+## Rank product
+
+```{r, message=FALSE, warning=FALSE}
+# Perform Rank Product
+expr_mat <- as.matrix(common_dea.df[ , -1])   # all columns except gene
+rownames(expr_mat) <- common_dea.df$gene
+cl=rep(1, ncol(expr_mat))
+RP.out <- RankProducts(expr_mat, cl, na.rm=FALSE, logged=TRUE, rand=123)
+```
+
+```{r}
+# Summarise results of significant consistent genes
+RP_sig_results <- topGene(RP.out, cutoff=0.05, method="pfp", logged=TRUE, logbase=2, gene.names=rownames(expr_mat))
+```
+
+We will explore the RP results for both upregulated and downregulated genes.
+
+```{r}
+# Upregulated genes table
+RP_up_genes.df <- RP_sig_results[["Table2"]]
+DT::datatable(RP_up_genes.df, options = list(scrollX = TRUE))
+```
+
+```{r}
+# Downregulated genes table
+RP_down_genes.df <- RP_sig_results[["Table1"]]
+DT::datatable(RP_down_genes.df, options = list(scrollX = TRUE))
+```
+
+```{r, eval=FALSE}
+# Save the RP results
+saveRDS(RP_up_genes.df, path_to_save_up_consist_rp)
+saveRDS(RP_down_genes.df, path_to_save_down_consist_rp)
+```
+
+## Rank sum
+
+```{r, message=FALSE, warning=FALSE}
+# Perform Rank Sum
+RS.out <- RankProducts(expr_mat, cl, na.rm=FALSE, calculateProduct=FALSE, logged=TRUE, rand=123)
+```
+
+```{r}
+# Summarise results of significant consistent genes
+RS_sig_results <- topGene(RS.out, cutoff=0.05, method="pfp", logged=TRUE, logbase=2, gene.names=rownames(expr_mat))
+```
+
+We will explore the RP results for both upregulated and downregulated genes.
+
+```{r}
+# Upregulated genes table
+RS_up_genes.df <- RS_sig_results[["Table2"]]
+DT::datatable(RS_up_genes.df, options = list(scrollX = TRUE))
+```
+
+```{r}
+# Downregulated genes table
+RS_down_genes.df <- RS_sig_results[["Table1"]]
+DT::datatable(RS_down_genes.df, options = list(scrollX = TRUE))
+```
+
+```{r, eval=FALSE}
+# Save the RP results
+saveRDS(RS_up_genes.df, path_to_save_up_consist_rs)
+saveRDS(RS_down_genes.df, path_to_save_down_consist_rs)
+```
+
+# Find overlapping between common DEGs and significant consistent ranked genes
+
+We have identified common DEGs and significantly consistent ranked genes. We will next identify the common DEGs that are rank-consistent in order to evaluate their expression-rank robustness across all studies.
+
+```{r}
+# Collect consistent gene names from both up- and downregulated genes
+consist_rp_up_genes <- rownames(RP_sig_results[["Table2"]])
+consist_rp_down_genes <- rownames(RP_sig_results[["Table1"]])
+consist_rs_up_genes <- rownames(RS_sig_results[["Table2"]])
+consist_rs_down_genes <- rownames(RS_sig_results[["Table1"]])
+```
+
+After that, we will identify overlappping genes in both DEGs and consistent ranked genes.
+
+## Overlapping in upregulated genes
+
+```{r}
+# Overlapping between upregulated common DEGs and upregulated RP-rank consistent genes
+up_deg_rp_intersct <- intersect(five_common_up_degs, consist_rp_up_genes)
+up_deg_rp_intersct
+```
+
+```{r}
+# Overlapping between upregulated common DEGs and upregulated RS-rank consistent genes
+up_deg_rs_intersct <- intersect(five_common_up_degs, consist_rs_up_genes)
+up_deg_rs_intersct
+```
+
+We can see that `up_deg_rp_intersct` is a subset in `up_deg_rs_intersct`. We also proved from the union below.
+
+```{r}
+# Finding union between up_deg_rp_intersct and up_deg_rs_intersct
+union_consist_rank_up_degs <- union(up_deg_rp_intersct, up_deg_rs_intersct)
+union_consist_rank_up_degs
+```
+
+```{r}
+# Finding overlapping upregulated genes between DEGs and all consistent ranking
+consist_rank_up_degs <- Reduce(intersect, list(five_common_up_degs, consist_rp_up_genes, consist_rs_up_genes))
+consist_rank_up_degs
+```
+
+## Overlapping in downregulated genes
+
+```{r}
+# Overlapping between upregulated common DEGs and upregulated RP-rank consistent genes
+down_deg_rp_intersct <- intersect(five_common_down_degs, consist_rp_down_genes)
+down_deg_rp_intersct
+```
+
+```{r}
+# Overlapping between upregulated common DEGs and upregulated RS-rank consistent genes
+down_deg_rs_intersct <- intersect(five_common_down_degs, consist_rs_down_genes)
+down_deg_rs_intersct
+```
+
+It is clear that `down_deg_rp_intersct` is a subset in `down_deg_rs_intersct`. We also proved from the union below.
+
+```{r}
+# Finding union between up_deg_rp_intersct and up_deg_rs_intersct
+union_consist_rank_down_degs <- union(down_deg_rp_intersct, down_deg_rs_intersct)
+union_consist_rank_down_degs
+```
+
+```{r}
+# Finding overlapping downregulated genes between DEGs and all consistent ranking
+consist_rank_down_degs <- Reduce(intersect, list(five_common_down_degs, consist_rp_down_genes, consist_rs_down_genes))
+consist_rank_down_degs
+```
+
+We also visualised the normalised expression in common DEGs consistent with RP and RS
+
+```{r, fig.height=10, fig.width=2.5}
+# Visualise the heatmap (only intersection between DEGs and all ranking methods: RP and RS)
+colour_pal <- colorRampPalette(c("#053061", "#2171B5", "white", "#FFD92F", "#A50F15"))(100)
+
+# Extract expression matrix with rank-consistent DEGs
+consist_sig_genes <- c(consist_rank_up_degs, consist_rank_down_degs)
+consist_sig_expr_mat <- expr_mat[consist_sig_genes, ]
+colnames(consist_sig_expr_mat) <- names.lst
+
+# Plot the heatmap
+pheatmap(
+  consist_sig_expr_mat,
+  scale = "none",
+  color = colour_pal,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE
+)
+```
+
+```{r, fig.height=14, fig.width=2.5}
+# Visualise the heatmap (union between all ranking methods: RP and RS)
+colour_pal <- colorRampPalette(c("#053061", "#2171B5", "white", "#FFD92F", "#A50F15"))(100)
+
+# Extract expression matrix with rank-consistent DEGs
+consist_sig_genes <- c(union_consist_rank_up_degs, union_consist_rank_down_degs)
+consist_sig_expr_mat <- expr_mat[consist_sig_genes, ]
+colnames(consist_sig_expr_mat) <- names.lst
+
+# Plot the heatmap
+pheatmap(
+  consist_sig_expr_mat,
+  scale = "none",
+  color = colour_pal,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE
+)
+```
+
+We will save these genes for further study and discussion.
+
+```{r, eval=FALSE}
+# Save the results
+write.table(
+  union_consist_rank_up_degs,
+  file = path_to_save_up_union_rp_rs_consist_degs,   
+  sep = "\t",        
+  quote = FALSE,     
+  row.names = FALSE,
+  col.names = FALSE
+)
+
+write.table(
+  union_consist_rank_down_degs,
+  file = path_to_save_down_union_rp_rs_consist_degs,   
+  sep = "\t",        
+  quote = FALSE,     
+  row.names = FALSE,
+  col.names = FALSE
+)
+
+write.table(
+  consist_rank_up_degs,
+  file = path_to_save_up_intersct_rp_rs_consist_degs,   
+  sep = "\t",        
+  quote = FALSE,     
+  row.names = FALSE,
+  col.names = FALSE
+)
+
+write.table(
+  consist_rank_down_degs,
+  file = path_to_save_down_intersct_rp_rs_consist_degs,   
+  sep = "\t",        
+  quote = FALSE,     
+  row.names = FALSE,
+  col.names = FALSE
+)
+```
+
+# Session Information
+
+```{r}
+sessionInfo()
+```

@@ -1,0 +1,523 @@
+---
+title: "Hing_2023_GSE183426_common_DEGs_validation"
+author: "Pakorn Sagulkoo"
+format:
+  html:
+    toc: true
+    toc-location: left
+    embed-resources: true
+editor: visual
+---
+
+This source code we validated the rank-consistent common DEGs from our systematic review with single-cell RNA-seq for RT- and CLL-like conditions in mouse experiments. We analysed for [Hing et. al. (2023)](https://www.nature.com/articles/s41467-022-35778-1) study which employed a mouse experimental model using Eµ-hTCL1 and Eµ-hPRMT5/hTCL1 mouse model for CLL and RT, respectively.
+
+# Import the relevant packages and set working path directory
+
+```{r, setup, message=FALSE, warning=FALSE}
+# Attach the packages you will need for the analysis.
+library(Seurat)
+library(harmony)
+library(dplyr)
+library(tidyr)
+library(SingleR)
+library(celldex)
+library(sctransform)
+```
+
+```{r}
+# Check root path
+here::here()
+```
+
+# Define paths
+
+```{r}
+# Define paths to load and save
+path_to_metadata <- here::here("scRNAseq/Hing_2023_GSE183426/sample_metadata.csv")
+path_to_obj_lst <- here::here("scRNAseq/Hing_2023_GSE183426/R_objects/Hing_2023_GSE183426_reanalysed_seu_lst.rds")
+path_to_save_merged_obj <- here::here("scRNAseq/Hing_2023_GSE183426/R_objects/Hing_2023_GSE183426_merged_seu.rds")
+path_to_save_integrated_obj <- here::here("scRNAseq/Hing_2023_GSE183426/R_objects/Hing_2023_GSE183426_integrated_seu.rds")
+path_to_save_tumour_obj <- here::here("scRNAseq/Hing_2023_GSE183426/R_objects/Hing_2023_GSE183426_tumour_seu.rds")
+path_to_save_filtered_tumour_obj <- here::here("scRNAseq/Hing_2023_GSE183426/R_objects/Hing_2023_GSE183426_filtered_tumour_seu.rds")
+path_to_save_markers <- here::here("scRNAseq/Hing_2023_GSE183426/R_objects/Hing_2023_GSE183426_markers.rds")
+```
+
+# Load data and functions
+
+```{r, message=FALSE, warning=FALSE}
+# Source functions
+source(here::here("bin/utils.R"))
+```
+
+```{r}
+# Load the sample metadata
+sample_metadata <- read.csv(path_to_metadata)
+DT::datatable(sample_metadata, options = list(scrollX = TRUE))
+```
+
+```{r}
+# Load the seurat list
+seurat.lst <- readRDS(path_to_obj_lst)
+```
+
+# Data merging and integration
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Merge the objects 
+seurat <- seurat.lst[[1]]
+for (i in 2:length(seurat.lst)) {
+  seurat <- merge(x = seurat, y = seurat.lst[[i]])
+}
+rm(seurat.lst); gc()
+
+# Save the object
+saveRDS(seurat, path_to_save_merged_obj)
+```
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Data integration and downstream analysis
+DefaultAssay(seurat) <- "RNA"
+seurat <- JoinLayers(seurat)
+seurat <- SCTransform(seurat, vst.flavor = "v2", method = "glmGamPoi", verbose = FALSE)
+seurat <- RunPCA(seurat)
+seurat <- RunHarmony(seurat, group.by.vars = "case_id", dims = 1:30) 
+seurat <- RunUMAP(seurat, dims = 1:30, reduction = "harmony")
+seurat <- FindNeighbors(seurat, dims = 1:30, reduction = "harmony")              
+seurat <- FindClusters(
+    seurat,
+    random.seed = 12345,
+    verbose = FALSE,
+    resolution = seq(0.1, 0.9, by = 0.1)
+  )
+
+# Save the object
+saveRDS(seurat, path_to_save_integrated_obj)
+```
+
+# Visualisation after integration
+
+```{r}
+# Load the data
+seurat <- readRDS(path_to_save_integrated_obj)
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Plot based on case_id
+case_id.plt <- DimPlot(seurat, reduction = "umap", group.by = "case_id") + 
+  labs(y= "UMAP 2", x = "UMAP 1")
+case_id.plt
+```
+
+```{r, message=FALSE, warning=FALSE, fig.height=4, fig.width=10}
+# Plot based on models and tissues
+model.plt <- DimPlot(seurat, reduction = "umap", group.by = "model") + 
+  labs(y= "UMAP 2", x = "UMAP 1")
+
+tissue.plt <- DimPlot(seurat, reduction = "umap", group.by = "tissue") + 
+  labs(y= "UMAP 2", x = "UMAP 1")
+
+model.plt + tissue.plt
+```
+
+```{r, fig.height=7, fig.width=9, warning=FALSE, message=FALSE}
+# Plot based on gene expression
+FeaturePlot(seurat, 
+            features = c("Hbb-bt", "Hba-a1", "Cd3d", "Cd8a", "Cd4", "Cd19", "Cd79a", "Cd14", "Ncr1"),
+            reduction = "umap") 
+```
+
+```{r, fig.height=10, fig.width=10, warning=FALSE, message=FALSE}
+# Visualise the varied clusters
+varied_clusters.plt <- plot_varying_cluster_resolution(seurat)
+varied_clusters.plt
+```
+
+```{r, fig.height=4, fig.width=5}
+# Plot seurat clusters at resolution=0.1
+clusters.plt <- DimPlot(seurat, 
+                        reduction = "umap", 
+                        group.by = "SCT_snn_res.0.1", 
+                        raster=FALSE, 
+                        label = TRUE) + 
+  labs(y= "UMAP 2", x = "UMAP 1")
+
+clusters.plt
+```
+
+# Tumour cell extraction
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Extract tumour cells and reprocessing after subset
+tumour_seurat <- subset(seurat, subset = !(SCT_snn_res.0.1 %in% c(0, 2, 4, 10)))
+tumour_seurat <- SCTransform(tumour_seurat, vst.flavor = "v2", method = "glmGamPoi", verbose = FALSE)
+tumour_seurat <- RunPCA(tumour_seurat)
+tumour_seurat <- RunUMAP(tumour_seurat, dims = 1:30, reduction = "harmony")
+tumour_seurat <- FindNeighbors(tumour_seurat, dims = 1:30, reduction = "harmony")              
+tumour_seurat <- FindClusters(
+    tumour_seurat,
+    random.seed = 12345,
+    verbose = FALSE,
+    resolution = seq(0.1, 0.9, by = 0.1)
+  )
+
+# Save the object
+saveRDS(tumour_seurat, path_to_save_tumour_obj)
+```
+
+```{r, fig.height=10, fig.width=10, warning=FALSE, message=FALSE}
+# Visualise the varied clusters
+tumour_seurat <- readRDS(path_to_save_tumour_obj)
+varied_clusters.plt <- plot_varying_cluster_resolution(tumour_seurat)
+varied_clusters.plt
+```
+
+```{r, fig.height=7, fig.width=9, warning=FALSE, message=FALSE}
+# Plot based on gene expression
+FeaturePlot(tumour_seurat, 
+            features = c("Hbb-bt", "Hba-a1", "Cd3d", "Cd8a", "Cd4", "Cd19", "Cd79a", "Cd14", "Ncr1"),
+            reduction = "umap") 
+```
+
+```{r, fig.height=8, fig.width=8, warning=FALSE, message=FALSE}
+# Calculate subcluster for cluster 5 at res=0.5 as we will remove contaminated cells
+Idents(tumour_seurat) <- "SCT_snn_res.0.5"
+
+tumour_seurat <- FindSubCluster(
+  object    = tumour_seurat,
+  cluster   = 5,                  
+  graph.name = "SCT_snn",     
+  subcluster.name = "seurat_subclusters",
+  resolution = 0.3                 
+)
+
+DimPlot(tumour_seurat, group.by = "seurat_subclusters", label = TRUE, repel = TRUE)
+```
+
+# Tumour cells QC
+
+We removed other contaminated cells such as erythrocytes and T cells.
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Filter out contaminated cells and reprocessing
+filtered_tumour_seurat <- subset(tumour_seurat, subset = !(seurat_subclusters %in% c("5_2", "18", "24")))
+filtered_tumour_seurat <- SCTransform(filtered_tumour_seurat, vst.flavor = "v2", method = "glmGamPoi", verbose = FALSE)
+filtered_tumour_seurat <- RunPCA(filtered_tumour_seurat)
+filtered_tumour_seurat <- RunUMAP(filtered_tumour_seurat, dims = 1:30, reduction = "harmony")
+filtered_tumour_seurat <- FindNeighbors(filtered_tumour_seurat, dims = 1:30, reduction = "harmony")              
+filtered_tumour_seurat <- FindClusters(
+    filtered_tumour_seurat,
+    random.seed = 12345,
+    verbose = FALSE,
+    resolution = seq(0.1, 0.9, by = 0.1)
+  )
+
+# Save the object
+saveRDS(filtered_tumour_seurat, path_to_save_filtered_tumour_obj)
+```
+
+```{r, fig.height=10, fig.width=10, warning=FALSE, message=FALSE}
+# Visualise the varied clusters
+filtered_tumour_seurat <- readRDS(path_to_save_filtered_tumour_obj)
+varied_clusters.plt <- plot_varying_cluster_resolution(filtered_tumour_seurat)
+varied_clusters.plt
+```
+
+```{r, message=FALSE, warning=FALSE, fig.height=8, fig.width=8}
+# Plot based on clustering
+Idents(filtered_tumour_seurat) <- "SCT_snn_res.0.3"
+
+# Create subclusters for cluster 5
+filtered_tumour_seurat <- FindSubCluster(
+    object          = filtered_tumour_seurat,
+    cluster         = 5,
+    graph.name      = "SCT_snn",
+    subcluster.name = "seurat_subclusters",
+    resolution      = 0.05)
+
+clusters.plt <- DimPlot(filtered_tumour_seurat, 
+                        reduction = "umap", 
+                        group.by = "seurat_subclusters", 
+                        label = TRUE,
+                        repel = TRUE,
+                        raster=FALSE) + 
+  labs(y= "UMAP 2", x = "UMAP 1") 
+
+clusters.plt
+```
+
+# RT and CLL cell annotation
+
+## Tumour cell cluster distribution split by the models
+
+```{r, fig.height=5, fig.width=10}
+# Plot clusters by spliting the model (Eµ-hPRMT5, Eµ-hTCL1, and Eµ-hPRMT5/hTCL1)
+cluster_split.plt <- DimPlot(filtered_tumour_seurat, 
+                             reduction = "umap", 
+                             group.by = "seurat_subclusters", 
+                             split.by = "model", 
+                             label = TRUE) +
+  NoLegend()
+cluster_split.plt 
+```
+
+## Biomarker identification
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Thresholds
+min_log2FC <- 0.3
+alpha <- 0.001
+
+# Calculate markers
+Idents(filtered_tumour_seurat) <- "seurat_subclusters"
+markers <- FindAllMarkers(filtered_tumour_seurat, only.pos = TRUE, logfc.threshold = min_log2FC)
+markers <- markers %>%
+  mutate(cluster = as.character(cluster)) %>%
+  filter(p_val_adj < alpha) %>%
+  arrange(cluster) %>%
+  group_by(cluster) %>%
+  arrange(desc(avg_log2FC), .by_group = TRUE)
+
+# Save the marker results
+saveRDS(markers, path_to_save_markers)
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Show the marker results
+markers <- readRDS(path_to_save_markers)
+DT::datatable(markers, options = list(scrollX = TRUE))
+```
+
+## Cell cycle scoring
+
+```{r}
+# Convert human cell cycle genes to mouse
+human_to_mouse_map <- c(
+  # S phase
+  MCM5="Mcm5", PCNA="Pcna", TYMS="Tyms", FEN1="Fen1", MCM2="Mcm2", MCM4="Mcm4", RRM1="Rrm1", UNG="Ung", GINS2="Gins2", MCM6="Mcm6", CDCA7="Cdca7", DTL="Dtl", PRIM1="Prim1",
+  UHRF1="Uhrf1", MLF1IP="Mlf1ip", HELLS="Hells", RFC2="Rfc2", RPA2="Rpa2", NASP="Nasp", RAD51AP1="Rad51ap1", GMNN="Gmnn", WDR76="Wdr76", SLBP="Slbp", CCNE2="Ccne2", UBR7="Ubr7", 
+  POLD3="Pold3", MSH2="Msh2", ATAD2="Atad2", RAD51="Rad51", RRM2="Rrm2", CDC45="Cdc45", CDC6="Cdc6", EXO1="Exo1", TIPIN="Tipin", DSCC1="Dscc1", BLM="Blm", CASP8AP2="Casp8ap2",
+  USP1="Usp1", CLSPN="Clspn", POLA1="Pola1", CHAF1B="Chaf1b", BRIP1="Brip1", E2F8="E2f8",
+
+  # G2M phase
+  HMGB2="Hmgb2", CDK1="Cdk1", NUSAP1="Nusap1", UBE2C="Ube2c", BIRC5="Birc5", TPX2="Tpx2", TOP2A="Top2a", NDC80="Ndc80", CKS2="Cks2", NUF2="Nuf2", CKS1B="Cks1b", MKI67="Mki67",
+  TMPO="Tmpo", CENPF="Cenpf", TACC3="Tacc3", FAM64A="Fam64a", SMC4="Smc4", CCNB2="Ccnb2", CKAP2L="Ckap2l", CKAP2="Ckap2", AURKB="Aurkb", BUB1="Bub1", KIF11="Kif11", ANP32E="Anp32e",
+  TUBB4B="Tubb4b", GTSE1="Gtse1", KIF20B="Kif20b", HJURP="Hjurp", CDCA3="Cdca3", HN1="Hn1", CDC20="Cdc20", TTK="Ttk", CDC25C="Cdc25c", KIF2C="Kif2c", RANGAP1="Rangap1", 
+  NCAPD2="Ncapd2", DLGAP5="Dlgap5", CDCA2="Cdca2", CDCA8="Cdca8", ECT2="Ect2", KIF23="Kif23", HMMR="Hmmr", AURKA="Aurka", PSRC1="Psrc1", ANLN="Anln", LBR="Lbr", CKAP5="Ckap5", 
+  CENPE="Cenpe", CTCF="Ctcf", NEK2="Nek2", G2E3="G2e3", GAS2L3="Gas2l3", CBX5="Cbx5", CENPA="Cenpa"
+)
+
+convert_to_mouse <- function(human_genes, map) {
+  mouse_genes <- unname(map[human_genes])
+  mouse_genes <- mouse_genes[!is.na(mouse_genes)]  # remove unmapped
+  return(mouse_genes)
+}
+
+mouse_s_genes  <- convert_to_mouse(cc.genes$s.genes,  human_to_mouse_map)
+mouse_g2m_genes <- convert_to_mouse(cc.genes$g2m.genes, human_to_mouse_map)
+```
+
+```{r, message=FALSE, warning=FALSE, fig.height=5, fig.width=18}
+# Consider cell cycle genes based on cell cycle upregulation is a hallmark of Richter transformation
+filtered_tumour_seurat <- CellCycleScoring(
+  filtered_tumour_seurat,
+  s.features = mouse_s_genes,
+  g2m.features = mouse_g2m_genes,
+  set.ident = FALSE
+)
+
+cell_cycle.plt <- DimPlot(filtered_tumour_seurat, group.by = "Phase", pt.size = 1) + labs(y= "UMAP 2", x = "UMAP 1")
+
+umap_s_score <- FeaturePlot(filtered_tumour_seurat, features = "S.Score", pt.size = 1) +
+  scale_color_viridis_c(option = "magma") +
+  labs(title = "S Score", y= "UMAP 2", x = "UMAP 1") 
+  
+umap_g2m_score <- FeaturePlot(filtered_tumour_seurat, features = "G2M.Score", pt.size = 1) +
+  scale_color_viridis_c(option = "magma") +
+  labs(title = "G2M Score", y= "UMAP 2", x = "UMAP 1") 
+
+cell_cycle.plt + umap_s_score + umap_g2m_score
+```
+
+From the cell cycle scoring, we can see that cells in Eµ-hPRMT5/hTCL1 models had high cell cycle scores in G2M and S phases.
+
+## Subtype annotation
+
+We annotated tumour subtypes as literatures below:
+
+-   [Detection of early seeding of Richter transformation in chronic lymphocytic leukemia](https://www.nature.com/articles/s41591-022-01927-8#code-availability)
+-   [Transcriptomic clustering of chronic lymphocytic leukemia: molecular subtypes based on Bruton’s tyrosine kinase expression levels](https://www.nature.com/articles/s41408-024-01196-3)
+-   [Molecular map of chronic lymphocytic leukemia and its impact on outcome](https://www.nature.com/articles/s41588-022-01140-w)
+-   [Subgroup-specific gene expression profiles and mixed epistasis in chronic lymphocytic leukemia](https://haematologica.org/article/view/haematol.2022.281869)
+-   [CD69 is independently prognostic in chronic lymphocytic leukemia: a comprehensive clinical and biological profiling study](https://haematologica.org/article/view/6219)
+-   [MYC target gene activation in chronic lymphocytic leukemia and richter transformation: links to aggressiveness and tumor microenvironment interactions](https://www.frontiersin.org/journals/pharmacology/articles/10.3389/fphar.2025.1642458/full)
+-   [P594: THE CXCR4-LOW/CD5-HIGH PROLIFERATIVE FRACTION IS ENRICHED IN BTK MUTATIONS AND ANTICIPATES RELAPSE IN IBRUTINIB-TREATED CLL](https://journals.lww.com/hemasphere/fulltext/2023/08003/p594__the_cxcr4_low_cd5_high_proliferative.494.aspx)
+-   [The transcription factor Foxo1 controls germinal center B cell proliferation in response to T cell help](https://rupress.org/jem/article/214/4/1181/42216/The-transcription-factor-Foxo1-controls-germinal)
+-   [KLF2– A Negative Regulator of Pre-B Cell Clonal Expansion and B Cell Activation](https://journals.plos.org/plosone/article?id=10.1371/journal.pone.0097953)
+
+| Cluster | Markers                         | Annotation                   |
+|---------|---------------------------------|------------------------------|
+| 0       | Osbpl5, Hck                     | M-CLL                        |
+| 1       | Myc, Fcer2a, Cd69, Slamf1, Cd38 | U-CLL                        |
+| 2       | Ighm, Mzb1, Xbp1                | MZB1hiIGHMhiXBP1hi CLL       |
+| 3       | Btk                             | Btkhi CLL                    |
+| 4       | Cxcr4, Mir155hg                 | Cxcr4hiCd27lowMir155hghi CLL |
+| 5_0     | Cd3d, Cd3e, Cd8a                | contaminated CD8+ T          |
+| 5_1     | Bcat1, Pcna, Mki67              | Bcat1hi RT                   |
+| 6       | Top2a, Pcna, Mki67              | proliferative RT             |
+| 7       | Ccnd2                           | Ccnd2hi RT                   |
+| 8       | Slc5a5, Gnat3, Trpm5            | contaminated epithelial      |
+| 9       | Btk, Pcna, Pik3ip1              | Btkhi RT                     |
+| 10      | Btla, Camk2d                    | exhausted CLL                |
+| 11      | Cd5                             | Cxcr4loCd5hi CLL             |
+| 12      | Cd3e, Cd3g, Cd8b1               | contaminated CD8+ T          |
+| 13      | Cd5, Cd38, Pdcd1                | aggressive CLL               |
+| 14      | Cd4, Il7r                       | contaminated CD4+ T          |
+| 15      | Ifit1bl1, Isg15, Hif1a          | stimulated RT                |
+| 16      | Cd79a, Pou2af1, Ifit1           | IFN-I–responsive B           |
+| 17      | Cd27                            | Cxcr4loCd27hi CLL            |
+| 18      | Eno1, Klf2                      | quiescent RT                 |
+| 19      | Bach2, Ccr6, Ccr7               | memory B                     |
+| 20      | Cxcr4, Foxo1, Cdkn2c            | quiescent CLL                |
+| 21      | Mx1, Ly6d, Crtam                | APC-like B                   |
+| 22      | Gzma, Gzmk, Nkg7                | contaminated NK              |
+
+```{r, message=FALSE, warning=FALSE, fig.height=8, fig.width=12}
+# Plot UMAP for tumour subtypes
+
+# -------------------------------------------------------------------
+# 1. Map Seurat clusters and create the annotation column
+# -------------------------------------------------------------------
+cluster_to_annotation <- c(
+  "0" = "M-CLL", "1" = "U-CLL", "2" = "MZB1hiIGHMhiXBP1hi CLL", "3" = "Btkhi CLL", "4" = "Cxcr4hiCd27lowMir155hghi CLL",
+  "5_0" = "contaminated CD8+ T (1)", "5_1" = "Bcat1hi RT", "6" = "proliferative RT", "7" = "Ccnd2hi RT", 
+  "8" = "contaminated epithelial", "9" = "Btkhi RT", "10" = "exhausted CLL", "11" = "Cxcr4loCd5hi CLL", 
+  "12" = "contaminated CD8+ T (2)", "13" = "aggressive CLL", "14" = "contaminated CD4+ T", "15" = "stimulated RT", 
+  "16" = "IFN-I–responsive B", "17" = "Cxcr4loCd27hi CLL", "18" = "quiescent RT", "19" = "memory B", "20" = "quiescent CLL", 
+  "21" = "APC-like B", "22" = "contaminated NK"
+)
+
+filtered_tumour_seurat$tumour_annotate <- 
+  as.vector(cluster_to_annotation[as.character(filtered_tumour_seurat$seurat_subclusters)])
+
+# -------------------------------------------------------------------
+# 2. Set level order
+# -------------------------------------------------------------------
+new_levels <- c(
+  "M-CLL", "U-CLL", "MZB1hiIGHMhiXBP1hi CLL", "Btkhi CLL", "Cxcr4hiCd27lowMir155hghi CLL", "contaminated CD8+ T (1)", "Bcat1hi RT",   "proliferative RT", "Ccnd2hi RT", "contaminated epithelial", "Btkhi RT", "exhausted CLL", "Cxcr4loCd5hi CLL", 
+  "contaminated CD8+ T (2)", "aggressive CLL", "contaminated CD4+ T", "stimulated RT", "IFN-I–responsive B", "Cxcr4loCd27hi CLL", 
+  "quiescent RT", "memory B", "quiescent CLL", "APC-like B", "contaminated NK"
+)
+
+filtered_tumour_seurat$tumour_annotate <- factor(
+  filtered_tumour_seurat$tumour_annotate,
+  levels = new_levels
+)
+
+# -------------------------------------------------------------------
+# 3. Define colours and labels
+# -------------------------------------------------------------------
+new_colours <- c(
+  "#349043", "#80BF61", "#AADA79", "#7BB379", "#66A853", "#C3C3C3", "#FF6800", "#ED564E", "#E25644", "#C2C2C2", "#d65c7a", 
+  "#4A8C1C", "#C6E297", "#C3C3C3", "#53C100", "#B1B1B1", "#BB777A", "#6FAA66", "#3A7BAA", "#93CD6A", "#EC6857", "#7AC7E2", 
+  "#80BF61", "#3F8BBA", "#A1A1A1"
+)
+
+custom_labels <- list(
+  bquote("M-CLL"), bquote("U-CLL"), bquote(MZB1^hi~IGHM^hi~XBP1^hi~"CLL"), bquote(Btk^hi~"CLL"), 
+  bquote(Cxcr4^hi~Cd27^lo~Mir155hg^hi~"CLL"), bquote("contaminated CD8+ T"), bquote(Bcat1^hi~"RT"), bquote("proliferative RT"),
+  bquote(Ccnd2^hi~"RT"), bquote("contaminated epithelial"), bquote(Btk^hi~"RT"), bquote("exhausted CLL"), 
+  bquote(Cxcr4^lo~Cd5^hi~"CLL"), bquote("contaminated CD8+ T"), bquote("aggressive CLL"), bquote("contaminated CD4+ T"), 
+  bquote("stimulated RT"), bquote("IFN-I–responsive B"), bquote(Cxcr4^lo~Cd27^hi~"CLL"), bquote("quiescent RT"), 
+  bquote("memory B"), bquote("quiescent CLL"), bquote("APC-like B"), bquote("contaminated NK")
+)
+
+# -------------------------------------------------------------------
+# 4. Plot UMAP
+# -------------------------------------------------------------------
+tumour_subtype.plt <- DimPlot(filtered_tumour_seurat, 
+                              group.by = "tumour_annotate", 
+                              label = TRUE,
+                              repel = TRUE,
+                              pt.size = 0.5) +
+  scale_color_manual(
+    values = new_colours,
+    breaks = new_levels,
+    labels = custom_labels
+  ) +
+  labs(y = "UMAP 2", x = "UMAP 1") +
+  ggtitle("Tumour subtypes")
+
+tumour_subtype.plt
+```
+
+# Validation for identified common DEGs
+
+Moreover, we will use our identified biomarkers resulted from our systematic review to confirm if the cluster contains RT cells. We have sets of up- and downregulated DEGs with RP- and RS-rank consistence between RT and CLL conditions. We will show their feature plots.
+
+```{r, message=FALSE, warning=FALSE, fig.height=10, fig.width=25}
+# Dot plot for common DEGs based on annotated cells
+
+path_to_common_up_degs <- here::here("scRNAseq/systematic_review/6-consistency_assessment/overlapping_genes/seurat/3.upregulated_union_rp_rs_consist_degs.txt")
+path_to_common_down_degs <- here::here("scRNAseq/systematic_review/6-consistency_assessment/overlapping_genes/seurat/3.downregulated_union_rp_rs_consist_degs.txt")
+
+up_genes <- read.table(path_to_common_up_degs, stringsAsFactors = FALSE, header = FALSE)[, 1]
+down_genes <- read.table(path_to_common_down_degs, stringsAsFactors = FALSE, header = FALSE)[, 1]
+features <- c(up_genes, down_genes)
+mouse_genes <- paste0(toupper(substr(features, 1, 1)),
+                      tolower(substr(features, 2, nchar(features))))
+
+colour_pal <- colorRampPalette(c("#053061", "#2171B5", "white", "#FFD92F", "#A50F15"))(100)
+
+common_degs.plt <- DotPlot(filtered_tumour_seurat, features=mouse_genes, group.by = "tumour_annotate") +
+  RotatedAxis() +
+  scale_colour_gradientn(colours = colour_pal) +
+  scale_y_discrete(
+      limits = rev(new_levels),
+      labels = rev(custom_labels)
+    ) +
+  labs(
+    colour = "Average\nExpression",
+    size = "Percent\nExpressed"
+  )
+
+common_degs.plt
+```
+
+We can see from the plot that our identified upregulated RT DEGs were consistent mostly with proliferative, Bcat1hi, and Btkhi RT subtypes and partially with Ccnd2hi, stimulated, and quiescent RT subtypes. While downregulated RT DEGs were consistent mostly in both RT subtypes. Interestingly, Igkc was downregulated in RT and aggressive CLL cells.
+
+```{r, message=FALSE, warning=FALSE, fig.height=15, fig.width=20}
+# Visualise upregulated genes that we found from the systematic review
+mouse_features <- c("Hmga1", "Vdac1", "Ppa1", "Ldha", "Ggct", "Hspd1", "Impdh2", "Paics", "Nme1", "Nme2", "Cox5a", "Selenoh", 
+  "Clta", "Prdx5", "Npm1", "Hspa8", "Mif", "Stmn1", "Cacybp", "Mrpl4")
+feature_plots <- lapply(mouse_features, function(gene) {
+  FeaturePlot(filtered_tumour_seurat, features = gene, reduction = "umap", pt.size = 1) +
+    scale_color_viridis_c(option = "magma", limits=c(0, 3)) +
+    labs(y = "UMAP 2", x = "UMAP 1") +
+    ggtitle(gene) 
+})
+
+# Combine all plots (patchwork automatically combines lists)
+degs_umap.plt <- wrap_plots(feature_plots, ncol = 5)  
+degs_umap.plt
+```
+
+```{r, message=FALSE, warning=FALSE, fig.height=12, fig.width=15}
+# Visualise downregulated genes that we found from the systematic review
+mouse_features <- c("Pnrc1", "Otud1", "Igkc", "Rpl21", "Sf1", "Vamp2", "Mdm4", "Srrm2", "Srsf7")
+feature_plots <- lapply(mouse_features, function(gene) {
+  FeaturePlot(filtered_tumour_seurat, features = gene, reduction = "umap", pt.size = 1) +
+    scale_color_viridis_c(option = "magma", limits=c(0, 3)) +
+    labs(y = "UMAP 2", x = "UMAP 1") +
+    ggtitle(gene) 
+})
+
+# Combine all plots (patchwork automatically combines lists)
+degs_umap.plt <- wrap_plots(feature_plots, ncol = 3)  
+degs_umap.plt
+```
+
+# Session Information
+
+```{r}
+sessionInfo()
+```

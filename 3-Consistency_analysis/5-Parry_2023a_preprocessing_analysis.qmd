@@ -1,0 +1,743 @@
+---
+title: "Parry_2023a_preprocessing_analysis"
+author: "Pakorn Sagulkoo"
+format:
+  html:
+    toc: true
+    toc-location: left
+    embed-resources: true
+editor: visual
+---
+
+This source code we preprocessed and analysed single-cell RNA-seq datasets for RT patients from [Parry et. al. (2023)](https://www.nature.com/articles/s41591-022-02113-6). The original study sorted cell types, such as CLL and RT tumour cells, using flow cytometry before single-cell sequencing. Then, the samples were based on the sorted cells.
+
+# Import the relevant packages and set working path directory
+
+```{r, setup, message=FALSE, warning=FALSE}
+# Attach the packages you will need for the analysis.
+library(Seurat)
+library(harmony)
+library(dplyr)
+library(DoubletFinder)
+library(SingleR)
+library(celldex)
+library(sctransform)
+```
+
+```{r}
+# Check root path
+here::here()
+```
+
+# Define paths
+
+```{r}
+# Define paths to load and save 
+path_to_metadata <- here::here("scRNAseq/Parry_2023a/sample_metadata.csv")
+path_to_count_matrices <- here::here("scRNAseq/Parry_2023a/expression_data/")
+path_to_save_obj_lst <- here::here("scRNAseq/Parry_2023a/R_objects/Parry_2023a_seu_lst.rds")
+path_to_save_merged_obj <- here::here("scRNAseq/Parry_2023a/R_objects/Parry_2023a_merged_seu.rds")
+path_to_save_integrated_obj <- here::here("scRNAseq/Parry_2023a/R_objects/Parry_2023a_integrated_seu.rds")
+path_to_save_filtered_integrated_obj <- here::here("scRNAseq/Parry_2023a/R_objects/Parry_2023a_filtered_integrated_seu.rds")
+path_to_save_filtered_tumour_obj <- here::here("scRNAseq/Parry_2023a/R_objects/Parry_2023a_filtered_tumour_seu.rds")
+```
+
+# Load data and functions
+
+```{r, message=FALSE, warning=FALSE}
+# Source functions
+source(here::here("bin/utils.R"))
+```
+
+```{r}
+# Load the sample metadata
+sample_metadata <- read.csv(path_to_metadata)
+DT::datatable(sample_metadata, options = list(scrollX = TRUE))
+```
+
+We will import count matrices and convert them to Seurat objects with quality control and pre-processing.
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Create the objects and collect in a list
+path_to_download <- str_c(path_to_count_matrices, "/", sample_metadata$Run, "/count_matrices/outs/filtered_feature_bc_matrix/")
+seurat.lst <- purrr::pmap(
+  list(path_to_download, 
+       sample_metadata$Run, 
+       sample_metadata$Case, 
+       sample_metadata$histological_type,
+       sample_metadata$Condition, 
+       sample_metadata$Tissue), 
+  function(path, sra_run, case, histological_type, cond, tissue){
+    count_matrix <- Read10X(path)
+    seurat.obj <- CreateSeuratObject(count_matrix, min.cells=10) %>% 
+      RenameCells(add.cell.id = sra_run)
+    seurat.obj[["ref"]] <- "Parry_2023a"
+    seurat.obj[["case_id"]] <- sra_run
+    seurat.obj[["histological_type"]] <- histological_type
+    seurat.obj[["case"]] <- case
+    seurat.obj[["cond"]] <- cond
+    seurat.obj[["tissue"]] <- tissue
+    seurat.obj <- seurat_quality_control(seurat.obj, mad_cutoff=TRUE)
+    seurat.obj <- seurat_preprocess(seurat.obj)
+    if (ncol(seurat.obj) > 500) {  # pass doublet detection if objects have too low cells
+      seurat.obj <- doublet_filter(seurat.obj, sct=FALSE)
+    } else {
+      message("Skipping doublet filtering for object with <500 cells")
+    }
+    return(seurat.obj)
+    }
+  )
+names(seurat.lst) <- sample_metadata$Run
+```
+
+```{r, eval=FALSE}
+# See the preprocessing results
+seurat.lst
+```
+
+```{r, eval=FALSE}
+# Save the list
+saveRDS(seurat.lst, path_to_save_obj_lst)
+```
+
+# Merge and integrate the objects
+
+```{r, eval=FALSE}
+# Merge the objects
+seurat <- seurat.lst[[1]]
+for (i in 2:length(seurat.lst)) {
+  seurat <- merge(x = seurat, y = seurat.lst[[i]])
+  seurat.lst[[i]] <- NA
+}
+rm(seurat.lst)
+```
+
+```{r, eval=FALSE}
+# Save the merged object
+saveRDS(seurat, path_to_save_merged_obj)
+```
+
+We used Harmony package for data integration and batch correction, and annotated the cell types using SingleR package.
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Reanalysis after merging and data integration 
+DefaultAssay(seurat) <- "RNA"
+seurat <- JoinLayers(seurat)
+seurat <- SCTransform(seurat, vst.flavor = "v2", method = "glmGamPoi", verbose = FALSE)
+seurat <- RunPCA(seurat)
+seurat <- RunHarmony(seurat, group.by.vars = "case_id", dims = 1:30) 
+seurat <- RunUMAP(seurat, dims = 1:30, reduction = "harmony")
+seurat <- FindNeighbors(seurat, dims = 1:30, reduction = "harmony")              
+seurat <- FindClusters(
+    seurat,
+    random.seed = 12345,
+    verbose = FALSE,
+    resolution = seq(0.1, 0.9, by = 0.1)
+  )
+seurat <- singleR_cell_annotation(seurat) 
+```
+
+# Save the integrated object
+
+```{r, eval=FALSE}
+# Save the object
+saveRDS(seurat, path_to_save_integrated_obj)
+```
+
+# Visualisation after data integration
+
+```{r}
+# Define path
+path_to_obj <- path_to_save_integrated_obj
+
+# Load the data
+seurat <- readRDS(path_to_obj)
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Plot based on case_id
+case_id.plt <- DimPlot(seurat, reduction = "umap", group.by = "case_id") + 
+  labs(y= "UMAP 2", x = "UMAP 1")
+case_id.plt
+```
+
+```{r, message=FALSE, warning=FALSE, fig.height=10, fig.width=10}
+# Plot based on case, histoloigcal_type, conditions, cell types, and clusters
+case.plt <- DimPlot(seurat, reduction = "umap", group.by = "case") + 
+  labs(y= "UMAP 2", x = "UMAP 1")
+
+ref.plt <- DimPlot(seurat, reduction = "umap", group.by = "ref") + 
+  labs(y= "UMAP 2", x = "UMAP 1")
+
+histo.plt <- DimPlot(seurat, reduction = "umap", group.by = "histological_type") + 
+  labs(y= "UMAP 2", x = "UMAP 1")
+
+cond.plt <- DimPlot(seurat, reduction = "umap", group.by = "cond") + 
+  labs(y= "UMAP 2", x = "UMAP 1")
+
+tissue.plt <- DimPlot(seurat, reduction = "umap", group.by = "tissue") +
+  labs(y= "UMAP 2", x = "UMAP 1")
+
+cell.plt <- DimPlot(seurat, reduction = "umap", group.by = "singleR.labels_main") +
+  labs(y= "UMAP 2", x = "UMAP 1")
+
+(case.plt + ref.plt) / (histo.plt + cond.plt) / (tissue.plt + cell.plt)
+```
+
+```{r, fig.height=7, fig.width=9, warning=FALSE, message=FALSE}
+# Plot based on gene expression
+FeaturePlot(seurat, 
+            features = c("HBM", "HBA1", "CD3D", "CD8A", "CD4", "CD19", "CD79A", "CD14", "NKG7"),
+            reduction = "umap") 
+```
+
+```{r, fig.height=10, fig.width=10, warning=FALSE, message=FALSE}
+# Visualise the varied clusters
+varied_clusters.plt <- plot_varying_cluster_resolution(seurat)
+varied_clusters.plt
+```
+
+```{r, fig.height=4, fig.width=5}
+# Plot seurat clusters at resolution=0.1
+clusters.plt <- DimPlot(seurat, reduction = "umap", group.by = "SCT_snn_res.0.1", raster=FALSE) + 
+  labs(y= "UMAP 2", x = "UMAP 1")
+
+clusters.plt
+```
+
+# Cell noise removal
+
+As there was substantial noise in the UMAP plot, we applied the DBSCAN algorithm, which clusters points based on density and does not rigidly assign all cells to clusters, thereby leaving noisy points unclassified.
+
+```{r, message=FALSE, warning=FALSE}
+# Remove noises using DBSCAN algorithm
+library(dbscan)
+umap <- Embeddings(seurat, "umap")
+db <- dbscan(umap, eps = 1.5, minPts = 800)  # tune eps and minPts
+
+# db$cluster gives 0 for noise/outliers
+keep.cells <- rownames(umap)[db$cluster != 0]
+filtered_seurat <- subset(seurat, cells = keep.cells)
+```
+
+```{r, message=FALSE, warning=FALSE, fig.height=4, fig.width=9}
+# Plot based on cell type
+cell.plt <- DimPlot(filtered_seurat, reduction = "umap", group.by = "singleR.labels_main") + 
+  labs(y= "UMAP 2", x = "UMAP 1")
+
+clusters.plt <- DimPlot(filtered_seurat, 
+                        reduction = "umap", 
+                        group.by = "SCT_snn_res.0.2", 
+                        label = TRUE,
+                        repel = TRUE,
+                        raster=FALSE) + 
+  labs(y= "UMAP 2", x = "UMAP 1") +
+  NoLegend()
+
+cell.plt + clusters.plt
+```
+
+```{r, eval=FALSE}
+# Save the filtered cells
+saveRDS(filtered_seurat, path_to_save_filtered_integrated_obj)
+```
+
+# Tumour cell extraction
+
+```{r, message=FALSE, warning=FALSE}
+# Extract tumour cells
+tumour_seurat <- subset(filtered_seurat, subset = singleR.labels_main == "B cells")
+tumour_seurat <- RunPCA(tumour_seurat)
+tumour_seurat <- FindNeighbors(tumour_seurat, dims = 1:30, reduction = "harmony")              
+tumour_seurat <- FindClusters(tumour_seurat, resolution=0.1)
+```
+
+```{r}
+# Filter out noise cells by manually removal
+#noise_cells <- CellSelector(DimPlot(tumour_seurat))
+noise_cells <- c(
+  "SRR22882965_CGCTGGATCTGTCTCG-1", "SRR22903800_AGACGTTCATCGACGC-1", "SRR22903798_AGACGTTCATCGACGC-1",
+  "SRR22903797_AGACGTTCATCGACGC-1", "SRR22882997_AGACGTTCATCGACGC-1", "SRR22882994_CCTACACCACGCATCG-1", 
+  "SRR22882994_CGCTGGATCTGTCTCG-1", "SRR22882991_AGACGTTCATCGACGC-1", "SRR22882988_CCTACACCACGCATCG-1", 
+  "SRR22882988_CGCTGGATCTGTCTCG-1", "SRR22882985_AGACGTTCATCGACGC-1", "SRR22882965_CCTACACCACGCATCG-1", 
+  "SRR22903796_AGACGTTCATCGACGC-1", "SRR22903795_AGACGTTCATCGACGC-1", "SRR22903793_AGACGTTCATCGACGC-1", 
+  "SRR22903791_AGACGTTCATCGACGC-1", "SRR22903792_AGACGTTCATCGACGC-1", "SRR22883040_CCTACACCACGCATCG-1", 
+  "SRR22883040_CGCTGGATCTGTCTCG-1", "SRR22883031_ACGTCAAGTGCTGTAT-1", "SRR22883031_CCTACACCACGCATCG-1", 
+  "SRR22883032_CCTACACCACGCATCG-1", "SRR22883032_CGCTGGATCTGTCTCG-1", "SRR22883032_CTCCTAGCATGGTCTA-1", 
+  "SRR22883033_CCTACACCACGCATCG-1", "SRR22883034_CCTACACCACGCATCG-1", "SRR22883034_CGCTGGATCTGTCTCG-1", 
+  "SRR22883035_ACGTCAAGTGCTGTAT-1", "SRR22883035_CCTACACCACGCATCG-1", "SRR22883035_CGCTGGATCTGTCTCG-1", 
+  "SRR22883036_ACGTCAAGTGCTGTAT-1", "SRR22883036_CCTACACCACGCATCG-1", "SRR22883036_CGCTGGATCTGTCTCG-1", 
+  "SRR22883037_CCTACACCACGCATCG-1", "SRR22883037_CGCTGGATCTGTCTCG-1", "SRR22883038_ACGTCAAGTGCTGTAT-1", 
+  "SRR22883038_CCTACACCACGCATCG-1", "SRR22883038_CGCTGGATCTGTCTCG-1", "SRR22883039_CCTACACCACGCATCG-1", 
+  "SRR22883039_CGCTGGATCTGTCTCG-1"
+)
+filtered_tumour_seurat <- subset(tumour_seurat, cell = setdiff(colnames(tumour_seurat), noise_cells))
+```
+
+```{r, eval=FALSE}
+# Save the filtered tumour object
+saveRDS(filtered_tumour_seurat, path_to_save_filtered_tumour_obj)
+```
+
+```{r, fig.height=4, fig.width=5}
+# Plot based on clustering
+clusters.plt <- DimPlot(filtered_tumour_seurat, 
+                        reduction = "umap", 
+                        group.by = "seurat_clusters", 
+                        label = TRUE,
+                        repel = TRUE,
+                        raster=FALSE) + 
+  labs(y= "UMAP 2", x = "UMAP 1") +
+  NoLegend()
+
+clusters.plt
+```
+
+From the plot, three main B cell clusters were identified. We have to prove that if all clusters are tumour cells. Then we will identify the marker expression in CLL cells. In CLL cells, the tumour B cells co-express both CD5 and CD23(FCER2).
+
+```{r, message=FALSE, warning=FALSE, fig.height=5, fig.width=15}
+# Visualise co-expression of CD5 and CD23(FCER2)
+features <- c("CD5", "FCER2")
+feature_plots <- lapply(features, function(gene) {
+  FeaturePlot(filtered_tumour_seurat, features = gene, reduction = "umap", pt.size = 1) +
+    scale_color_viridis_c(option = "magma") +
+    labs(y = "UMAP 2", x = "UMAP 1") +
+    ggtitle(gene) 
+})
+
+# Combine all plots (patchwork automatically combines lists)
+wrap_plots(feature_plots, ncol = 3)  
+```
+
+From the plots, all B cell clusters co-expressed in both CD5 and CD23. These B cells are all CLL cells. Next step we will differentiate tumour cells into CLL and RT cells. We have known that RT cells have higher cell proliferation activity than CLL cells. Therefore, we will calculate cell cycle score to each of cluster.
+
+# RT and CLL cell annotation
+
+## Known biomarker identification
+
+We annotated RT and CLL cells based on known biomarkers from [Nadeu et. al. (2022)](https://www.nature.com/articles/s41591-022-01927-8#Sec9).
+
+```{r, message=FALSE, warning=FALSE}
+# Thresholds
+min_log2FC <- 0.3
+alpha <- 0.001
+
+# Calculate markers
+markers <- FindAllMarkers(filtered_tumour_seurat, only.pos = TRUE, logfc.threshold = min_log2FC)
+markers <- markers %>%
+  mutate(cluster = as.character(cluster)) %>%
+  filter(p_val_adj < alpha) %>%
+  arrange(cluster) %>%
+  group_by(cluster) %>%
+  arrange(desc(avg_log2FC), .by_group = TRUE)
+DT::datatable(markers, options = list(scrollX = TRUE))
+```
+
+```{r, message=FALSE, warning=FALSE, fig.height=4, fig.width=5}
+# Dot plot to identify CLL and RT cells
+features <- rev(c("CXCR4", "CD27", "IGHM", "MZB1", "TOP2A", "PCNA", "MKI67", "ENO1", "TCL1A", "MIR155HG"))
+colour_pal <- colorRampPalette(c("#053061", "#2171B5", "white", "#FFD92F", "#A50F15"))(100)
+
+biomark.plt <- DotPlot(filtered_tumour_seurat, features = features, group.by = "seurat_clusters") + 
+  scale_colour_gradientn(colours = colour_pal) +
+  coord_flip()
+
+biomark.plt
+```
+
+Based on known biomarkers identification and cell cycle scoring we then annotated RT and CLL cells for the seurat clusters as the table below.
+
+| Cluster | Markers            | Annotation                  |
+|---------|--------------------|-----------------------------|
+| 0       | CXCR4              | CXCR4hiCD27lo CLL           |
+| 1       | IGHM, MZB1         | MZB1hiIGHMhi CLL            |
+| 2       | TOP2A, PCNA, MKI67 | RT proliferative            |
+| 3       | ENO1, TCL1A        | RT quiescent                |
+| 4       | CD27, MIR155HG     | CXCR4loCD27hiMIR155HGhi CLL |
+
+```{r, message=FALSE, warning=FALSE, fig.height=4, fig.width=7}
+# Plot UMAP for tumour subtypes
+
+# -------------------------------------------------------------------
+# 1. Map Seurat clusters and create the annotation column
+# -------------------------------------------------------------------
+cluster_to_annotation <- c(
+  "0" = "CXCR4hiCD27lo CLL",
+  "1" = "MZB1hiIGHMhi CLL",
+  "2" = "RT proliferative",
+  "3" = "RT quiescent",
+  "4" = "CXCR4loCD27hiMIR155HGhi CLL"
+)
+
+filtered_tumour_seurat$tumour_annotate <- 
+  as.vector(cluster_to_annotation[as.character(filtered_tumour_seurat$seurat_clusters)])
+
+# -------------------------------------------------------------------
+# 2. Set level order
+# -------------------------------------------------------------------
+new_levels <- c(
+  "CXCR4hiCD27lo CLL",
+  "MZB1hiIGHMhi CLL",
+  "RT proliferative",
+  "RT quiescent",
+  "CXCR4loCD27hiMIR155HGhi CLL"
+)
+
+filtered_tumour_seurat$tumour_annotate <- factor(
+  filtered_tumour_seurat$tumour_annotate,
+  levels = new_levels
+)
+
+# -------------------------------------------------------------------
+# 3. Define colours and labels
+# -------------------------------------------------------------------
+new_colours <- c(
+  "#cfc9c9",
+  "mediumorchid3",
+  "#813151",
+  "#d65c7a",
+  "#808080"
+)
+
+custom_labels <- list(
+  bquote(CXCR4^hi~CD27^lo~"CLL"),
+  bquote(MZB1^hi~IGHM^hi~"CLL"),
+  bquote("RT proliferative"),
+  bquote("RT quiescent"),
+  bquote(CXCR4^lo~CD27^hi~MIR155HG^hi~"CLL")
+)
+
+# -------------------------------------------------------------------
+# 4. Plot UMAP
+# -------------------------------------------------------------------
+tumour_subtype.plt <- DimPlot(filtered_tumour_seurat, group.by = "tumour_annotate", pt.size = 0.5) +
+  scale_color_manual(
+    values = new_colours,
+    breaks = new_levels,
+    labels = custom_labels
+  ) +
+  labs(y = "UMAP 2", x = "UMAP 1") +
+  ggtitle("Tumour subtypes")
+
+tumour_subtype.plt
+```
+
+```{r, message=FALSE, warning=FALSE,  fig.height=4, fig.width=7.5}
+# Dot plot based on annotated cells
+biomark.plt <- DotPlot(filtered_tumour_seurat, features=features, group.by = "tumour_annotate") +
+  RotatedAxis() +
+  scale_colour_gradientn(colours = colour_pal) +
+  scale_y_discrete(
+      limits = rev(new_levels),
+      labels = rev(custom_labels)
+    ) +
+  labs(
+    colour = "Average\nExpression",
+    size = "Percent\nExpressed"
+  )
+
+biomark.plt
+```
+
+## Cell cycle scoring
+
+```{r, message=FALSE, warning=FALSE, fig.height=5, fig.width=18}
+# Consider cell cycle genes based on cell cycle upregulation is a hallmark of Richter transformation
+filtered_tumour_seurat <- CellCycleScoring(
+  filtered_tumour_seurat,
+  s.features = cc.genes$s.genes,
+  g2m.features = cc.genes$g2m.genes,
+  set.ident = FALSE
+)
+
+cell_cycle.plt <- DimPlot(filtered_tumour_seurat, group.by = "Phase", pt.size = 1) + labs(y= "UMAP 2", x = "UMAP 1")
+
+umap_s_score <- FeaturePlot(filtered_tumour_seurat, features = "S.Score", pt.size = 1) +
+  scale_color_viridis_c(option = "magma") +
+  labs(title = "S Score", y= "UMAP 2", x = "UMAP 1") 
+  
+umap_g2m_score <- FeaturePlot(filtered_tumour_seurat, features = "G2M.Score", pt.size = 1) +
+  scale_color_viridis_c(option = "magma") +
+  labs(title = "G2M Score", y= "UMAP 2", x = "UMAP 1") 
+
+cell_cycle.plt + umap_s_score + umap_g2m_score
+```
+
+From the cell cycle scoring, we suspect that the right cluster could be RT cells due to high cell cycle scores in G2M and S phases.
+
+# Validation for identified common DEGs
+
+Moreover, we will use our identified biomarkers resulted from our systematic review to confirm if the cluster contains RT cells. We have sets of up- and downregulated DEGs with RP- and RS-rank consistence between RT and CLL conditions. We will show their feature plots.
+
+```{r, message=FALSE, warning=FALSE, fig.height=4, fig.width=25}
+# Dot plot for common DEGs based on annotated cells
+
+path_to_common_up_degs <- here::here("scRNAseq/systematic_review/6-consistency_assessment/overlapping_genes/seurat/3.upregulated_union_rp_rs_consist_degs.txt")
+path_to_common_down_degs <- here::here("scRNAseq/systematic_review/6-consistency_assessment/overlapping_genes/seurat/3.downregulated_union_rp_rs_consist_degs.txt")
+up_genes <- read.table(path_to_common_up_degs, stringsAsFactors = FALSE, header = FALSE)[, 1]
+down_genes <- read.table(path_to_common_down_degs, stringsAsFactors = FALSE, header = FALSE)[, 1]
+features <- c(up_genes, down_genes)
+
+common_degs.plt <- DotPlot(filtered_tumour_seurat, features=features, group.by = "tumour_annotate") +
+  RotatedAxis() +
+  scale_colour_gradientn(colours = colour_pal) +
+  scale_y_discrete(
+      limits = rev(new_levels),
+      labels = rev(custom_labels)
+    ) +
+  labs(
+    colour = "Average\nExpression",
+    size = "Percent\nExpressed"
+  )
+
+common_degs.plt
+```
+
+We can see from the plot that our identified upregulated RT DEGs were consistent mostly with RT proliferative subtypes and partially with RT quiescent subtypes. While downregulated RT DEGs were consistent mostly in both RT subtypes. 
+
+```{r, message=FALSE, warning=FALSE, fig.height=15, fig.width=20}
+# Visualise upregulated genes that we found from the systematic review
+features <- c("HMGA1", "VDAC1", "PPA1", "LDHA", "GGCT", "HSPD1", "IMPDH2", "PAICS", "NME1", "NME2", "COX5A", "SELENOH", "PRDX5", 
+              "ATP5PD", "NPM1", "HSPA8", "MIF", "STMN1", "CACYBP", "MRPL4")
+feature_plots <- lapply(features, function(gene) {
+  FeaturePlot(filtered_tumour_seurat, features = gene, reduction = "umap", pt.size = 1) +
+    scale_color_viridis_c(option = "magma", limits=c(0, 3)) +
+    labs(y = "UMAP 2", x = "UMAP 1") +
+    ggtitle(gene) 
+})
+
+# Combine all plots (patchwork automatically combines lists)
+degs_umap.plt <- wrap_plots(feature_plots, ncol = 5)  
+degs_umap.plt
+```
+
+```{r, message=FALSE, warning=FALSE, fig.height=12, fig.width=15}
+# Visualise downregulated genes that we found from the systematic review
+features <- c("PNRC1", "OTUD1", "IGKC", "RPL21", "SF1", "VAMP2", "MDM4", "SRRM2", "SRSF7")
+feature_plots <- lapply(features, function(gene) {
+  FeaturePlot(filtered_tumour_seurat, features = gene, reduction = "umap", pt.size = 1) +
+    scale_color_viridis_c(option = "magma", limits=c(0, 3)) +
+    labs(y = "UMAP 2", x = "UMAP 1") +
+    ggtitle(gene) 
+})
+
+# Combine all plots (patchwork automatically combines lists)
+degs_umap.plt <- wrap_plots(feature_plots, ncol = 3)  
+degs_umap.plt
+```
+
+From the feature plots in both upregulated and downregulated genes including with subtype annotation, we confirm that the right B cell cluster is RT cells while the other remaining clusters are CLL cells. Then we will anootate these clusters.
+
+```{r, fig.height=4, fig.width=5}
+# Annotate tumour subtypes
+filtered_tumour_seurat[["subtype"]] <- ifelse(filtered_tumour_seurat$seurat_clusters %in% c(2, 3), "RT cell", "CLL cell")
+
+# Plot the subtypes
+subtype.plt <- DimPlot(filtered_tumour_seurat, reduction = "umap", group.by = "subtype") + 
+  labs(y= "UMAP 2", x = "UMAP 1")
+
+subtype.plt
+```
+
+# Pseudobulk gene expression analysis and GSEA
+
+```{r, message=FALSE, warning=FALSE}
+# Import the related libraries in functional enrichment analysis
+library(clusterProfiler)
+library(enrichplot)
+library(msigdbr)
+library(org.Hs.eg.db)
+```
+
+```{r}
+# Define paths to save and load
+path_to_save_dea <- here::here("scRNAseq/Parry_2023a/dea_gsea/Parry_2023a_dea.rds")
+path_to_save_hm_gsea <- here::here("scRNAseq/Parry_2023a/dea_gsea/Parry_2023a_hm_gsea.rds")
+path_to_save_go_gsea <- here::here("scRNAseq/Parry_2023a/dea_gsea/Parry_2023a_go_gsea.rds")
+path_to_save_kegg_gsea <- here::here("scRNAseq/Parry_2023a/dea_gsea/Parry_2023a_kegg_gsea.rds")
+path_to_save_reactome_gsea <- here::here("scRNAseq/Parry_2023a/dea_gsea/Parry_2023a_reactome_gsea.rds")
+path_to_save_wikipath_gsea <- here::here("scRNAseq/Parry_2023a/dea_gsea/Parry_2023a_wikipath_gsea.rds")
+```
+
+## Find biomarkers of B cells between RT and CLL conditions
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Find markers between CLL and RT conditions  
+Idents(filtered_tumour_seurat) <- "subtype" # change the default identity
+filtered_tumour_seurat <- PrepSCTFindMarkers(filtered_tumour_seurat) # Prepare SCT assay for DE testing
+tumour.ge <- FindMarkers(
+  filtered_tumour_seurat,
+  ident.1 = "RT cell",
+  ident.2 = "CLL cell",
+  test.use = "wilcox",
+  only.pos = FALSE,
+  logfc.threshold = 0
+)
+dea.df <- cbind(gene = rownames(tumour.ge), tumour.ge)
+
+# Save gene expression data
+saveRDS(dea.df, path_to_save_dea)
+```
+
+## Gene Set Enrichment Analysis (GSEA)
+
+```{r}
+# Load the saved expression data
+dea.df <- readRDS(path_to_save_dea)
+
+# Manipulate the expression data
+lfc_vector <- dea.df$avg_log2FC # Create a named vector ranked based on the log2 fold change
+names(lfc_vector) <- dea.df$gene
+lfc_vector <- na.omit(lfc_vector) # Omit any NA values
+lfc_vector <- sort(lfc_vector, decreasing = TRUE) # Sort the log2 fold change in descending order
+```
+
+### Hallmark
+
+```{r, message=FALSE, warning=FALSE}
+# Hallmark
+HM_gsea <- HM_GSEA(lfc_vector)
+
+# Collect the HM GSEA result
+HM_GSEA.result <- HM_gsea@result
+HM_GSEA_selected.result <- HM_GSEA.result %>%
+  as_tibble() %>%
+  dplyr::select(c(Description, NES, pvalue, p.adjust))
+
+DT::datatable(HM_GSEA_selected.result, options = list(scrollX = TRUE))
+```
+
+We will explore the trends of other non-significant hallmark terms reported from other studies such as Nadeu et al. (2022) and Hing et al (2023) (in original results). From those studies, the terms such as E2F targets, Myc targets, and oxidative phosphorylation (OXPHOS) were upregulated.
+
+```{r, message=FALSE, warning=FALSE, fig.height=4, fig.width=18}
+# GSEA plot for HALLMARK_E2F_TARGETS, HALLMARK_MYC_TARGETS_V1, and HALLMARK_OXIDATIVE_PHOSPHORYLATION
+
+E2F_gsea.plt <- gseaplot(HM_gsea, 
+                          by = "runningScore", 
+                          title = "HALLMARK_E2F_TARGETS", 
+                          geneSetID = "HALLMARK_E2F_TARGETS",
+                          base_size = 10) +
+  theme(axis.text.x = element_text(angle = 0, hjust = 1))
+
+Myc_gsea.plt <- gseaplot(HM_gsea, 
+                          by = "runningScore", 
+                          title = "HALLMARK_MYC_TARGETS_V1", 
+                          geneSetID = "HALLMARK_MYC_TARGETS_V1",
+                          base_size = 10) +
+  theme(axis.text.x = element_text(angle = 0, hjust = 1))
+
+OXPHOS_gsea.plt <- gseaplot(HM_gsea, 
+                          by = "runningScore", 
+                          title = "HALLMARK_OXIDATIVE_PHOSPHORYLATION", 
+                          geneSetID = "HALLMARK_OXIDATIVE_PHOSPHORYLATION",
+                          base_size = 10) +
+  theme(axis.text.x = element_text(angle = 0, hjust = 1))
+
+E2F_gsea.plt + Myc_gsea.plt + OXPHOS_gsea.plt
+```
+
+### GO:BP
+
+```{r, message=FALSE, warning=FALSE}
+# GO:BP
+GOBP_gsea <- GO_GSEA(lfc_vector)
+
+# Collect the GSEA result
+GOBP_GSEA.result <- GOBP_gsea@result
+GOBP_GSEA_selected.result <- GOBP_GSEA.result %>%
+  as_tibble() %>%
+  dplyr::select(c(Description, NES, pvalue, p.adjust))
+
+DT::datatable(GOBP_GSEA_selected.result, options = list(scrollX = TRUE))
+```
+
+We will explore the trends of other GO:BP terms reported from other studies such as Nadeu et al. (2022) and Hing et al (2023) (in the original results). From those studies, the terms such as OXPHOS and mitochondrial translation were upregulated while BCR signalling was downregulated.
+
+```{r, message=FALSE, warning=FALSE, fig.height=4, fig.width=18}
+# GSEA plot for GOBP_OXIDATIVE_PHOSPHORYLATION, GOBP_B_CELL_RECEPTOR_SIGNALING_PATHWAY, and GOBP_MITOCHONDRIAL_TRANSLATION
+
+OXPHOS_GO_gsea.plt <- gseaplot(GOBP_gsea, 
+                          by = "runningScore", 
+                          title = "GOBP_OXIDATIVE_PHOSPHORYLATION", 
+                          geneSetID = "GOBP_OXIDATIVE_PHOSPHORYLATION",
+                          base_size = 10) +
+  theme(axis.text.x = element_text(angle = 0, hjust = 1))
+
+BCR_GO_gsea.plt <- gseaplot(GOBP_gsea, 
+                          by = "runningScore", 
+                          title = "GOBP_B_CELL_RECEPTOR_SIGNALING_PATHWAY", 
+                          geneSetID = "GOBP_B_CELL_RECEPTOR_SIGNALING_PATHWAY",
+                          base_size = 10) +
+  theme(axis.text.x = element_text(angle = 0, hjust = 1))
+
+mitochondrial_GO_gsea.plt <- gseaplot(GOBP_gsea, 
+                          by = "runningScore", 
+                          title = "GOBP_MITOCHONDRIAL_TRANSLATION", 
+                          geneSetID = "GOBP_MITOCHONDRIAL_TRANSLATION",
+                          base_size = 10) +
+  theme(axis.text.x = element_text(angle = 0, hjust = 1))
+
+OXPHOS_GO_gsea.plt + BCR_GO_gsea.plt + mitochondrial_GO_gsea.plt
+```
+
+We also performed GSEA with additional enrichment systems such as KEGG pathways, Reactome, and WikiPath.
+
+### KEGG pathway
+
+```{r, message=FALSE, warning=FALSE}
+# KEGG pathway
+KEGG_gsea <- KEGG_GSEA(lfc_vector)
+
+# Collect the HM GSEA result
+KEGG_GSEA.result <- KEGG_gsea@result
+KEGG_GSEA_selected.result <- KEGG_GSEA.result %>%
+  as_tibble() %>%
+  dplyr::select(c(Description, NES, pvalue, p.adjust))
+
+DT::datatable(KEGG_GSEA_selected.result, options = list(scrollX = TRUE))
+```
+
+### Reactome
+
+```{r, message=FALSE, warning=FALSE}
+# REACTOME
+REACTOME_gsea <- REACTOME_GSEA(lfc_vector)
+
+# Collect the HM GSEA result
+REACTOME_GSEA.result <- REACTOME_gsea@result
+REACTOME_GSEA_selected.result <- REACTOME_GSEA.result %>%
+  as_tibble() %>%
+  dplyr::select(c(Description, NES, pvalue, p.adjust))
+
+DT::datatable(REACTOME_GSEA_selected.result, options = list(scrollX = TRUE))
+```
+
+### WikiPath
+
+```{r, message=FALSE, warning=FALSE}
+# WikiPath
+WIKIPATH_gsea <- WIKIPATH_GSEA(lfc_vector)
+
+# Collect the HM GSEA result
+WIKIPATH_GSEA.result <- WIKIPATH_gsea@result
+WIKIPATH_GSEA_selected.result <- WIKIPATH_GSEA.result %>%
+  as_tibble() %>%
+  dplyr::select(c(Description, NES, pvalue, p.adjust))
+
+DT::datatable(WIKIPATH_GSEA_selected.result, options = list(scrollX = TRUE))
+```
+
+```{r, eval=FALSE}
+# Save gene expression and GSEA data
+saveRDS(HM_gsea, path_to_save_hm_gsea)
+saveRDS(GOBP_gsea, path_to_save_go_gsea)
+saveRDS(KEGG_gsea, path_to_save_kegg_gsea)
+saveRDS(REACTOME_gsea, path_to_save_reactome_gsea)
+saveRDS(WIKIPATH_gsea, path_to_save_wikipath_gsea)
+```
+
+# Session Information
+
+```{r}
+sessionInfo()
+```
