@@ -24,6 +24,7 @@ path_to_save_all_lst <- paste0(path_to_object, "/all_seu_lst.rds")
 path_to_save_merged_obj <- paste0(path_to_object, "/merged_seu.rds")
 path_to_save_downstream_merged_obj <- paste0(path_to_object, "/downstream_merged_seu.rds")
 path_to_save_integrated_lst <- paste0(path_to_object, "/integrated_seu_lst.rds")
+path_to_save_selected_integrated_obj <- paste0(path_to_object, "/integrated_seu.rds")
 
 # Load each data sets and collect into one list
 path_lst <- c(path_to_penter_lst, path_to_nadeu_lst, path_to_rejeski_lst, path_to_hing_lst, path_to_parry_a_lst, path_to_parry_b_lst, path_to_rigo_lst)
@@ -113,3 +114,8 @@ for (name in names(vars_list)) {
 
 # Save the integrated list
 saveRDS(harmony_results, path_to_save_integrated_lst)
+
+# Data integration with reference (study) as a batch (we proved it from the following sections)
+selected_integrated_seurat <- harmony_results$ref
+saveRDS(selected_integrated_seurat, path_to_save_selected_integrated_obj)
+
