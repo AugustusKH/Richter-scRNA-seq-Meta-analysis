@@ -28,11 +28,14 @@ We also provide additional objects obtained from human single-cell data integrat
 We list the essential packages used in this study, along with the versions used, below. Additional packages used for the individual method are shown on `Session Information` at the end of the Quarto HTML reports. 
 
 * [Seurat 5.3.1 ](https://satijalab.org/seurat/articles/get_started_v5_new)
+* sctransform_0.4.2
 * [harmony 1.2.4](https://github.com/immunogenomics/harmony)
 * [SingleR 2.8.0](https://github.com/dviraran/SingleR)
-* [dplyr 1.1.4]
-* [tibble 3.3.0]
-* [ggplot2 4.0.1]
+* [DESeq2 1.46.0](https://github.com/thelovelab/DESeq2)
+* [monocle3 1.4.26](https://cole-trapnell-lab.github.io/monocle3/)
+* dplyr 1.1.4
+* tibble 3.3.0
+* ggplot2 4.0.1
 
 ## Publication article
 
