@@ -27,10 +27,9 @@ We also provide additional objects obtained from human single-cell data integrat
 
 We list the essential packages used in this study, along with the versions used, below.
 
+## Publication article
 
-
-
-
+Further details in both methodology and results are described in our article via this [link]()
 
 
 
