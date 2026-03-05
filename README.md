@@ -43,7 +43,9 @@ We list the essential packages used in this study, along with the versions used,
 * dplyr 1.1.4
 * tibble 3.3.0
 * ggplot2 4.0.1
+* pheatmap 1.0.13
 * ComplexHeatmap 2.22.0
+* DT 0.34.0
 
 ## Publication article
 
