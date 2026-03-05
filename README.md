@@ -16,4 +16,4 @@ All analysed datasets can be downloaded from [https://doi.org/10.5281/zenodo.188
   unzip raw_count_matrices.zip
   cd raw_count_matrices
 ```
-
+This command can be used similar to in case other zip files downloading such as `mouse_objects.zip` and `microenvironment.zip`.
