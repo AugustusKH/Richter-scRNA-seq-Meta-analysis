@@ -16,4 +16,14 @@ All analysed datasets can be downloaded from [https://doi.org/10.5281/zenodo.188
   unzip raw_count_matrices.zip
   cd raw_count_matrices
 ```
-This command can be used similar to in case other zip files downloading such as `mouse_objects.zip` and `microenvironment.zip`.
+This command can also be used to download other ZIP files, such as `mouse_objects.zip` and `microenvironment.zip`. These files contain analysed Seurat objects derived from mouse scRNA-seq data and integrated human non-tumour cell datasets, respectively. 
+
+We also provide other objects obtained from human single-cell data integration as rds files (e.g. `all_seu_lst.rds`, `merged_seu.rds`, and `integrated_seu.rds`). These files can be downloaded from the link or via the command line without file extraction as below:
+
+```bash
+  wget [https://zenodo.org/records/18874149/files/raw_count_matrices.zip](https://zenodo.org/records/18874149/files/integrated_seu.rds
+```
+
+
+
+
