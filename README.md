@@ -25,7 +25,7 @@ We also provide additional objects obtained from human single-cell data integrat
 ```
 ## Important packages
 
-We list the essential packages used in this study, along with the versions used, below.
+We list the essential packages used in this study, along with the versions used, below. Additional packages used for the individual method are shown on `Session Information` at the end of the Quarto HTML reports. 
 
 ## Publication article
 
