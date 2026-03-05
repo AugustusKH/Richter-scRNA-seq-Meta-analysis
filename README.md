@@ -1,6 +1,6 @@
 # Integrative single-cell analysis in Richter's Transformation
 
-This repository contains codes and scripts used for bulk and single-cell RNA-seq (scRNA-seq) integrative analysis in chronic lymphocytic leukaemia (CLL) with Richter’s transformation (RT) progression. All code and scripts are publicly available to ensure reproducibility.
+This repository contains codes and scripts used for bulk and single-cell RNA-seq (scRNA-seq) integrative analysis in chronic lymphocytic leukaemia (CLL) with Richter’s transformation (RT) progression. All code and scripts are publicly available to ensure reproducibility and contribution to future RT research.
 
 ## Background
 
