@@ -5,6 +5,10 @@ Herein, we performed an integrative single-cell data analysis with batch correct
 
 Microenvironmental and cell-cell communication analyses indicated that monocytes represent a key driver of RT progression, characterised by enhanced BAFF signalling between tumour and monocytic cells. This interaction was supported by the upregulation of TNFSF13B within the nurse-like cell (NLC)-like monocyte subtype. An imbalance in tissue sampling between RT and CLL conditions was also observed, which may impose limitations on TME analyses. Nevertheless, taken together, our integrated analysis extends the biological understanding of RT by enabling comprehensive characterisation of both tumour and microenvironmental cell populations, highlighting potential implications for future therapeutic strategies.
 
+<p align="center">
+  <img src="figures/scRNA-seq_RT_workflow.png" width="600" title="Analysis Workflow">
+</p>
+
 All code and scripts used throughout this study are included in this repository and are publicly available to ensure reproducibility.
 
 ## Data accessibility
