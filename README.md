@@ -33,9 +33,17 @@ We list the essential packages used in this study, along with the versions used,
 * [SingleR 2.8.0](https://github.com/dviraran/SingleR)
 * [DESeq2 1.46.0](https://github.com/thelovelab/DESeq2)
 * [monocle3 1.4.26](https://cole-trapnell-lab.github.io/monocle3/)
+* [CellChat 2.2.0](https://github.com/jinworks/CellChat)
+* clusterProfiler 4.14.6
+* msigdbr 25.1.1
+* org.Hs.eg.db 3.20.0
+* EnhancedVolcano 1.24.0
+* UpSetR 1.4.0
+* stringr 1.6.0
 * dplyr 1.1.4
 * tibble 3.3.0
 * ggplot2 4.0.1
+* ComplexHeatmap 2.22.0
 
 ## Publication article
 
