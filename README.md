@@ -21,9 +21,25 @@ This command can also be used to download other ZIP files, such as `mouse_object
 We also provide additional objects obtained from human single-cell data integration as `.rds` files (e.g. `all_seu_lst.rds`, `merged_seu.rds`, and `integrated_seu.rds`). These files can be downloaded either from the link above or directly via the command line, as shown below, without requiring extraction.
 
 ```bash
-  wget [https://zenodo.org/records/18874149/files/raw_count_matrices.zip](https://zenodo.org/records/18874149/files/integrated_seu.rds
+  wget https://zenodo.org/records/18874149/files/integrated_seu.rds
 ```
-## Package versions
+## Important packages
+
+We list the essential packages used in this study, along with the versions used, below.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
