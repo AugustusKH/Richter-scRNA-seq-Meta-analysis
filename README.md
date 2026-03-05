@@ -9,4 +9,11 @@ All code and scripts used throughout this study are included in this repository 
 
 ## Data accessibility
 
-All analysed datasets can be downloaded from [https://doi.org/10.5281/zenodo.18874149]. There are 6 main available files. The first file is raw count matrices including metadata for individual bulk and single-cell transcriptomic studies. 
+All analysed datasets can be downloaded from [https://doi.org/10.5281/zenodo.18874149]. There are 6 main available files. The first file is raw count matrices including metadata for individual bulk and single-cell transcriptomic studies. The file can be downloaded directly from the Zenodo link or via the command line below:
+
+```bash
+  wget https://zenodo.org/records/18874149/files/raw_count_matrices.zip
+  unzip raw_count_matrices.zip
+  cd raw_count_matrices
+```
+
