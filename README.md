@@ -27,6 +27,8 @@ We also provide additional objects obtained from human single-cell data integrat
 
 We list the essential packages used in this study, along with the versions used, below. Additional packages used for the individual method are shown on `Session Information` at the end of the Quarto HTML reports. 
 
+* [Seurat 5.3.1 ](https://satijalab.org/seurat/articles/get_started_v5_new)
+
 ## Publication article
 
 Further details in both methodology and results are described in our article via this [link]()
