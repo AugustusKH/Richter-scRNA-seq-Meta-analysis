@@ -251,7 +251,7 @@ new_colours <- c(
 )
 
 custom_labels <- list(
-  bquote(CXCR4^lo~CD27^hi~"CLL"), bquote("quiescent CLL"), bquote(CXCR4^lo~CD27^hi~"CLL"), bquote(SLC22A5^hi~"CLL"), 
+  bquote(CXCR4^hi~CD27^lo~"CLL"), bquote("quiescent CLL"), bquote(CXCR4^lo~CD27^hi~"CLL"), bquote(SLC22A5^hi~"CLL"), 
   bquote("quiescent RT"), bquote(CCND2^hi~"RT"), bquote(BCAT1^hi~CCND2^hi~"RT"), bquote("quiescent_to_low-proliferative RT"), 
   bquote("low-proliferative RT"), bquote("intermediate-proliferative RT"), bquote("intermediate_to_high-proliferative RT"), 
   bquote("high-proliferative RT"), bquote("plasma cell"), bquote("non-B cell lymphocyte"), bquote("ciliated cell")
@@ -325,6 +325,3 @@ ggsave(filename=paste0(path_to_save_figure, "/tumour_subtype_dot.png"), plot=com
 ```{r}
 sessionInfo()
 ```
-
-
-
