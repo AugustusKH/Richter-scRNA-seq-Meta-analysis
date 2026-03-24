@@ -1,0 +1,883 @@
+---
+title: "Hing_2023_mouse_cell_cell_communication"
+author: "Pakorn Sagulkoo"
+format:
+  html:
+    toc: true
+    toc-location: left
+    embed-resources: true
+editor: visual
+---
+
+We have analysed in human integrated scRNA-seq dataset with several methods such as tumour and microenvironmental cell and cell-cell communication. In this section, we analysed cell-cell interaction in the Hing mouse dataset to compare the result with human integrated dataset.
+
+# Import the relevant packages and set working path directory
+
+```{r, setup, message=FALSE, warning=FALSE}
+# Attach the packages you will need for the analysis.
+library(Seurat)
+library(harmony)
+library(dplyr)
+library(tibble)
+library(sctransform)
+library(SingleR)
+library(celldex)
+library(cowplot)
+library(CellChat)
+library(ComplexHeatmap)
+```
+
+```{r}
+# Check root path
+here::here()
+```
+
+# Define paths
+
+```{r}
+# Define paths to load and save
+path_to_merged_obj <- here::here("scRNAseq/Hing_2023_GSE183426/R_objects/Hing_2023_GSE183426_merged_seu.rds")
+path_to_cell_annotat_ref <- here::here("scRNAseq/Hing_2023_GSE183426/ImmGenData_ref.rds")
+path_to_save_integrated_obj <- here::here("scRNAseq/individual_analysis/cell_cell/R_objects/hing_mouse_integrated_seu.rds")
+path_to_save_annotated_obj <- here::here("scRNAseq/individual_analysis/cell_cell/R_objects/hing_mouse_annotated_seu.rds")
+path_to_save_filtered_obj <- here::here("scRNAseq/individual_analysis/cell_cell/R_objects/hing_mouse_filtered_seu.rds")
+path_to_save_cll_obj <- here::here("scRNAseq/individual_analysis/cell_cell/R_objects/hing_mouse_cll_seu.rds")
+path_to_save_rt_obj <- here::here("scRNAseq/individual_analysis/cell_cell/R_objects/hing_mouse_rt_seu.rds") 
+path_to_save_cll_cellchat <- here::here("scRNAseq/individual_analysis/cell_cell/R_objects/hing_mouse_cll_cellchat.rds") 
+path_to_save_rt_cellchat <- here::here("scRNAseq/individual_analysis/cell_cell/R_objects/hing_mouse_rt_cellchat.rds")
+path_to_save_merged_cellchat_list <- here::here("scRNAseq/individual_analysis/cell_cell/R_objects/hing_mouse_merged_cellchat_lst.rds") 
+path_to_save_merged_cellchat <- here::here("scRNAseq/individual_analysis/cell_cell/R_objects/hing_mouse_merged_cellchat.rds") 
+path_to_save_figure <- here::here("figures")
+```
+
+# Load data and functions
+
+```{r, message=FALSE, warning=FALSE}
+# Source functions
+source(here::here("bin/utils.R"))
+```
+
+```{r, eval=FALSE}
+# Load the merge dataset
+merged_seurat <- readRDS(path_to_merged_obj)
+```
+
+# Data integration
+
+We integrated the mouse datasets with keeping only Eu-hTCL1 and Eu-hPRMT5/hTCL1 models that represent CLL and RT.
+
+```{r, eval=FALSE}
+# Set the limit to 15 GB (15 * 1024^2 bytes)
+options(future.globals.maxSize = 15 * 1024^3)
+```
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Data integration and reprocessing 
+DefaultAssay(merged_seurat) <- "RNA"
+merged_seurat$ref <- "Hing_2023" # correct Hing_2022 to Hing_2023
+integrated_seurat <- subset(merged_seurat, subset = model %in% c("Eµ-hPRMT5/hTCL1", "Eµ-hTCL1"))
+integrated_seurat <- JoinLayers(integrated_seurat)
+integrated_seurat <- SCTransform(integrated_seurat, vst.flavor = "v2", method = "glmGamPoi", verbose = FALSE)
+integrated_seurat <- RunPCA(integrated_seurat)
+integrated_seurat <- RunHarmony(integrated_seurat, group.by.vars = "case_id", dims = 1:30) 
+integrated_seurat <- RunUMAP(integrated_seurat, dims = 1:30, reduction = "harmony")
+integrated_seurat <- FindNeighbors(integrated_seurat, dims = 1:30, reduction = "harmony")              
+integrated_seurat <- FindClusters(
+    integrated_seurat,
+    random.seed = 12345,
+    verbose = FALSE,
+    resolution = seq(0.1, 2, by = 0.1)
+  )
+
+# Cell annotation
+ref <- readRDS(path_to_cell_annotat_ref)
+integrated_seurat <- singleR_cell_annotation(integrated_seurat, ref=ref, annotation = "both") 
+
+# Save the integrated object
+saveRDS(integrated_seurat, path_to_save_integrated_obj)
+```
+
+# Visualisation after data integration
+
+```{r, message=FALSE, warning=FALSE, fig.height=4, fig.width=16}
+# Plot based on case_id, conditions, and cell types
+integrated_seurat <- readRDS(path_to_save_integrated_obj)
+
+group_by <- c("case_id", "model", "singleR.labels_main")
+umap_plots <- lapply(group_by, function (group){
+  DimPlot(integrated_seurat, 
+          reduction = "umap", 
+          group.by = group, 
+          pt.size = 2,
+          repel=TRUE,
+          raster=TRUE, 
+          label=TRUE) +
+    labs(y= "UMAP 2", x = "UMAP 1")
+})
+
+integrated_umap.plt <- wrap_plots(umap_plots, ncol=3)
+integrated_umap.plt
+```
+
+```{r, message=FALSE, warning=FALSE, fig.height=4, fig.width=16}
+# Plot based on clusters
+group_by <- c("SCT_snn_res.0.1", "SCT_snn_res.0.2", "SCT_snn_res.0.3")
+umap_plots <- lapply(group_by, function (group){
+  DimPlot(integrated_seurat, 
+          reduction = "umap", 
+          group.by = group, 
+          pt.size = 2,
+          repel=TRUE,
+          raster=TRUE, 
+          label=TRUE) +
+    labs(y= "UMAP 2", x = "UMAP 1")
+})
+
+integrated_umap.plt <- wrap_plots(umap_plots, ncol=3)
+integrated_umap.plt
+```
+
+```{r, fig.height=7, fig.width=9, warning=FALSE, message=FALSE}
+# Plot based on gene expression
+FeaturePlot(integrated_seurat, 
+            features = c("Hbb-bt", "Hba-a1", "Cd3d", "Cd8a", "Cd4", "Cd19", "Cd79a", "Cd14", "Ncr1"),
+            reduction = "umap") 
+```
+
+# Cell type annotation
+
+We manually annotated main cell types based on SingleR annotation and marker feature plots.
+
+```{r, eval=FALSE}
+# Define new cluster labels
+new.cluster.ids <- c("Cd8+ T cell", "Tumour cell", "NK cell", "Tumour cell", "Cd4+ T cell", "Tumour cell", "Tumour cell", 
+                     "Monocyte", "Cd8+ T cell", "Tumour cell", "Tumour cell", "Tumour cell", "Tumour cell", "Tumour cell", "Tumour cell", 
+                     "Tumour cell", "Cd8+ T cell", "Tumour cell", "Cd8+ T cell", "Tumour cell", "NK cell", "Tumour cell", 
+                     "Erythrocyte", "Tumour cell")
+
+# Map these to the cluster identities (i.e., Idents of the Seurat object)
+Idents(integrated_seurat) <- "SCT_snn_res.0.3"
+names(new.cluster.ids) <- levels(integrated_seurat)
+
+# Now map cluster IDs to the manual labels
+integrated_seurat$level1_annotate <- plyr::mapvalues(
+  x = as.character(Idents(integrated_seurat)),
+  from = names(new.cluster.ids),
+  to = new.cluster.ids
+)
+```
+
+```{r, fig.height=3, fig.width=18}
+# Dot plot for biomarker expression in each cell type
+integrated_seurat <- readRDS(path_to_save_annotated_obj)
+
+# 1. Create meta-data to concatenate clusters and cell types
+integrated_seurat$cluster_celltype <- paste0("C", integrated_seurat$SCT_snn_res.0.3, " - ", integrated_seurat$level1_annotate)
+
+# 2. Extract a data frame from Seurat dot plot
+features = c("Cd3d", "Cd8a", "Cd4", "Ncr1", "Pdcd1", "Foxp3", "Cd19", "Itgam", "Cd177", "Cd14", "Hbb-bt")
+dotdata <- DotPlot(
+  integrated_seurat,
+  features = features,
+  group.by = "cluster_celltype"  
+)$data
+
+# 3. Preprocess the data frame compatible with ggplot
+dotdata <- dotdata %>% 
+  tidyr::separate(col = id, into = c("cluster", "celltype"), sep = " - ") %>%
+  dplyr::mutate(proportion=pct.exp/100) %>%
+  dplyr::rename(
+    gene_name = features.plot,
+    expression = avg.exp.scaled
+  )
+
+# 4. Factor levels
+dotdata$cluster <- factor(dotdata$cluster, levels = unique(dotdata$cluster))
+dotdata$gene_name <- factor(dotdata$gene_name, levels = rev(features))
+celltype_order <- c("Tumour cell", "Cd8+ T cell", "Cd4+ T cell", "NK cell", "Monocyte", "Erythrocyte")
+dotdata$celltype <- factor(dotdata$celltype, levels = celltype_order)
+
+# 5. ggplot for the dot plot
+biomarker_dot.plt <- ggplot(dotdata, aes(x = cluster, 
+                                         y = gene_name, 
+                                         color = expression,
+                                         size = proportion)) +
+  geom_point() +
+  scale_size_area() +
+  scale_color_viridis_c() +
+  facet_wrap(~celltype, scales = "free_x", nrow=1) +
+  theme_minimal(base_size = 8) +
+  theme(strip.background = ggh4x::element_part_rect(side = "b", colour = "black", fill = "transparent")) +
+  theme(axis.text.y = element_text(face = "italic")) +
+  labs(x = NULL, y = NULL, size = "Proportion", color = "Expression")
+
+biomarker_dot.plt
+```
+
+```{r, eval=FALSE}
+# Save the annotated object
+saveRDS(integrated_seurat, path_to_save_annotated_obj)
+```
+
+We filtered out contaminated RBCs before downstream analysis.
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Filtered out RBCs with reprocessing
+filtered_seurat <- subset(integrated_seurat, subset = level1_annotate != "Erythrocyte")
+filtered_seurat <- SCTransform(filtered_seurat, vst.flavor = "v2", method = "glmGamPoi", verbose = FALSE)
+filtered_seurat <- RunPCA(filtered_seurat)
+filtered_seurat <- RunUMAP(filtered_seurat, dims = 1:30, reduction = "harmony")
+filtered_seurat <- FindNeighbors(filtered_seurat, dims = 1:30, reduction = "harmony")        
+filtered_seurat <- FindClusters(
+  filtered_seurat,
+  random.seed = 12345,
+  verbose = FALSE,
+  resolution = seq(0.1, 2, by = 0.1)
+)
+
+# Save the object
+saveRDS(filtered_seurat, path_to_save_filtered_obj)
+```
+
+# Prepare the data for CellChat
+
+As CellChat prefers the normalised RNA slot, we changed the default assay from SCT to RNA instead.
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Set assay default to RNA and normalise the values
+DefaultAssay(filtered_seurat) <- "RNA"
+Idents(filtered_seurat) <- "level1_annotate"
+filtered_seurat <- NormalizeData(filtered_seurat, normalization.method="LogNormalize", scale.factor=10000)
+```
+
+After that, we split the object into RT and CLL according the CellChat recommendation.
+
+```{r, eval=FALSE}
+# Split the object based on the conditions
+rt_seurat <- subset(filtered_seurat, subset = model == "Eµ-hPRMT5/hTCL1") 
+cll_seurat <- subset(filtered_seurat, subset = model == "Eµ-hTCL1")
+
+# Save the objects
+saveRDS(rt_seurat, path_to_save_rt_obj)
+saveRDS(cll_seurat, path_to_save_cll_obj)
+```
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Set the ligand-receptor interaction database
+future::plan(sequential) # do sequential
+CellChatDB <- CellChatDB.mouse
+CellChatDB.use <- subsetDB(CellChatDB, search = "Secreted Signaling", key = "annotation") # use Secreted Signaling
+```
+
+# Cell-cell communication analysis with CellChat
+
+For cell–cell interaction analysis, CLL and RT samples were analysed separately as individual objects. The results were subsequently integrated to enable joint visualisation and comparative analysis.
+
+## CLL cell-cell communication
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Create cellchat object
+data.input <- cll_seurat[["RNA"]]$data
+labels <- Idents(cll_seurat)
+meta <- data.frame(labels = labels, row.names = names(labels)) # create a dataframe of the cell labels
+cellchat <- createCellChat(object = cll_seurat, group.by = "ident", assay = "RNA")
+cellchat@DB <- CellChatDB.use
+
+# Preprocessing the expression data for cell-cell communication analysis
+cellchat <- subsetData(cellchat) 
+#future::plan("multisession", workers = 4) # do parallel
+cellchat <- identifyOverExpressedGenes(cellchat, do.fast = FALSE)
+cellchat <- identifyOverExpressedInteractions(cellchat)
+
+# Compute the communication probability and infer cellular communication network
+cellchat <- computeCommunProb(cellchat, type = "triMean")
+cellchat <- filterCommunication(cellchat, min.cells = 10) # filter out few cells in certain cell groups
+cellchat <- computeCommunProbPathway(cellchat) # Infer a signaling pathway level
+cellchat <- aggregateNet(cellchat) # Calculate the aggregated cell-cell communication network
+cellchat <- netAnalysis_computeCentrality(cellchat, slot.name = "netP") # Compute the network centrality scores
+
+# Save the cellchat object
+saveRDS(cellchat, path_to_save_cll_cellchat)
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Import the cellchat object
+cellchat <- readRDS(path_to_save_cll_cellchat)
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Plot the number/weight of interactions
+groupSize <- as.numeric(table(cellchat@idents))
+par(mfrow = c(1,2), xpd=TRUE)
+netVisual_circle(cellchat@net$count, vertex.weight = groupSize, weight.scale = TRUE, label.edge= FALSE, title.name = "Number of interactions")
+netVisual_circle(cellchat@net$weight, vertex.weight = groupSize, weight.scale = TRUE, label.edge= FALSE, title.name = "Interaction weights/strength")
+```
+
+```{r}
+# Plot the signaling sending to each cell group
+mat <- cellchat@net$weight
+par(mfrow = c(2, 3), xpd=TRUE)
+for (i in 1:nrow(mat)) {
+  mat2 <- matrix(0, nrow = nrow(mat), ncol = ncol(mat), dimnames = dimnames(mat))
+  mat2[i, ] <- mat[i, ]
+  netVisual_circle(mat2, vertex.weight = groupSize, weight.scale = TRUE, edge.weight.max = max(mat), title.name = rownames(mat)[i])
+}
+```
+
+```{r}
+# Plot the signaling received by each cell group
+mat <- t(cellchat@net$weight)
+par(mfrow = c(2, 3), xpd=TRUE)
+for (i in 1:nrow(mat)) {
+  mat2 <- matrix(0, nrow = nrow(mat), ncol = ncol(mat), dimnames = dimnames(mat))
+  mat2[i, ] <- mat[i, ]
+  netVisual_circle(mat2, vertex.weight = groupSize, weight.scale = TRUE, edge.weight.max = max(mat), title.name = rownames(mat)[i])
+}
+```
+
+We showed all ligand-receptor interactions found in all cell types for the CLL conditions.
+
+```{r, fig.height=6, fig.width=11, message=FALSE, warning=FALSE}
+# Show all the significant interactions (L-R pairs) 
+cll_bubble.plt <- netVisual_bubble(cellchat, remove.isolate = FALSE) +
+  labs(x = "Source-target cell type", y = "Ligand-receptor interaction") +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1),
+    axis.title.x = element_text(size = 10, margin = margin(t = 12)), 
+    axis.title.y = element_text(size = 10, angle = 90, margin = margin(r = 20)), 
+    plot.margin = unit(c(1, 1, 1, 1), "cm") # Add space around plot so titles aren't cut off
+  ) 
+
+cll_bubble.plt
+```
+
+```{r, eval=FALSE}
+# Save the bubble plot
+ggsave(filename=paste0(path_to_save_figure, "/cellchat_mouse_cll_bubble.png"), plot=cll_bubble.plt, dpi=500, height=6, width=11)
+```
+
+From the bubble plot, we can see that the tumour cells in the CLL conditions had the autocrine signalling via Mif->(Cd74+Cxcr4) and Mif->(Cd74+Cd44) interactions. The tumour cells also received with the same interaction from NK and T cells. Moreover, the tumour cells were received via Lgals9-based interactions from monocytes.
+
+For the role as the sender, the tumour cells interacted with Cd4+ T cells via Il16->Cd4.
+
+```{r, fig.height=8, fig.width=8}
+# Plot the chord diagram
+cll_chord.plt <- netVisual_chord_gene(cellchat, lab.cex = 0.5,legend.pos.y = 30) 
+```
+
+```{r, eval=FALSE}
+# Save the chord plot
+png(filename = paste0(path_to_save_figure, "/cellchat_mouse_cll_chord.png"), 
+    width = 8, height = 8, units = "in", res = 500)
+
+par(mar = c(1, 1, 1, 1)) 
+netVisual_chord_gene(cellchat, lab.cex = 0.5, legend.pos.y = 30)
+
+dev.off()
+```
+
+```{r, fig.height=4, fig.width=5, message=FALSE, warning=FALSE}
+# Visualize dominant senders (sources) and receivers (targets) in a 2D space
+dominant_2d.plt <- netAnalysis_signalingRole_scatter(cellchat)
+dominant_2d.plt
+```
+
+From the plot in the CLL condition, we can see that NK and Cd8+ T cells contributed the most as the senders while tumour cells provided the highest role as the receivers.
+
+```{r, fig.height=6, fig.width=11, message=FALSE, warning=FALSE}
+# Signaling role analysis on the aggregated cell-cell communication network from all signaling pathways
+out_heatmap.plt <- netAnalysis_signalingRole_heatmap(cellchat, pattern = "outgoing")
+in_heatmap.plt <- netAnalysis_signalingRole_heatmap(cellchat, pattern = "incoming")
+commun_heatmap.plt <- out_heatmap.plt + in_heatmap.plt
+commun_heatmap.plt
+```
+
+```{r, eval=FALSE}
+# Save the heatmap
+png(filename = paste0(path_to_save_figure, "/cellchat_mouse_cll_heatmap.png"), width = 11, height = 6, units = "in", res = 500)
+draw(commun_heatmap.plt)
+dev.off()
+```
+
+## RT cell-cell communication
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Create cellchat object
+data.input <- rt_seurat[["RNA"]]$data
+labels <- Idents(rt_seurat)
+meta <- data.frame(labels = labels, row.names = names(labels)) # create a dataframe of the cell labels
+cellchat <- createCellChat(object = rt_seurat, group.by = "ident", assay = "RNA")
+cellchat@DB <- CellChatDB.use
+
+# Preprocessing the expression data for cell-cell communication analysis
+cellchat <- subsetData(cellchat) 
+#future::plan("multisession", workers = 4) # do parallel
+cellchat <- identifyOverExpressedGenes(cellchat, do.fast = FALSE)
+cellchat <- identifyOverExpressedInteractions(cellchat)
+
+# Compute the communication probability and infer cellular communication network
+cellchat <- computeCommunProb(cellchat, type = "triMean")
+cellchat <- filterCommunication(cellchat, min.cells = 10) # filter out few cells in certain cell groups
+cellchat <- computeCommunProbPathway(cellchat) # Infer a signaling pathway level
+cellchat <- aggregateNet(cellchat) # Calculate the aggregated cell-cell communication network
+cellchat <- netAnalysis_computeCentrality(cellchat, slot.name = "netP") # Compute the network centrality scores
+
+# Save the cellchat object
+saveRDS(cellchat, path_to_save_rt_cellchat)
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Import the cellchat object
+cellchat <- readRDS(path_to_save_rt_cellchat)
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Plot the number/weight of interactions
+groupSize <- as.numeric(table(cellchat@idents))
+par(mfrow = c(1,2), xpd=TRUE)
+netVisual_circle(cellchat@net$count, vertex.weight = groupSize, weight.scale = TRUE, label.edge= FALSE, title.name = "Number of interactions")
+netVisual_circle(cellchat@net$weight, vertex.weight = groupSize, weight.scale = TRUE, label.edge= FALSE, title.name = "Interaction weights/strength")
+```
+
+```{r}
+# Plot the signaling sending to each cell group
+mat <- cellchat@net$weight
+par(mfrow = c(2, 3), xpd=TRUE)
+for (i in 1:nrow(mat)) {
+  mat2 <- matrix(0, nrow = nrow(mat), ncol = ncol(mat), dimnames = dimnames(mat))
+  mat2[i, ] <- mat[i, ]
+  netVisual_circle(mat2, vertex.weight = groupSize, weight.scale = TRUE, edge.weight.max = max(mat), title.name = rownames(mat)[i])
+}
+```
+
+```{r}
+# Plot the signaling received by each cell group
+mat <- t(cellchat@net$weight)
+par(mfrow = c(2, 3), xpd=TRUE)
+for (i in 1:nrow(mat)) {
+  mat2 <- matrix(0, nrow = nrow(mat), ncol = ncol(mat), dimnames = dimnames(mat))
+  mat2[i, ] <- mat[i, ]
+  netVisual_circle(mat2, vertex.weight = groupSize, weight.scale = TRUE, edge.weight.max = max(mat), title.name = rownames(mat)[i])
+}
+```
+
+We showed all ligand-receptor interactions found in all cell types for the RT conditions.
+
+```{r, fig.height=6, fig.width=11, message=FALSE, warning=FALSE}
+# Show all the significant interactions (L-R pairs) 
+rt_bubble.plt <- netVisual_bubble(cellchat, remove.isolate = FALSE) +
+  labs(x = "Source-target cell type", y = "Ligand-receptor interaction") +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1),
+    axis.title.x = element_text(size = 10, margin = margin(t = 12)), 
+    axis.title.y = element_text(size = 10, angle = 90, margin = margin(r = 20)), 
+    plot.margin = unit(c(1, 1, 1, 1), "cm") # Add space around plot so titles aren't cut off
+  ) 
+
+rt_bubble.plt
+```
+
+```{r, eval=FALSE}
+# Save the bubble plot
+ggsave(filename=paste0(path_to_save_figure, "/cellchat_mouse_rt_bubble.png"), plot=rt_bubble.plt, dpi=500, height=6, width=11)
+```
+
+Compared with CLL, LR interactions in RT were decreased, supporting that RT tumour become more autonomous.
+
+```{r, fig.height=8, fig.width=8}
+# Plot the chord diagram
+rt_chord.plt <- netVisual_chord_gene(cellchat, lab.cex = 0.5,legend.pos.y = 30) 
+```
+
+```{r, eval=FALSE}
+# Save the chord plot
+png(filename = paste0(path_to_save_figure, "/cellchat_mouse_rt_chord.png"), 
+    width = 8, height = 8, units = "in", res = 500)
+
+par(mar = c(1, 1, 1, 1)) 
+netVisual_chord_gene(cellchat, lab.cex = 0.5, legend.pos.y = 30)
+
+dev.off()
+```
+
+```{r, fig.height=4, fig.width=5, message=FALSE, warning=FALSE}
+# Visualize dominant senders (sources) and receivers (targets) in a 2D space
+dominant_2d.plt <- netAnalysis_signalingRole_scatter(cellchat)
+dominant_2d.plt
+```
+
+Compared with the CLL condition, tumour cells in RT become less incoming and outgoing interactions while monocytes and NK cells are dominant in incoming and outgoing interactions, respectively.
+
+```{r, fig.height=6, fig.width=11, message=FALSE, warning=FALSE}
+# Signaling role analysis on the aggregated cell-cell communication network from all signaling pathways
+out_heatmap.plt <- netAnalysis_signalingRole_heatmap(cellchat, pattern = "outgoing")
+in_heatmap.plt <- netAnalysis_signalingRole_heatmap(cellchat, pattern = "incoming")
+commun_heatmap.plt <- out_heatmap.plt + in_heatmap.plt
+commun_heatmap.plt
+```
+
+```{r, eval=FALSE}
+# Save the heatmap
+png(filename = paste0(path_to_save_figure, "/cellchat_mouse_rt_heatmap.png"), width = 11, height = 6, units = "in", res = 500)
+draw(commun_heatmap.plt)
+dev.off()
+```
+
+## Comparative analysis
+
+After we analysed the cell-cell communication in both CLL and RT conditions with the different cellchat objects, we performed the comparative analysis for the interaction in this section.
+
+```{r, eval=FALSE}
+# Load the objects and merge into one object
+cll_cellchat <- readRDS(path_to_save_cll_cellchat)
+rt_cellchat <- readRDS(path_to_save_rt_cellchat)
+cellchat.lst <- list(CLL = cll_cellchat, RT = rt_cellchat)
+cellchat <- mergeCellChat(cellchat.lst, add.names = names(cellchat.lst)) 
+
+# Save the files
+saveRDS(cellchat.lst, path_to_save_merged_cellchat_list)
+saveRDS(cellchat, path_to_save_merged_cellchat)
+```
+
+### Number of interactions and interaction strength
+
+```{r}
+# Load the merged object and list
+cellchat.lst <- readRDS(path_to_save_merged_cellchat_list)
+cellchat <- readRDS(path_to_save_merged_cellchat)
+cll_cellchat <- cellchat.lst$CLL
+rt_cellchat <- cellchat.lst$RT
+
+# Compare the total number of interactions and interaction strength
+assigned_colours <- c("#1465AC", "#B31B21")
+compare_number.plt <- compareInteractions(cellchat, show.legend = FALSE, group = c(1,2), color.use = assigned_colours)
+compare_weight.plt <- compareInteractions(cellchat, show.legend = FALSE, group = c(1,2), measure = "weight", 
+                                          color.use = assigned_colours)
+compare_number.plt + compare_weight.plt
+```
+
+```{r}
+# Circle plots for differential number of interactions or interaction strength
+par(mfrow = c(1,2), xpd=TRUE)
+netVisual_diffInteraction(cellchat, weight.scale = TRUE)
+netVisual_diffInteraction(cellchat, weight.scale = TRUE, measure = "weight")
+```
+
+For the circle plots representing the number of interactions and interaction strength, the red and blue line indicate the edge for RT and CLL, respectively. In comparison between RT and CLL, the tumour cells had the higher number of interactions and the strength.
+
+```{r, message=FALSE, warning=FALSE}
+# Heatmap for differential number of interactions or interaction strength
+compare_number_heatmap.plt <- netVisual_heatmap(cellchat)
+compare_weigth_heatmap.plt <- netVisual_heatmap(cellchat, measure = "weight")
+compare_heatmap.plt <- compare_number_heatmap.plt + compare_weigth_heatmap.plt
+compare_heatmap.plt
+```
+
+```{r, eval=FALSE}
+# Save the figure
+png(filename = paste0(path_to_save_figure, "/cellchat_mouse_compare_interaction_heatmap.png"), width = 8, height = 4, units = "in", res = 500)
+draw(compare_heatmap.plt)
+dev.off()
+```
+
+In the heatmaps, colour intensity represents relative changes in both the number of interactions and interaction strength between the RT and CLL conditions. In addition, the top coloured bar plot represents the column-wise sum of the absolute relative values, indicating the overall interaction magnitude for receiver cell types. The coloured bar on the right shows the row-wise summation, representing the overall interaction magnitude for sender cell types.
+
+```{r, message=FALSE, warning=FALSE}
+# Circle plots compare the number of interactions 
+weight.max <- getMaxWeight(cellchat.lst, attribute = c("idents","count"))
+par(mfrow = c(1,2), xpd=TRUE)
+for (i in 1:length(cellchat.lst)) {
+  netVisual_circle(cellchat.lst[[i]]@net$count, 
+                   weight.scale = TRUE, label.edge= FALSE, 
+                   edge.weight.max = weight.max[2], edge.width.max = 12, 
+                   title.name = paste0("Number of interactions - ", names(cellchat.lst)[i]))
+}
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Circle plots compare the interaction strength 
+par(mfrow = c(1,2), xpd=TRUE)
+for (i in 1:length(cellchat.lst)) {
+  netVisual_circle(cellchat.lst[[i]]@net$weight, 
+                   weight.scale = TRUE, label.edge= FALSE, edge.width.max = 12, 
+                   title.name = paste0("Interaction strength - ", names(cellchat.lst)[i]))
+}
+```
+
+For the heatmaps and circle pltos, tumour cells in the RT conditions exhibited lower interaction activity while kept communications to monocytes and NK cells.
+
+```{r, message=FALSE, warning=FALSE, fig.height=3, fig.width=8}
+# Identify cell populations with significant changes in sending or receiving signals
+num.link <- sapply(cellchat.lst, function(x) {rowSums(x@net$count) + colSums(x@net$count)-diag(x@net$count)})
+weight.MinMax <- c(min(num.link), max(num.link)) # control the dot size in the different datasets
+gg <- list()
+for (i in 1:length(cellchat.lst)) {
+  gg[[i]] <- netAnalysis_signalingRole_scatter(cellchat.lst[[i]], title = names(cellchat.lst)[i], weight.MinMax = weight.MinMax) +
+    xlim(0, 0.4) +  
+    ylim(0, 0.6)    
+}
+patchwork::wrap_plots(plots = gg)
+```
+
+Consistent with the previous plots, tumour cells in RT reduced incoming interactions while monocytes become predominant instead. NK cells remained predominant in outgoing interactions for both conditions.
+
+### Signalling comparison
+
+```{r, message=FALSE, warning=FALSE, fig.height=7, fig.width=13}
+# Identify the signaling changes of specific cell populations
+assigned_colours <- c("Shared" = "black",           
+                      "CLL specific" = "#1465AC",   
+                      "RT specific" = "#B31B21")    
+
+tumour_signal_diff.plt <- netAnalysis_signalingChanges_scatter(cellchat, idents.use = "Tumour cell")
+monocyte_signal_diff.plt <- netAnalysis_signalingChanges_scatter(cellchat, idents.use = "Monocyte")
+nk_signal_diff.plt <- netAnalysis_signalingChanges_scatter(cellchat, idents.use = "NK cell")
+cd4_signal_diff.plt <- netAnalysis_signalingChanges_scatter(cellchat, idents.use = "Cd4+ T cell")
+cd8_signal_diff.plt <- netAnalysis_signalingChanges_scatter(cellchat, idents.use = "Cd8+ T cell")
+
+all_plots <- list(tumour_signal_diff.plt, 
+                  monocyte_signal_diff.plt, 
+                  nk_signal_diff.plt, 
+                  cd4_signal_diff.plt, 
+                  cd8_signal_diff.plt)
+
+all_plots_coloured <- lapply(all_plots, function(p) {
+  p + 
+    scale_color_manual(values = assigned_colours) +
+    scale_fill_manual(values = assigned_colours)
+})
+
+patchwork::wrap_plots(plots = all_plots_coloured)
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Compare the overall information flow of each signaling pathway or ligand-receptor pair
+assigned_colours <- c("#1465AC", "#B31B21")
+
+compare_inform_stacked.plt <- rankNet(cellchat, 
+                                      mode = "comparison", 
+                                      measure = "weight", 
+                                      sources.use = NULL, 
+                                      targets.use = NULL, 
+                                      stacked = TRUE, 
+                                      do.stat = TRUE,
+                                      color.use = assigned_colours) +
+  theme(legend.position = "bottom")
+
+compare_inform_bar.plt <- rankNet(cellchat, 
+                                  mode = "comparison", 
+                                  measure = "weight", 
+                                  sources.use = NULL, 
+                                  targets.use = NULL, 
+                                  stacked = FALSE, 
+                                  do.stat = TRUE,
+                                  color.use = assigned_colours) +
+  theme(legend.position = "bottom")
+
+compare_inform_stacked.plt + compare_inform_bar.plt
+```
+
+```{r, fig.height=6, fig.width=12, message=FALSE, warning=FALSE}
+# Compare outgoing and incoming signalling patterns 
+pathway.union <- union(cll_cellchat@netP$pathways, rt_cellchat@netP$pathways)
+cll_outgoing_heatmap <- netAnalysis_signalingRole_heatmap(cll_cellchat, pattern = "outgoing", signaling = pathway.union, title = "CLL", width = 5, height = 6)
+rt_outgoing_heatmap <- netAnalysis_signalingRole_heatmap(rt_cellchat, pattern = "outgoing", signaling = pathway.union, title = "RT", width = 5, height = 6)
+cll_incoming_heatmap <- netAnalysis_signalingRole_heatmap(cll_cellchat, pattern = "incoming", signaling = pathway.union, title = "CLL", width = 5, height = 6)
+rt_incoming_heatmap <- netAnalysis_signalingRole_heatmap(rt_cellchat, pattern = "incoming", signaling = pathway.union, title = "RT", width = 5, height = 6)
+
+draw(cll_outgoing_heatmap + cll_incoming_heatmap + rt_outgoing_heatmap + rt_incoming_heatmap, ht_gap = unit(0.5, "cm"))
+```
+
+```{r, eval=FALSE}
+# Save the heatmap
+png(filename = paste0(path_to_save_figure, "/cellchat_mouse_compare_signal_heatmap.png"), width = 12, height = 6, units = "in", res = 500)
+draw(cll_outgoing_heatmap + cll_incoming_heatmap + rt_outgoing_heatmap + rt_incoming_heatmap, ht_gap = unit(0.5, "cm"))
+dev.off()
+```
+
+```{r}
+# Circle plot for the CXCL signalling in the RT conditions
+pathways.show <- c("CXCL") 
+par(mfrow=c(1,1))
+netVisual_aggregate(rt_cellchat, 
+                    signaling = pathways.show, 
+                    layout = "circle", 
+                    signaling.name = pathways.show)
+```
+
+The results showed increased CXCL signalling in the RT condition, with NK cells acting as receivers and monocytes as the primary senders.
+
+### Ligand-receptor analysis
+
+```{r, fig.height=7, fig.width=17, message=FALSE, warning=FALSE}
+# Identify dysfunctional signaling by comparing the communication probabities 
+compare_prob_bubble.plt <- netVisual_bubble(cellchat, 
+                                            comparison = c(1, 2), 
+                                            remove.isolate = TRUE)
+
+x_axis_labels <- levels(compare_prob_bubble.plt$data$source.target)
+axis_colours <- rep("black", length(x_axis_labels))
+axis_colours[str_detect(x_axis_labels, "\\(CLL\\)")] <- "#1465AC"
+axis_colours[str_detect(x_axis_labels, "\\(RT\\)")] <- "#B31B21"
+
+compare_prob_bubble.plt <- compare_prob_bubble.plt +
+  labs(x = "Source-target cell type", y = "Ligand-receptor interaction") +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1, colour = axis_colours),
+    axis.title.x = element_text(size = 10, margin = margin(t = 12)), 
+    axis.title.y = element_text(size = 10, angle = 90, margin = margin(r = 20)), 
+    plot.margin = unit(c(1, 1, 1, 1), "cm") # Add space around plot so titles aren't cut off
+  ) 
+
+compare_prob_bubble.plt
+```
+
+```{r, fig.height=5, fig.width=8, message=FALSE, warning=FALSE}
+# Identify dysfunctional signaling by comparing the communication probabities of tumour->non-tumour and non-tumour->tumour
+compare_tumour_prob_bubble.plt <- netVisual_bubble_custom(cellchat, 
+                                                          comparison = c(1, 2), 
+                                                          focus.cell = "Tumour cell", 
+                                                          remove.isolate = TRUE)
+
+compare_tumour_prob_bubble.plt$data <- compare_tumour_prob_bubble.plt$data[!is.na(compare_tumour_prob_bubble.plt$data$prob), ]
+compare_tumour_prob_bubble.plt$data$source.target <- droplevels(compare_tumour_prob_bubble.plt$data$source.target)
+x_axis_labels <- levels(compare_tumour_prob_bubble.plt$data$source.target)
+axis_colours <- rep("black", length(x_axis_labels))
+axis_colours[str_detect(x_axis_labels, "\\(CLL\\)")] <- "#1465AC"
+axis_colours[str_detect(x_axis_labels, "\\(RT\\)")] <- "#B31B21"
+
+compare_tumour_prob_bubble.plt <- compare_tumour_prob_bubble.plt + 
+  labs(x = "Source-target cell type", y = "Ligand-receptor interaction") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1, colour = axis_colours),
+        axis.title.x = element_text(size = 10, margin = margin(t = 12)), 
+        axis.title.y = element_text(size = 10, angle = 90, margin = margin(r = 20)), 
+        plot.margin = unit(c(1, 1, 1, 1), "cm")) # Add space around plot so titles aren't cut off
+
+compare_tumour_prob_bubble.plt
+```
+
+```{r, eval=FALSE}
+# Save the bubble plots
+ggsave(filename=paste0(path_to_save_figure, "/cellchat_mouse_compare_all_bubble.png"), 
+       plot=compare_prob_bubble.plt, dpi=500, height=7, width=17)
+ggsave(filename=paste0(path_to_save_figure, "/cellchat_mouse_compare_tumour_bubble.png"), 
+       plot=compare_tumour_prob_bubble.plt, dpi=500, height=5, width=8)
+```
+
+The bubble plot showed that, in the RT condition, LR interactions are less than in CLL.
+
+```{r, fig.height=7, fig.width=7, message=FALSE, warning=FALSE}
+# Identify dysfunctional signaling from and to tumour
+group_tumour <- "Tumour cell"  
+all_groups <- levels(cellchat@idents)
+group_others <- setdiff(all_groups, group_tumour)
+
+plot_outgoing <- netVisual_bubble(cellchat, 
+                                  sources.use = group_tumour, 
+                                  targets.use = all_groups, 
+                                  comparison = c(1, 2), 
+                                  remove.isolate = TRUE) +
+                  labs(title = "Signaling from Tumour") + 
+                  theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1))
+
+plot_incoming <- netVisual_bubble(cellchat, 
+                                  sources.use = group_others, 
+                                  targets.use = group_tumour, 
+                                  comparison = c(1, 2), 
+                                  remove.isolate = TRUE) +
+                  labs(title = "Signaling to Tumour") + 
+                  theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1))
+
+tumour_bubble.plt <- plot_outgoing / plot_incoming
+tumour_bubble.plt
+```
+
+```{r, fig.height=9, fig.width=20, message=FALSE, warning=FALSE}
+# Identify the up-regulated (increased) and down-regulated (decreased) signaling ligand-receptor pairs
+LR_up_prob_bubble.plt <- netVisual_bubble(cellchat, 
+                                          max.dataset = 2,
+                                          comparison = c(1, 2),
+                                          title.name = "Increased signaling in RT", 
+                                          angle.x = 45, 
+                                          remove.isolate = TRUE)
+
+LR_down_prob_bubble.plt <- netVisual_bubble(cellchat, 
+                                            max.dataset = 1,
+                                            comparison = c(1, 2),
+                                            title.name = "Decreased signaling in RT", 
+                                            angle.x = 45, 
+                                            remove.isolate = TRUE)
+
+LR_up_prob_bubble.plt / LR_down_prob_bubble.plt
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Calculate differential expression analysis between RT and CLL for each cell type
+pos.dataset = "RT"
+features.name = paste0(pos.dataset, ".merged")
+cellchat <- identifyOverExpressedGenes(cellchat, 
+                                       group.dataset = "datasets", 
+                                       pos.dataset = pos.dataset, 
+                                       features.name = features.name, 
+                                       only.pos = FALSE, 
+                                       thresh.pc = 0.1, thresh.fc = 0.05,thresh.p = 0.05, 
+                                       do.fast = FALSE,
+                                       group.DE.combined = FALSE) 
+net <- netMappingDEG(cellchat, features.name = features.name, variable.all = TRUE)
+net.up <- subsetCommunication(cellchat, net = net, datasets = "RT",ligand.logFC = 0.05, receptor.logFC = NULL)
+net.down <- subsetCommunication(cellchat, net = net, datasets = "CLL",ligand.logFC = -0.05, receptor.logFC = NULL)
+```
+
+```{r, eval=FALSE}
+# Save the ligand-receptor interaction results as the csv files
+write.csv(
+  net.up, 
+  file = here::here("scRNAseq/meta_analysis/supplm_file/cellchat_mouse_rt_up_lr.csv"), 
+  row.names = FALSE,   # Removes the row numbers 
+  na = ""              # Makes empty cells blank instead of writing "NA"
+)
+
+write.csv(
+  net.down, 
+  file = here::here("scRNAseq/meta_analysis/supplm_file/cellchat_mouse_rt_down_lr.csv"), 
+  row.names = FALSE,   # Removes the row numbers 
+  na = ""              # Makes empty cells blank instead of writing "NA"
+)
+```
+
+```{r, fig.height=9, fig.width=18, message=FALSE, warning=FALSE}
+# Plot the bubble plot 
+pairLR.use.up = net.up[, "interaction_name", drop = FALSE]
+LR_up_dea_bubble.plt <- netVisual_bubble(cellchat, 
+                        pairLR.use = pairLR.use.up, 
+                        comparison = c(1,2),
+                        angle.x = 45, 
+                        remove.isolate = TRUE, 
+                        title.name = "Up-regulated signaling in RT")
+                        
+pairLR.use.down = net.down[, "interaction_name", drop = FALSE]
+LR_down_dea_bubble.plt <- netVisual_bubble(cellchat, 
+                        pairLR.use = pairLR.use.down, 
+                        comparison = c(1,2),
+                        angle.x = 45, 
+                        remove.isolate = TRUE, 
+                        title.name = "Down-regulated signaling in RT")
+
+LR_up_dea_bubble.plt / LR_down_dea_bubble.plt
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Violin plot ligand-receptor expression in CXCL signalling
+cellchat@meta$datasets = factor(cellchat@meta$datasets, levels = c("CLL", "RT")) # set factor level
+plotGeneExpression(cellchat, signaling = "CXCL", split.by = "datasets", colors.ggplot = TRUE, type = "violin")
+```
+
+# Session Information
+
+```{r}
+sessionInfo()
+```
+
+
+
+
