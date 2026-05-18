@@ -973,65 +973,10 @@ euclidean_similar <- 1 / (1 + euclidean_dist)
 
 ```{r, fig.height=5.4, fig.width=5.8}
 # Plot with viridis colour palette
-pheatmap(
-  pearson_cor,
-  main = "Pearson correlation (significant genes)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12         
-)
-
-pheatmap(
-  spearman_cor,
-  main = "Spearman correlation (significant genes)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12 
-)
-
-pheatmap(
-  cosine_similar,
-  main = "Cosine similarity (significant genes)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12 
-)
-
-pheatmap(
-  euclidean_similar,
-  main = "Euclidean similarity (significant genes)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12 
-)
+plot_auto_contrast_heatmap(pearson_cor, "Pearson correlation (significant genes)")
+plot_auto_contrast_heatmap(spearman_cor, "Spearman correlation (significant genes)")
+plot_auto_contrast_heatmap(cosine_similar, "Cosine similarity (significant genes)")
+plot_auto_contrast_heatmap(euclidean_similar, "Euclidean similarity (significant genes)")
 ```
 
 ### Upregulated genes
@@ -1100,65 +1045,10 @@ euclidean_similar <- 1 / (1 + euclidean_dist)
 
 ```{r, fig.height=5.4, fig.width=5.8}
 # Plot with viridis colour palette
-pheatmap(
-  pearson_cor,
-  main = "Pearson correlation (upregulated DEGs)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12         
-)
-
-pheatmap(
-  spearman_cor,
-  main = "Spearman correlation (upregulated DEGs)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12 
-)
-
-pheatmap(
-  cosine_similar,
-  main = "Cosine similarity (upregulated DEGs)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12 
-)
-
-pheatmap(
-  euclidean_similar,
-  main = "Euclidean similarity (upregulated DEGs)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12 
-)
+plot_auto_contrast_heatmap(pearson_cor, "Pearson correlation (upregulated DEGs)")
+plot_auto_contrast_heatmap(spearman_cor, "Spearman correlation (upregulated DEGs)")
+plot_auto_contrast_heatmap(cosine_similar, "Cosine similarity (upregulated DEGs)")
+plot_auto_contrast_heatmap(euclidean_similar, "Euclidean similarity (upregulated DEGs)")
 ```
 
 ### Downregulated genes
@@ -1227,65 +1117,10 @@ euclidean_similar <- 1 / (1 + euclidean_dist)
 
 ```{r, fig.height=5.4, fig.width=5.8}
 # Plot with viridis colour palette
-pheatmap(
-  pearson_cor,
-  main = "Pearson correlation (downregulated DEGs)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12         
-)
-
-pheatmap(
-  spearman_cor,
-  main = "Spearman correlation (downregulated DEGs)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12 
-)
-
-pheatmap(
-  cosine_similar,
-  main = "Cosine similarity (downregulated DEGs)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12 
-)
-
-pheatmap(
-  euclidean_similar,
-  main = "Euclidean similarity (downregulated DEGs)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12 
-)
+plot_auto_contrast_heatmap(pearson_cor, "Pearson correlation (downregulated DEGs)")
+plot_auto_contrast_heatmap(spearman_cor, "Spearman correlation (downregulated DEGs)")
+plot_auto_contrast_heatmap(cosine_similar, "Cosine similarity (downregulated DEGs)")
+plot_auto_contrast_heatmap(euclidean_similar, "Euclidean similarity (downregulated DEGs)")
 ```
 
 ### Upregulated GSEA
@@ -1400,65 +1235,10 @@ euclidean_similar <- 1 / (1 + euclidean_dist)
 
 ```{r, fig.height=5.4, fig.width=5.8}
 # Plot with viridis colour palette
-pheatmap(
-  pearson_cor,
-  main = "Pearson Correlation (upregulated GSEA)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12
-)
-
-pheatmap(
-  spearman_cor,
-  main = "Spearman Correlation (upregulated GSEA)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12
-)
-
-pheatmap(
-  cosine_similar,
-  main = "Cosine similarity (upregulated GSEA)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12
-)
-
-pheatmap(
-  euclidean_similar,
-  main = "Euclidean similarity (upregulated GSEA)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12
-)
+plot_auto_contrast_heatmap(pearson_cor, "Pearson correlation (upregulated GSEA)")
+plot_auto_contrast_heatmap(spearman_cor, "Spearman correlation (upregulated GSEA)")
+plot_auto_contrast_heatmap(cosine_similar, "Cosine similarity (upregulated GSEA)")
+plot_auto_contrast_heatmap(euclidean_similar, "Euclidean similarity (upregulated GSEA)")
 ```
 
 ### Downregulated GSEA
@@ -1573,65 +1353,10 @@ euclidean_similar <- 1 / (1 + euclidean_dist)
 
 ```{r, fig.height=5.4, fig.width=5.8}
 # Plot with viridis colour palette
-pheatmap(
-  pearson_cor,
-  main = "Pearson Correlation (downregulated GSEA)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12
-)
-
-pheatmap(
-  spearman_cor,
-  main = "Spearman Correlation (downregulated GSEA)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12
-)
-
-pheatmap(
-  cosine_similar,
-  main = "Cosine similarity (downregulated GSEA)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12
-)
-
-pheatmap(
-  euclidean_similar,
-  main = "Euclidean similarity (downregulated GSEA)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12
-)
+plot_auto_contrast_heatmap(pearson_cor, "Pearson correlation (downregulated GSEA)")
+plot_auto_contrast_heatmap(spearman_cor, "Spearman correlation (downregulated GSEA)")
+plot_auto_contrast_heatmap(cosine_similar, "Cosine similarity (downregulated GSEA)")
+plot_auto_contrast_heatmap(euclidean_similar, "Euclidean similarity (downregulated GSEA)")
 ```
 
 ## GSEA summarisation
@@ -2216,65 +1941,10 @@ euclidean_similar <- 1 / (1 + euclidean_dist)
 
 ```{r, fig.height=5.8, fig.width=6.2}
 # Plot with viridis colour palette
-pheatmap(
-  pearson_cor,
-  main = "Pearson correlation (significant genes)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12         
-)
-
-pheatmap(
-  spearman_cor,
-  main = "Spearman correlation (significant genes)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12 
-)
-
-pheatmap(
-  cosine_similar,
-  main = "Cosine similarity (significant genes)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12 
-)
-
-pheatmap(
-  euclidean_similar,
-  main = "Euclidean similarity (significant genes)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12 
-)
+plot_auto_contrast_heatmap(pearson_cor, "Pearson correlation (significant genes)")
+plot_auto_contrast_heatmap(spearman_cor, "Spearman correlation (significant genes)")
+plot_auto_contrast_heatmap(cosine_similar, "Cosine similarity (significant genes)")
+plot_auto_contrast_heatmap(euclidean_similar, "Euclidean similarity (significant genes)")
 ```
 
 ### Upregulated genes
@@ -2337,65 +2007,10 @@ euclidean_similar <- 1 / (1 + euclidean_dist)
 
 ```{r, fig.height=5.8, fig.width=6.2}
 # Plot with viridis colour palette
-pheatmap(
-  pearson_cor,
-  main = "Pearson correlation (upregulated DEGs)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12         
-)
-
-pheatmap(
-  spearman_cor,
-  main = "Spearman correlation (upregulated DEGs)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12 
-)
-
-pheatmap(
-  cosine_similar,
-  main = "Cosine similarity (upregulated DEGs)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12 
-)
-
-pheatmap(
-  euclidean_similar,
-  main = "Euclidean similarity (upregulated DEGs)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12 
-)
+plot_auto_contrast_heatmap(pearson_cor, "Pearson correlation (upregulated DEGs)")
+plot_auto_contrast_heatmap(spearman_cor, "Spearman correlation (upregulated DEGs)")
+plot_auto_contrast_heatmap(cosine_similar, "Cosine similarity (upregulated DEGs)")
+plot_auto_contrast_heatmap(euclidean_similar, "Euclidean similarity (upregulated DEGs)")
 ```
 
 ### Downregulated genes
@@ -2458,65 +2073,10 @@ euclidean_similar <- 1 / (1 + euclidean_dist)
 
 ```{r, fig.height=5.8, fig.width=6.2}
 # Plot with viridis colour palette
-pheatmap(
-  pearson_cor,
-  main = "Pearson correlation (downregulated DEGs)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12         
-)
-
-pheatmap(
-  spearman_cor,
-  main = "Spearman correlation (downregulated DEGs)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12 
-)
-
-pheatmap(
-  cosine_similar,
-  main = "Cosine similarity (downregulated DEGs)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12 
-)
-
-pheatmap(
-  euclidean_similar,
-  main = "Euclidean similarity (downregulated DEGs)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12 
-)
+plot_auto_contrast_heatmap(pearson_cor, "Pearson correlation (downregulated DEGs)")
+plot_auto_contrast_heatmap(spearman_cor, "Spearman correlation (downregulated DEGs)")
+plot_auto_contrast_heatmap(cosine_similar, "Cosine similarity (downregulated DEGs)")
+plot_auto_contrast_heatmap(euclidean_similar, "Euclidean similarity (downregulated DEGs)")
 ```
 
 ### Upregulated GSEA
@@ -2627,65 +2187,10 @@ euclidean_similar <- 1 / (1 + euclidean_dist)
 
 ```{r, fig.height=5.8, fig.width=6.2}
 # Plot with viridis colour palette
-pheatmap(
-  pearson_cor,
-  main = "Pearson Correlation (upregulated GSEA)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12
-)
-
-pheatmap(
-  spearman_cor,
-  main = "Spearman Correlation (upregulated GSEA)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12
-)
-
-pheatmap(
-  cosine_similar,
-  main = "Cosine similarity (upregulated GSEA)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12
-)
-
-pheatmap(
-  euclidean_similar,
-  main = "Euclidean similarity (upregulated GSEA)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12
-)
+plot_auto_contrast_heatmap(pearson_cor, "Pearson correlation (upregulated GSEA)")
+plot_auto_contrast_heatmap(spearman_cor, "Spearman correlation (upregulated GSEA)")
+plot_auto_contrast_heatmap(cosine_similar, "Cosine similarity (upregulated GSEA)")
+plot_auto_contrast_heatmap(euclidean_similar, "Euclidean similarity (upregulated GSEA)")
 ```
 
 ### Downregulated GSEA
@@ -2783,65 +2288,10 @@ euclidean_similar <- 1 / (1 + euclidean_dist)
 
 ```{r, fig.height=5.8, fig.width=6}
 # Plot with viridis colour palette
-pheatmap(
-  pearson_cor,
-  main = "Pearson Correlation (downregulated GSEA)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12
-)
-
-pheatmap(
-  spearman_cor,
-  main = "Spearman Correlation (downregulated GSEA)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12
-)
-
-pheatmap(
-  cosine_similar,
-  main = "Cosine similarity (downregulated GSEA)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12
-)
-
-pheatmap(
-  euclidean_similar,
-  main = "Euclidean similarity (downregulated GSEA)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12
-)
+plot_auto_contrast_heatmap(pearson_cor, "Pearson correlation (downregulated GSEA)")
+plot_auto_contrast_heatmap(spearman_cor, "Spearman correlation (downregulated GSEA)")
+plot_auto_contrast_heatmap(cosine_similar, "Cosine similarity (downregulated GSEA)")
+plot_auto_contrast_heatmap(euclidean_similar, "Euclidean similarity (downregulated GSEA)")
 ```
 
 ## Approach with the Seurat method for the integrated single-cell data
@@ -3043,65 +2493,10 @@ euclidean_similar <- 1 / (1 + euclidean_dist)
 
 ```{r, fig.height=5.8, fig.width=6.2}
 # Plot with viridis colour palette
-pheatmap(
-  pearson_cor,
-  main = "Pearson correlation (significant genes)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12         
-)
-
-pheatmap(
-  spearman_cor,
-  main = "Spearman correlation (significant genes)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12 
-)
-
-pheatmap(
-  cosine_similar,
-  main = "Cosine similarity (significant genes)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12 
-)
-
-pheatmap(
-  euclidean_similar,
-  main = "Euclidean similarity (significant genes)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12 
-)
+plot_auto_contrast_heatmap(pearson_cor, "Pearson correlation (significant genes)")
+plot_auto_contrast_heatmap(spearman_cor, "Spearman correlation (significant genes)")
+plot_auto_contrast_heatmap(cosine_similar, "Cosine similarity (significant genes)")
+plot_auto_contrast_heatmap(euclidean_similar, "Euclidean similarity (significant genes)")
 ```
 
 #### Upregulated genes
@@ -3164,65 +2559,10 @@ euclidean_similar <- 1 / (1 + euclidean_dist)
 
 ```{r, fig.height=5.8, fig.width=6.2}
 # Plot with viridis colour palette
-pheatmap(
-  pearson_cor,
-  main = "Pearson correlation (upregulated DEGs)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12         
-)
-
-pheatmap(
-  spearman_cor,
-  main = "Spearman correlation (upregulated DEGs)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12 
-)
-
-pheatmap(
-  cosine_similar,
-  main = "Cosine similarity (upregulated DEGs)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12 
-)
-
-pheatmap(
-  euclidean_similar,
-  main = "Euclidean similarity (upregulated DEGs)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12 
-)
+plot_auto_contrast_heatmap(pearson_cor, "Pearson correlation (upregulated DEGs)")
+plot_auto_contrast_heatmap(spearman_cor, "Spearman correlation (upregulated DEGs)")
+plot_auto_contrast_heatmap(cosine_similar, "Cosine similarity (upregulated DEGs)")
+plot_auto_contrast_heatmap(euclidean_similar, "Euclidean similarity (upregulated DEGs)")
 ```
 
 #### Downregulated genes
@@ -3285,65 +2625,10 @@ euclidean_similar <- 1 / (1 + euclidean_dist)
 
 ```{r, fig.height=5.8, fig.width=6.2}
 # Plot with viridis colour palette
-pheatmap(
-  pearson_cor,
-  main = "Pearson correlation (downregulated DEGs)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12         
-)
-
-pheatmap(
-  spearman_cor,
-  main = "Spearman correlation (downregulated DEGs)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12 
-)
-
-pheatmap(
-  cosine_similar,
-  main = "Cosine similarity (downregulated DEGs)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12 
-)
-
-pheatmap(
-  euclidean_similar,
-  main = "Euclidean similarity (downregulated DEGs)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12 
-)
+plot_auto_contrast_heatmap(pearson_cor, "Pearson correlation (downregulated DEGs)")
+plot_auto_contrast_heatmap(spearman_cor, "Spearman correlation (downregulated DEGs)")
+plot_auto_contrast_heatmap(cosine_similar, "Cosine similarity (downregulated DEGs)")
+plot_auto_contrast_heatmap(euclidean_similar, "Euclidean similarity (downregulated DEGs)")
 ```
 
 #### Upregulated GSEA
@@ -3429,65 +2714,10 @@ euclidean_similar <- 1 / (1 + euclidean_dist)
 
 ```{r, fig.height=5.8, fig.width=6.2}
 # Plot with viridis colour palette
-pheatmap(
-  pearson_cor,
-  main = "Pearson Correlation (upregulated GSEA)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12
-)
-
-pheatmap(
-  spearman_cor,
-  main = "Spearman Correlation (upregulated GSEA)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12
-)
-
-pheatmap(
-  cosine_similar,
-  main = "Cosine similarity (upregulated GSEA)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12
-)
-
-pheatmap(
-  euclidean_similar,
-  main = "Euclidean similarity (upregulated GSEA)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12
-)
+plot_auto_contrast_heatmap(pearson_cor, "Pearson correlation (upregulated GSEA)")
+plot_auto_contrast_heatmap(spearman_cor, "Spearman correlation (upregulated GSEA)")
+plot_auto_contrast_heatmap(cosine_similar, "Cosine similarity (upregulated GSEA)")
+plot_auto_contrast_heatmap(euclidean_similar, "Euclidean similarity (upregulated GSEA)")
 ```
 
 #### Downregulated GSEA
@@ -4592,65 +3822,10 @@ euclidean_similar <- 1 / (1 + euclidean_dist)
 
 ```{r, fig.height=5.8, fig.width=6.2}
 # Plot with viridis colour palette
-pheatmap(
-  pearson_cor,
-  main = "Pearson correlation (significant genes)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12         
-)
-
-pheatmap(
-  spearman_cor,
-  main = "Spearman correlation (significant genes)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12 
-)
-
-pheatmap(
-  cosine_similar,
-  main = "Cosine similarity (significant genes)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12 
-)
-
-pheatmap(
-  euclidean_similar,
-  main = "Euclidean similarity (significant genes)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12 
-)
+plot_auto_contrast_heatmap(pearson_cor, "Pearson correlation (significant genes)")
+plot_auto_contrast_heatmap(spearman_cor, "Spearman correlation (significant genes)")
+plot_auto_contrast_heatmap(cosine_similar, "Cosine similarity (significant genes)")
+plot_auto_contrast_heatmap(euclidean_similar, "Euclidean similarity (significant genes)")
 ```
 
 ##### Upregulated genes
@@ -4712,65 +3887,10 @@ euclidean_similar <- 1 / (1 + euclidean_dist)
 
 ```{r, fig.height=5.8, fig.width=6.2}
 # Plot with viridis colour palette
-pheatmap(
-  pearson_cor,
-  main = "Pearson correlation (upregulated DEGs)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12         
-)
-
-pheatmap(
-  spearman_cor,
-  main = "Spearman correlation (upregulated DEGs)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12 
-)
-
-pheatmap(
-  cosine_similar,
-  main = "Cosine similarity (upregulated DEGs)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12 
-)
-
-pheatmap(
-  euclidean_similar,
-  main = "Euclidean similarity (upregulated DEGs)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12 
-)
+plot_auto_contrast_heatmap(pearson_cor, "Pearson correlation (upregulated DEGs)")
+plot_auto_contrast_heatmap(spearman_cor, "Spearman correlation (upregulated DEGs)")
+plot_auto_contrast_heatmap(cosine_similar, "Cosine similarity (upregulated DEGs)")
+plot_auto_contrast_heatmap(euclidean_similar, "Euclidean similarity (upregulated DEGs)")
 ```
 
 ##### Downregulated genes
@@ -4832,65 +3952,10 @@ euclidean_similar <- 1 / (1 + euclidean_dist)
 
 ```{r, fig.height=5.8, fig.width=6.2}
 # Plot with viridis colour palette
-pheatmap(
-  pearson_cor,
-  main = "Pearson correlation (downregulated DEGs)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12         
-)
-
-pheatmap(
-  spearman_cor,
-  main = "Spearman correlation (downregulated DEGs)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12 
-)
-
-pheatmap(
-  cosine_similar,
-  main = "Cosine similarity (downregulated DEGs)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12 
-)
-
-pheatmap(
-  euclidean_similar,
-  main = "Euclidean similarity (downregulated DEGs)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12 
-)
+plot_auto_contrast_heatmap(pearson_cor, "Pearson correlation (downregulated DEGs)")
+plot_auto_contrast_heatmap(spearman_cor, "Spearman correlation (downregulated DEGs)")
+plot_auto_contrast_heatmap(cosine_similar, "Cosine similarity (downregulated DEGs)")
+plot_auto_contrast_heatmap(euclidean_similar, "Euclidean similarity (downregulated DEGs)")
 ```
 
 ### Hing (2023)
@@ -4989,65 +4054,10 @@ euclidean_similar <- 1 / (1 + euclidean_dist)
 
 ```{r, fig.height=5.8, fig.width=6.2}
 # Plot with viridis colour palette
-pheatmap(
-  pearson_cor,
-  main = "Pearson correlation (significant genes)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12         
-)
-
-pheatmap(
-  spearman_cor,
-  main = "Spearman correlation (significant genes)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12 
-)
-
-pheatmap(
-  cosine_similar,
-  main = "Cosine similarity (significant genes)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12 
-)
-
-pheatmap(
-  euclidean_similar,
-  main = "Euclidean similarity (significant genes)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12 
-)
+plot_auto_contrast_heatmap(pearson_cor, "Pearson correlation (significant genes)")
+plot_auto_contrast_heatmap(spearman_cor, "Spearman correlation (significant genes)")
+plot_auto_contrast_heatmap(cosine_similar, "Cosine similarity (significant genes)")
+plot_auto_contrast_heatmap(euclidean_similar, "Euclidean similarity (significant genes)")
 ```
 
 ##### Upregulated genes
@@ -5103,65 +4113,10 @@ euclidean_similar <- 1 / (1 + euclidean_dist)
 
 ```{r, fig.height=5.8, fig.width=6.2}
 # Plot with viridis colour palette
-pheatmap(
-  pearson_cor,
-  main = "Pearson correlation (upregulated DEGs)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12         
-)
-
-pheatmap(
-  spearman_cor,
-  main = "Spearman correlation (upregulated DEGs)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12 
-)
-
-pheatmap(
-  cosine_similar,
-  main = "Cosine similarity (upregulated DEGs)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12 
-)
-
-pheatmap(
-  euclidean_similar,
-  main = "Euclidean similarity (upregulated DEGs)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12 
-)
+plot_auto_contrast_heatmap(pearson_cor, "Pearson correlation (upregulated DEGs)")
+plot_auto_contrast_heatmap(spearman_cor, "Spearman correlation (upregulated DEGs)")
+plot_auto_contrast_heatmap(cosine_similar, "Cosine similarity (upregulated DEGs)")
+plot_auto_contrast_heatmap(euclidean_similar, "Euclidean similarity (upregulated DEGs)")
 ```
 
 ##### Downregulated genes
@@ -5217,65 +4172,10 @@ euclidean_similar <- 1 / (1 + euclidean_dist)
 
 ```{r, fig.height=5.8, fig.width=6.2}
 # Plot with viridis colour palette
-pheatmap(
-  pearson_cor,
-  main = "Pearson correlation (downregulated DEGs)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12         
-)
-
-pheatmap(
-  spearman_cor,
-  main = "Spearman correlation (downregulated DEGs)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12 
-)
-
-pheatmap(
-  cosine_similar,
-  main = "Cosine similarity (downregulated DEGs)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12 
-)
-
-pheatmap(
-  euclidean_similar,
-  main = "Euclidean similarity (downregulated DEGs)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12 
-)
+plot_auto_contrast_heatmap(pearson_cor, "Pearson correlation (downregulated DEGs)")
+plot_auto_contrast_heatmap(spearman_cor, "Spearman correlation (downregulated DEGs)")
+plot_auto_contrast_heatmap(cosine_similar, "Cosine similarity (downregulated DEGs)")
+plot_auto_contrast_heatmap(euclidean_similar, "Euclidean similarity (downregulated DEGs)")
 ```
 
 ### Iyer (2024)
@@ -5374,65 +4274,10 @@ euclidean_similar <- 1 / (1 + euclidean_dist)
 
 ```{r, fig.height=5.8, fig.width=6.2}
 # Plot with viridis colour palette
-pheatmap(
-  pearson_cor,
-  main = "Pearson correlation (significant genes)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12         
-)
-
-pheatmap(
-  spearman_cor,
-  main = "Spearman correlation (significant genes)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12 
-)
-
-pheatmap(
-  cosine_similar,
-  main = "Cosine similarity (significant genes)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12 
-)
-
-pheatmap(
-  euclidean_similar,
-  main = "Euclidean similarity (significant genes)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12 
-)
+plot_auto_contrast_heatmap(pearson_cor, "Pearson correlation (significant genes)")
+plot_auto_contrast_heatmap(spearman_cor, "Spearman correlation (significant genes)")
+plot_auto_contrast_heatmap(cosine_similar, "Cosine similarity (significant genes)")
+plot_auto_contrast_heatmap(euclidean_similar, "Euclidean similarity (significant genes)")
 ```
 
 ##### Upregulated genes
@@ -5488,65 +4333,10 @@ euclidean_similar <- 1 / (1 + euclidean_dist)
 
 ```{r, fig.height=5.8, fig.width=6.2}
 # Plot with viridis colour palette
-pheatmap(
-  pearson_cor,
-  main = "Pearson correlation (upregulated DEGs)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12         
-)
-
-pheatmap(
-  spearman_cor,
-  main = "Spearman correlation (upregulated DEGs)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12 
-)
-
-pheatmap(
-  cosine_similar,
-  main = "Cosine similarity (upregulated DEGs)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12 
-)
-
-pheatmap(
-  euclidean_similar,
-  main = "Euclidean similarity (upregulated DEGs)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12 
-)
+plot_auto_contrast_heatmap(pearson_cor, "Pearson correlation (upregulated DEGs)")
+plot_auto_contrast_heatmap(spearman_cor, "Spearman correlation (upregulated DEGs)")
+plot_auto_contrast_heatmap(cosine_similar, "Cosine similarity (upregulated DEGs)")
+plot_auto_contrast_heatmap(euclidean_similar, "Euclidean similarity (upregulated DEGs)")
 ```
 
 ##### Downregulated genes
@@ -5602,65 +4392,10 @@ euclidean_similar <- 1 / (1 + euclidean_dist)
 
 ```{r, fig.height=5.8, fig.width=6.2}
 # Plot with viridis colour palette
-pheatmap(
-  pearson_cor,
-  main = "Pearson correlation (downregulated DEGs)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12         
-)
-
-pheatmap(
-  spearman_cor,
-  main = "Spearman correlation (downregulated DEGs)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12 
-)
-
-pheatmap(
-  cosine_similar,
-  main = "Cosine similarity (downregulated DEGs)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12 
-)
-
-pheatmap(
-  euclidean_similar,
-  main = "Euclidean similarity (downregulated DEGs)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12 
-)
+plot_auto_contrast_heatmap(pearson_cor, "Pearson correlation (downregulated DEGs)")
+plot_auto_contrast_heatmap(spearman_cor, "Spearman correlation (downregulated DEGs)")
+plot_auto_contrast_heatmap(cosine_similar, "Cosine similarity (downregulated DEGs)")
+plot_auto_contrast_heatmap(euclidean_similar, "Euclidean similarity (downregulated DEGs)")
 ```
 
 ### Rompietti (2025)
@@ -5759,65 +4494,10 @@ euclidean_similar <- 1 / (1 + euclidean_dist)
 
 ```{r, fig.height=5.8, fig.width=6.2}
 # Plot with viridis colour palette
-pheatmap(
-  pearson_cor,
-  main = "Pearson correlation (significant genes)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12         
-)
-
-pheatmap(
-  spearman_cor,
-  main = "Spearman correlation (significant genes)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12 
-)
-
-pheatmap(
-  cosine_similar,
-  main = "Cosine similarity (significant genes)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12 
-)
-
-pheatmap(
-  euclidean_similar,
-  main = "Euclidean similarity (significant genes)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12 
-)
+plot_auto_contrast_heatmap(pearson_cor, "Pearson correlation (significant genes)")
+plot_auto_contrast_heatmap(spearman_cor, "Spearman correlation (significant genes)")
+plot_auto_contrast_heatmap(cosine_similar, "Cosine similarity (significant genes)")
+plot_auto_contrast_heatmap(euclidean_similar, "Euclidean similarity (significant genes)")
 ```
 
 ##### Upregulated genes
@@ -5873,65 +4553,10 @@ euclidean_similar <- 1 / (1 + euclidean_dist)
 
 ```{r, fig.height=5.8, fig.width=6.2}
 # Plot with viridis colour palette
-pheatmap(
-  pearson_cor,
-  main = "Pearson correlation (upregulated DEGs)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12         
-)
-
-pheatmap(
-  spearman_cor,
-  main = "Spearman correlation (upregulated DEGs)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12 
-)
-
-pheatmap(
-  cosine_similar,
-  main = "Cosine similarity (upregulated DEGs)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12 
-)
-
-pheatmap(
-  euclidean_similar,
-  main = "Euclidean similarity (upregulated DEGs)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12 
-)
+plot_auto_contrast_heatmap(pearson_cor, "Pearson correlation (upregulated DEGs)")
+plot_auto_contrast_heatmap(spearman_cor, "Spearman correlation (upregulated DEGs)")
+plot_auto_contrast_heatmap(cosine_similar, "Cosine similarity (upregulated DEGs)")
+plot_auto_contrast_heatmap(euclidean_similar, "Euclidean similarity (upregulated DEGs)")
 ```
 
 ##### Downregulated genes
@@ -5987,65 +4612,10 @@ euclidean_similar <- 1 / (1 + euclidean_dist)
 
 ```{r, fig.height=5.8, fig.width=6.2}
 # Plot with viridis colour palette
-pheatmap(
-  pearson_cor,
-  main = "Pearson correlation (downregulated DEGs)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12         
-)
-
-pheatmap(
-  spearman_cor,
-  main = "Spearman correlation (downregulated DEGs)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12 
-)
-
-pheatmap(
-  cosine_similar,
-  main = "Cosine similarity (downregulated DEGs)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12 
-)
-
-pheatmap(
-  euclidean_similar,
-  main = "Euclidean similarity (downregulated DEGs)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12 
-)
+plot_auto_contrast_heatmap(pearson_cor, "Pearson correlation (downregulated DEGs)")
+plot_auto_contrast_heatmap(spearman_cor, "Spearman correlation (downregulated DEGs)")
+plot_auto_contrast_heatmap(cosine_similar, "Cosine similarity (downregulated DEGs)")
+plot_auto_contrast_heatmap(euclidean_similar, "Euclidean similarity (downregulated DEGs)")
 ```
 
 # Session Information
