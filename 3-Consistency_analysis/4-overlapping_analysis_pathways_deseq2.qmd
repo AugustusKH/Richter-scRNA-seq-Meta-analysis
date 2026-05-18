@@ -894,65 +894,10 @@ euclidean_similar <- 1 / (1 + euclidean_dist)
 
 ```{r, fig.height=5, fig.width=5.5}
 # Plot with viridis colour palette
-pheatmap(
-  pearson_cor,
-  main = "Pearson Correlation (upregulated GSEA)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12
-)
-
-pheatmap(
-  spearman_cor,
-  main = "Spearman Correlation (upregulated GSEA)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12
-)
-
-pheatmap(
-  cosine_similar,
-  main = "Cosine similarity (upregulated GSEA)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12
-)
-
-pheatmap(
-  euclidean_similar,
-  main = "Euclidean similarity (upregulated GSEA)",
-  color = viridis(100),
-  breaks = seq(0, 1, length.out = length(viridis(100)) + 1),
-  display_numbers = TRUE,
-  number_color = "black",
-  border_color = NA,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  fontsize_number = 12,
-  fontsize_row = 12,        
-  fontsize_col = 12
-)
+plot_auto_contrast_heatmap(pearson_cor, "Pearson correlation (upregulated GSEA)")
+plot_auto_contrast_heatmap(spearman_cor, "Spearman correlation (upregulated GSEA)")
+plot_auto_contrast_heatmap(cosine_similar, "Cosine similarity (upregulated GSEA)")
+plot_auto_contrast_heatmap(euclidean_similar, "Euclidean similarity (upregulated GSEA)")
 ```
 
 # Session Information
