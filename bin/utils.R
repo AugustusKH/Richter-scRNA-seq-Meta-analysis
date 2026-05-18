@@ -765,7 +765,25 @@ miller_discrete_scale <- function(style="points", option=1) {
   return(discr_scale)
 }
 
-
+# Define a function for heatmap plot
+plot_auto_contrast_heatmap <- function(mat, title) {
+  text_cols <- ifelse(mat < 0.4, "white", "black")
+  
+  pheatmap(
+    mat,
+    main = title,
+    color = viridis(100),
+    breaks = seq(0, 1, length.out = 101), 
+    display_numbers = TRUE,
+    number_color = text_cols,
+    border_color = NA,
+    cluster_rows = FALSE,
+    cluster_cols = FALSE,
+    fontsize_number = 12,
+    fontsize_row = 12,        
+    fontsize_col = 12         
+  )
+}
 
 
 
